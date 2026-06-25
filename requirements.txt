@@ -1,0 +1,3 @@
+# Dipendenze di certinspect
+# 'cryptography' gestisce il parsing dei certificati X.509 in modo robusto e sicuro.
+cryptography>=42.0.0
