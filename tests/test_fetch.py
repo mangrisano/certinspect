@@ -13,6 +13,14 @@ def test_check_revocation_unavailable_without_aia(make_cert):
     assert "AIA" in detail
 
 
+def test_check_revocation_accepts_explicit_issuer(make_cert):
+    cert = load_certificate(make_cert())
+    # Passing an issuer must not require a network download; with no OCSP
+    # responder in the certificate the result is still UNAVAILABLE.
+    status, _ = check_revocation(cert, issuer=cert)
+    assert status == "UNAVAILABLE"
+
+
 def test_http_rejects_unsupported_scheme():
     from certinspect.fetch import _http
 

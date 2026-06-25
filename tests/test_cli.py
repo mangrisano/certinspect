@@ -279,11 +279,11 @@ def test_main_verify_trusted_exit_zero(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (True, None),
+        lambda host, port, timeout: (True, None, []),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
-        lambda cert, timeout: ("GOOD", None),
+        lambda cert, timeout, issuer=None: ("GOOD", None),
     )
     code = _run_main(monkeypatch, ["example.com", "--verify"])
     out = capsys.readouterr().out
@@ -299,11 +299,14 @@ def test_main_verify_untrusted_exit_six(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (False, "self signed certificate"),
+        lambda host, port, timeout: (False, "self signed certificate", []),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
-        lambda cert, timeout: ("UNAVAILABLE", "no OCSP responder in AIA extension"),
+        lambda cert, timeout, issuer=None: (
+            "UNAVAILABLE",
+            "no OCSP responder in AIA extension",
+        ),
     )
     code = _run_main(monkeypatch, ["example.com", "--verify"])
     out = capsys.readouterr().out
@@ -319,11 +322,11 @@ def test_main_verify_in_json(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (True, None),
+        lambda host, port, timeout: (True, None, []),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
-        lambda cert, timeout: ("GOOD", None),
+        lambda cert, timeout, issuer=None: ("GOOD", None),
     )
     _run_main(monkeypatch, ["example.com", "--verify", "--json"])
     data = json.loads(capsys.readouterr().out)
@@ -338,11 +341,14 @@ def test_main_verify_revoked_exit_six(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (True, None),
+        lambda host, port, timeout: (True, None, []),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
-        lambda cert, timeout: ("REVOKED", "revoked at 2026-01-01 00:00:00"),
+        lambda cert, timeout, issuer=None: (
+            "REVOKED",
+            "revoked at 2026-01-01 00:00:00",
+        ),
     )
     code = _run_main(monkeypatch, ["example.com", "--verify"])
     out = capsys.readouterr().out
@@ -360,11 +366,11 @@ def test_main_verify_revocation_unavailable_is_soft_fail(
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (True, None),
+        lambda host, port, timeout: (True, None, []),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
-        lambda cert, timeout: ("UNAVAILABLE", "OCSP request failed"),
+        lambda cert, timeout, issuer=None: ("UNAVAILABLE", "OCSP request failed"),
     )
     code = _run_main(monkeypatch, ["example.com", "--verify"])
     assert code == 0
