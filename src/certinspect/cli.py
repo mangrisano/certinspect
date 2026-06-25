@@ -11,6 +11,7 @@ import argparse
 import json
 import sys
 import ssl
+from urllib.parse import urlsplit
 from certinspect import __version__
 from certinspect.fetch import check_revocation, get_server_cert, verify_chain
 from certinspect.parser import (
@@ -125,6 +126,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _split_target(raw: str, default_port: int) -> tuple[str, int]:
+    """Normalize a target into ``(host, port)``.
+
+    Accepts a bare hostname, a ``host:port`` pair, or a full URL (the scheme
+    and any path are ignored). An explicit port in the target overrides
+    ``default_port``.
+    """
+    spec = raw if "://" in raw else f"//{raw}"
+    parts = urlsplit(spec)
+    return parts.hostname or raw, parts.port or default_port
 
 
 def _fetch_source(
@@ -262,11 +275,14 @@ def main() -> None:
 
     results: list[tuple[str | None, dict, int]] = []
     codes: list[int] = []
-    for target in targets:
+    for raw_target in targets:
+        target, port = raw_target, args.port
         try:
+            if raw_target is not None:
+                target, port = _split_target(raw_target, args.port)
             info, code = _inspect(
                 target,
-                port=args.port,
+                port=port,
                 file=args.file,
                 days=args.days,
                 export=args.export,
@@ -276,7 +292,7 @@ def main() -> None:
                 pin=args.pin,
             )
         except (OSError, ssl.SSLError, ValueError) as err:
-            label = f"{target}: " if target else ""
+            label = f"{raw_target}: " if raw_target else ""
             print(f"error: {label}{err}", file=sys.stderr)
             codes.append(1)
             continue
