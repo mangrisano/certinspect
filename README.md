@@ -60,6 +60,16 @@ certinspect example.com github.com --quiet
 # Verify the certificate chain against the system trust store
 certinspect example.com --verify
 
+# Show the certificate chain presented by the server
+certinspect example.com --chain
+
+# Fail (exit 7) unless the fingerprint matches the expected pin
+certinspect example.com --pin AA:BB:CC:...
+
+# Read targets from a file (or '-' for stdin)
+certinspect --input hosts.txt
+cat hosts.txt | certinspect --input -
+
 # Save the fetched certificate as PEM
 certinspect example.com --export ./fetched.pem
 
@@ -111,18 +121,21 @@ not checked via CRLs.
 
 ## Options
 
-| Option          | Description                                                          |
-| --------------- | -------------------------------------------------------------------- |
-| `target...`     | One or more domains to inspect. Omit when using `--file`.            |
-| `--file PATH`   | Inspect a local certificate (PEM or DER) instead of a host.          |
-| `--port N`      | TCP port to connect to (default: 443).                               |
-| `--timeout N`   | Connection timeout in seconds (default: 5).                          |
-| `--json`        | Print the result as JSON instead of human-readable text.             |
-| `--quiet`       | Only print certificates that have a problem.                         |
-| `--verify`      | Verify the chain + OCSP revocation, system trust store (hosts only). |
-| `--days N`      | Warn if the certificate expires within N days (default: 30).         |
-| `--export PATH` | Save the inspected certificate as a PEM file at PATH.                |
-| `--version`     | Print the version and exit.                                          |
+| Option          | Description                                                                 |
+| --------------- | --------------------------------------------------------------------------- |
+| `target...`     | One or more domains to inspect. Omit when using `--file`.                   |
+| `--file PATH`   | Inspect a local certificate (PEM or DER) instead of a host.                 |
+| `--port N`      | TCP port to connect to (default: 443).                                      |
+| `--timeout N`   | Connection timeout in seconds (default: 5).                                 |
+| `--json`        | Print the result as JSON instead of human-readable text.                    |
+| `--quiet`       | Only print certificates that have a problem.                                |
+| `--verify`      | Verify the chain + OCSP revocation, system trust store (hosts only).        |
+| `--chain`       | Show the certificate chain presented by the server.                         |
+| `--pin SHA256`  | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored). |
+| `--input PATH`  | Read extra targets from a file, one per line ('-' for stdin).               |
+| `--days N`      | Warn if the certificate expires within N days (default: 30).                |
+| `--export PATH` | Save the inspected certificate as a PEM file at PATH.                       |
+| `--version`     | Print the version and exit.                                                 |
 
 ## Exit codes
 
@@ -138,6 +151,7 @@ worst code across all targets is returned.
 | 4    | Expired or with invalid dates             |
 | 5    | Hostname does not match the certificate   |
 | 6    | Chain not trusted or revoked (`--verify`) |
+| 7    | Fingerprint does not match `--pin`        |
 
 Example in a script:
 
