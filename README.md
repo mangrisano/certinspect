@@ -36,6 +36,10 @@ pip install -e ".[dev]"
 # Inspect a host
 certinspect example.com
 
+# A full URL or host:port works too (scheme and path are ignored)
+certinspect https://example.com/login
+certinspect example.com:8443
+
 # Multiple hosts at once (batch mode)
 certinspect example.com github.com api.example.com
 
@@ -121,21 +125,21 @@ not checked via CRLs.
 
 ## Options
 
-| Option          | Description                                                                 |
-| --------------- | --------------------------------------------------------------------------- |
-| `target...`     | One or more domains to inspect. Omit when using `--file`.                   |
-| `--file PATH`   | Inspect a local certificate (PEM or DER) instead of a host.                 |
-| `--port N`      | TCP port to connect to (default: 443).                                      |
-| `--timeout N`   | Connection timeout in seconds (default: 5).                                 |
-| `--json`        | Print the result as JSON instead of human-readable text.                    |
-| `--quiet`       | Only print certificates that have a problem.                                |
-| `--verify`      | Verify the chain + OCSP revocation, system trust store (hosts only).        |
-| `--chain`       | Show the certificate chain presented by the server.                         |
-| `--pin SHA256`  | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored). |
-| `--input PATH`  | Read extra targets from a file, one per line ('-' for stdin).               |
-| `--days N`      | Warn if the certificate expires within N days (default: 30).                |
-| `--export PATH` | Save the inspected certificate as a PEM file at PATH.                       |
-| `--version`     | Print the version and exit.                                                 |
+| Option          | Description                                                                    |
+| --------------- | ------------------------------------------------------------------------------ |
+| `target...`     | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`. |
+| `--file PATH`   | Inspect a local certificate (PEM or DER) instead of a host.                    |
+| `--port N`      | TCP port to connect to (default: 443).                                         |
+| `--timeout N`   | Connection timeout in seconds (default: 5).                                    |
+| `--json`        | Print the result as JSON instead of human-readable text.                       |
+| `--quiet`       | Only print certificates that have a problem.                                   |
+| `--verify`      | Verify the chain + OCSP revocation, system trust store (hosts only).           |
+| `--chain`       | Show the certificate chain presented by the server.                            |
+| `--pin SHA256`  | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).    |
+| `--input PATH`  | Read extra targets from a file, one per line ('-' for stdin).                  |
+| `--days N`      | Warn if the certificate expires within N days (default: 30).                   |
+| `--export PATH` | Save the inspected certificate as a PEM file at PATH.                          |
+| `--version`     | Print the version and exit.                                                    |
 
 ## Exit codes
 
