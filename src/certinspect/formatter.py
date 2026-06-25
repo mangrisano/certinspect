@@ -56,6 +56,16 @@ def format_human(info: dict, warn_days: int = 30) -> str:
     if info.get("hostname_match") is not None:
         lines.append(row("Hostname match", info["hostname_match"]))
 
+    if "chain_trusted" in info:
+        lines.append(row("Chain trusted", info["chain_trusted"]))
+        if not info["chain_trusted"] and info.get("chain_error"):
+            lines.append(f"WARNING: chain not trusted ({info['chain_error']})")
+
+    if info.get("revocation_status"):
+        lines.append(row("Revocation", info["revocation_status"]))
+        if info["revocation_status"] == "REVOKED" and info.get("revocation_detail"):
+            lines.append(f"WARNING: certificate revoked ({info['revocation_detail']})")
+
     if 0 <= days < warn_days:
         lines.append("")
         lines.append(f"WARNING: certificate expires in {days} days")

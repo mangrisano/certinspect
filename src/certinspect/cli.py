@@ -12,7 +12,7 @@ import json
 import sys
 import ssl
 from certinspect import __version__
-from certinspect.fetch import get_server_cert
+from certinspect.fetch import check_revocation, get_server_cert, verify_chain
 from certinspect.parser import (
     load_certificate,
     analyze,
@@ -82,6 +82,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only print certificates that have a problem.",
     )
     parser.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Verify the certificate chain against the system trust store "
+            "(host targets only)."
+        ),
+    )
+    parser.add_argument(
         "--days",
         type=int,
         default=30,
@@ -117,11 +125,13 @@ def _inspect(
     days: int,
     export: str | None,
     timeout: float,
+    verify: bool,
 ) -> tuple[dict, int]:
     """Inspect one source and return its (info, exit_code).
 
     The hostname match (and its exit code 5) only applies to host targets;
-    with --file it is left as None.
+    with --file it is left as None. Chain verification (exit code 6) is only
+    performed for host targets when ``verify`` is set.
     """
     der, conn = _fetch_source(target, port, file, timeout)
     cert = load_certificate(der)
@@ -137,6 +147,19 @@ def _inspect(
     code = EXIT_BY_STATUS[certificate_status(info, days)]
     if info["hostname_match"] is False:
         code = 5
+
+    if verify and target:
+        trusted, reason = verify_chain(target, port, timeout)
+        info["chain_trusted"] = trusted
+        info["chain_error"] = reason
+        if not trusted:
+            code = 6
+
+        revocation, detail = check_revocation(cert, timeout)
+        info["revocation_status"] = revocation
+        info["revocation_detail"] = detail
+        if revocation == "REVOKED":
+            code = 6
     return info, code
 
 
@@ -189,6 +212,7 @@ def main() -> None:
                 days=args.days,
                 export=args.export,
                 timeout=args.timeout,
+                verify=args.verify,
             )
         except (OSError, ssl.SSLError, ValueError) as err:
             label = f"{target}: " if target else ""
