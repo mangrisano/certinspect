@@ -63,11 +63,46 @@ def load_certificate(data: bytes) -> x509.Certificate:
         return x509.load_pem_x509_certificate(data)
 
 
+def _key_usage(cert: x509.Certificate) -> list[str]:
+    """Return the enabled KeyUsage names, or [] if the extension is absent."""
+    try:
+        ku = cert.extensions.get_extension_for_class(x509.KeyUsage).value
+    except x509.ExtensionNotFound:
+        return []
+    names = [
+        "digital_signature",
+        "content_commitment",
+        "key_encipherment",
+        "data_encipherment",
+        "key_agreement",
+        "key_cert_sign",
+        "crl_sign",
+    ]
+    usages = [name for name in names if getattr(ku, name)]
+    # encipher_only / decipher_only are only meaningful with key_agreement.
+    if ku.key_agreement:
+        if ku.encipher_only:
+            usages.append("encipher_only")
+        if ku.decipher_only:
+            usages.append("decipher_only")
+    return usages
+
+
+def _extended_key_usage(cert: x509.Certificate) -> list[str]:
+    """Return the ExtendedKeyUsage names, or [] if the extension is absent."""
+    try:
+        eku = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    except x509.ExtensionNotFound:
+        return []
+    return [oid._name for oid in eku]
+
+
 def analyze(cert: x509.Certificate) -> dict:
     """Extract the relevant information from the certificate as a dict."""
 
     now = datetime.now(timezone.utc)
     days_to_expire = (cert.not_valid_after_utc - now).days
+    validity_days = (cert.not_valid_after_utc - cert.not_valid_before_utc).days
     try:
         ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
         san = ext.value.get_values_for_type(x509.DNSName)
@@ -96,11 +131,14 @@ def analyze(cert: x509.Certificate) -> dict:
         "serial_number": cert.serial_number,
         "signature_algorithm": cert.signature_algorithm_oid._name,
         "days_to_expire": days_to_expire,
+        "validity_days": validity_days,
         "key_size": cert.public_key().key_size,
         "san": san,
         "fingerprint_sha256": format_fingerprint(cert),
         "is_ca": is_ca,
         "self_signed": cert.subject == cert.issuer,
+        "key_usage": _key_usage(cert),
+        "extended_key_usage": _extended_key_usage(cert),
         "weak": weak,
     }
 

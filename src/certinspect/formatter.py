@@ -1,23 +1,8 @@
-"""
-formatter.py — Presentation of the results to the user.
+"""Present the analysis results to the user.
 
-MODULE GOAL
------------
-Take the dict produced by parser.analyze() and produce human-readable output
-(text) or machine-readable output (JSON).
-
-GUIDED STEPS (write them yourself):
-1. format_human(info: dict) -> str
-   - Print the fields in a tidy, readable way.
-   - Highlight the status: VALID / EXPIRED / NOT YET VALID.
-   - Show a WARNING if the days to expiry are < 30.
-2. format_json(info: dict) -> str
-   - Serialize with json.dumps(info, default=str, indent=2).
-   - Note: dates are not serializable by default → use default=str
-     or convert them to ISO 8601 in parser.analyze().
-
-Hint: keep color/emoji logic optional and simple.
-Do not put analysis logic here: this module only PRESENTS the data.
+Take the dict produced by parser.analyze() and render it either as
+human-readable text or as JSON. This module only PRESENTS data; all the
+analysis logic lives in parser.py.
 """
 
 import json
@@ -43,6 +28,7 @@ def format_human(info: dict, warn_days: int = 30) -> str:
         row("Valid from", info["not_valid_before"]),
         row("Valid until", info["not_valid_after"]),
         row("Days to expiry", days),
+        row("Total validity", f"{info['validity_days']} days"),
         "",
         row("Serial number", info["serial_number"]),
         row("Signature", info["signature_algorithm"]),
@@ -51,6 +37,16 @@ def format_human(info: dict, warn_days: int = 30) -> str:
         row("CA", info["is_ca"]),
         row("Self-Signed", info["self_signed"]),
     ]
+
+    if info.get("tls_version"):
+        lines.append(row("TLS version", info["tls_version"]))
+    if info.get("cipher"):
+        lines.append(row("Cipher", info["cipher"]))
+
+    if info["key_usage"]:
+        lines.append(row("Key usage", ", ".join(info["key_usage"])))
+    if info["extended_key_usage"]:
+        lines.append(row("Ext. key usage", ", ".join(info["extended_key_usage"])))
 
     if info["weak"]:
         lines.append("")
