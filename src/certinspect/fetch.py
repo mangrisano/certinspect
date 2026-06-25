@@ -24,8 +24,9 @@ def get_server_cert(
 ) -> tuple[bytes, dict]:
     """Return the server certificate (DER bytes) and connection info.
 
-    The connection info is a dict with the negotiated ``tls_version`` and
-    ``cipher`` suite name.
+    The connection info is a dict with the negotiated ``tls_version``, the
+    ``cipher`` suite name, and the ``chain`` presented by the server (leaf
+    first) when the interpreter exposes it (Python 3.13+), otherwise [].
     """
     context = ssl.create_default_context()
     context.check_hostname = False
@@ -37,8 +38,25 @@ def get_server_cert(
             conn = {
                 "tls_version": ssock.version(),
                 "cipher": cipher[0] if cipher else None,
+                "chain": _presented_chain(ssock),
             }
             return der, conn
+
+
+def _presented_chain(ssock: ssl.SSLSocket) -> list[x509.Certificate]:
+    """Return the chain presented by the server (leaf first), or [].
+
+    ``SSLSocket.get_unverified_chain`` exists from Python 3.13 and returns the
+    certificates exactly as sent by the server (regardless of trust), which is
+    what we want for inspection. Older interpreters return an empty list.
+    """
+    getter = getattr(ssock, "get_unverified_chain", None)
+    if getter is None:
+        return []
+    try:
+        return [x509.load_der_x509_certificate(der) for der in getter()]
+    except (TypeError, ValueError, ssl.SSLError):
+        return []
 
 
 def verify_chain(

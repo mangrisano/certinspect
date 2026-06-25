@@ -18,6 +18,8 @@ from certinspect.parser import (
     analyze,
     certificate_status,
     hostname_matches,
+    chain_summary,
+    pin_matches,
     to_pem,
 )
 from certinspect.formatter import format_human
@@ -90,6 +92,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--chain",
+        action="store_true",
+        help="Show the certificate chain presented by the server.",
+    )
+    parser.add_argument(
+        "--pin",
+        metavar="SHA256",
+        help=(
+            "Expected SHA-256 fingerprint; exit with code 7 if it does not "
+            "match (colons and case are ignored)."
+        ),
+    )
+    parser.add_argument(
+        "--input",
+        metavar="PATH",
+        help=(
+            "Read additional targets from a file (one per line, '#' comments "
+            "allowed); use '-' to read from standard input."
+        ),
+    )
+    parser.add_argument(
         "--days",
         type=int,
         default=30,
@@ -126,12 +149,15 @@ def _inspect(
     export: str | None,
     timeout: float,
     verify: bool,
+    chain: bool,
+    pin: str | None,
 ) -> tuple[dict, int]:
     """Inspect one source and return its (info, exit_code).
 
     The hostname match (and its exit code 5) only applies to host targets;
     with --file it is left as None. Chain verification (exit code 6) is only
-    performed for host targets when ``verify`` is set.
+    performed for host targets when ``verify`` is set. A failed ``pin`` check
+    yields exit code 7.
     """
     der, conn = _fetch_source(target, port, file, timeout)
     cert = load_certificate(der)
@@ -149,19 +175,28 @@ def _inspect(
         code = 5
 
     if verify and target:
-        trusted, reason, chain = verify_chain(target, port, timeout)
+        trusted, reason, verified = verify_chain(target, port, timeout)
         info["chain_trusted"] = trusted
         info["chain_error"] = reason
         if not trusted:
             code = 6
 
         # Prefer the issuer from the verified chain; fall back to AIA download.
-        issuer = chain[1] if len(chain) > 1 else None
+        issuer = verified[1] if len(verified) > 1 else None
         revocation, detail = check_revocation(cert, timeout, issuer=issuer)
         info["revocation_status"] = revocation
         info["revocation_detail"] = detail
         if revocation == "REVOKED":
             code = 6
+
+    if chain:
+        presented = (conn.get("chain") if conn else None) or [cert]
+        info["chain"] = [chain_summary(c) for c in presented]
+
+    if pin:
+        info["pin_match"] = pin_matches(info, pin)
+        if not info["pin_match"]:
+            code = 7
     return info, code
 
 
@@ -191,17 +226,39 @@ def _render(
         print("\n\n".join(blocks))
 
 
+def _read_targets(path: str) -> list[str]:
+    """Read targets from a file (or stdin when path is '-').
+
+    One target per line; blank lines and '#' comments are ignored.
+    """
+    lines = sys.stdin if path == "-" else open(path, encoding="utf-8")
+    try:
+        targets = []
+        for line in lines:
+            entry = line.strip()
+            if entry and not entry.startswith("#"):
+                targets.append(entry)
+        return targets
+    finally:
+        if path != "-":
+            lines.close()
+
+
 def main() -> None:
     """CLI entry point."""
 
     parser = build_parser()
     args = parser.parse_args()
 
-    if not args.target and not args.file:
+    extra_targets = _read_targets(args.input) if args.input else []
+    if not args.target and not extra_targets and not args.file:
         parser.error("There is no target or no file to inspect.")
 
     # A single --file source has no host; otherwise iterate over the targets.
-    targets: list[str | None] = [None] if args.file else list(args.target)
+    if args.file:
+        targets: list[str | None] = [None]
+    else:
+        targets = [*args.target, *extra_targets]
 
     results: list[tuple[str | None, dict, int]] = []
     codes: list[int] = []
@@ -215,6 +272,8 @@ def main() -> None:
                 export=args.export,
                 timeout=args.timeout,
                 verify=args.verify,
+                chain=args.chain,
+                pin=args.pin,
             )
         except (OSError, ssl.SSLError, ValueError) as err:
             label = f"{target}: " if target else ""

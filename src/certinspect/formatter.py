@@ -66,6 +66,11 @@ def format_human(info: dict, warn_days: int = 30) -> str:
         if info["revocation_status"] == "REVOKED" and info.get("revocation_detail"):
             lines.append(f"WARNING: certificate revoked ({info['revocation_detail']})")
 
+    if "pin_match" in info:
+        lines.append(row("Pin match", info["pin_match"]))
+        if not info["pin_match"]:
+            lines.append("WARNING: fingerprint does not match the expected pin")
+
     if 0 <= days < warn_days:
         lines.append("")
         lines.append(f"WARNING: certificate expires in {days} days")
@@ -77,6 +82,15 @@ def format_human(info: dict, warn_days: int = 30) -> str:
         lines.extend(f"  - {name}" for name in san)
     else:
         lines.append(row("SAN", "(none)"))
+
+    if info.get("chain"):
+        lines.append("")
+        lines.append("Certificate chain:")
+        for i, link in enumerate(info["chain"]):
+            lines.append(f"  [{i}] {link['subject']}")
+            lines.append(f"      issuer:  {link['issuer']}")
+            lines.append(f"      expires: {link['not_valid_after']}")
+            lines.append(f"      CA:      {link['is_ca']}")
 
     return "\n".join(lines)
 

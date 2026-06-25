@@ -37,6 +37,36 @@ def format_fingerprint(cert: x509.Certificate) -> str:
     return ":".join(f"{b:02X}" for b in cert.fingerprint(hashes.SHA256()))
 
 
+def pin_matches(info: dict, pin: str) -> bool:
+    """Return True if the SHA-256 fingerprint equals the expected pin.
+
+    The comparison ignores colons and case, so both ``AA:BB:..`` and
+    ``aabb..`` forms are accepted.
+    """
+    normalized = info["fingerprint_sha256"].replace(":", "").lower()
+    return normalized == pin.replace(":", "").lower()
+
+
+def chain_summary(cert: x509.Certificate) -> dict:
+    """Return a compact summary of a chain certificate for display/JSON."""
+    return {
+        "subject": cert.subject.rfc4514_string(),
+        "issuer": cert.issuer.rfc4514_string(),
+        "not_valid_after": cert.not_valid_after_utc,
+        "serial_number": cert.serial_number,
+        "is_ca": _is_ca(cert),
+    }
+
+
+def _is_ca(cert: x509.Certificate) -> bool:
+    """Return the BasicConstraints CA flag, or False if the extension is absent."""
+    try:
+        ext = cert.extensions.get_extension_for_class(x509.BasicConstraints)
+        return ext.value.ca
+    except x509.ExtensionNotFound:
+        return False
+
+
 def _weak_key(public_key) -> str | None:
     """Return a warning if the key is below safe size for its type.
 
@@ -109,11 +139,7 @@ def analyze(cert: x509.Certificate) -> dict:
     except x509.ExtensionNotFound:
         san = []
 
-    try:
-        ext = cert.extensions.get_extension_for_class(x509.BasicConstraints)
-        is_ca = ext.value.ca
-    except x509.ExtensionNotFound:
-        is_ca = False
+    is_ca = _is_ca(cert)
 
     weak = []
     reason = _weak_key(cert.public_key())
