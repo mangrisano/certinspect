@@ -149,13 +149,15 @@ def _inspect(
         code = 5
 
     if verify and target:
-        trusted, reason = verify_chain(target, port, timeout)
+        trusted, reason, chain = verify_chain(target, port, timeout)
         info["chain_trusted"] = trusted
         info["chain_error"] = reason
         if not trusted:
             code = 6
 
-        revocation, detail = check_revocation(cert, timeout)
+        # Prefer the issuer from the verified chain; fall back to AIA download.
+        issuer = chain[1] if len(chain) > 1 else None
+        revocation, detail = check_revocation(cert, timeout, issuer=issuer)
         info["revocation_status"] = revocation
         info["revocation_detail"] = detail
         if revocation == "REVOKED":
