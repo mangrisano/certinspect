@@ -1,7 +1,7 @@
 [project]
 name = "certinspect"
-version = "0.1.0"
-description = "Ispettore di certificati TLS da riga di comando"
+version = "0.2.0"
+description = "Command-line TLS certificate inspector"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
