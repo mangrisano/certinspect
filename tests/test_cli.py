@@ -6,6 +6,14 @@ import pytest
 
 from certinspect.cli import build_parser, main
 
+# Connection info returned by the patched network fetch.
+CONN = {"tls_version": "TLSv1.3", "cipher": "TLS_AES_256_GCM_SHA384"}
+
+
+def _const_fetch(cert_bytes):
+    """Return a get_server_cert replacement yielding a fixed certificate."""
+    return lambda host, port, timeout: (cert_bytes, CONN)
+
 
 def test_build_parser_defaults():
     args = build_parser().parse_args(["example.com"])
@@ -103,8 +111,8 @@ def test_main_exit_code_expired(monkeypatch, capsys, tmp_path, make_cert):
 
 def test_main_hostname_match_exit_zero(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
-        "certinspect.cli.get_server_cert_der",
-        lambda host, port: make_cert(san=["example.com"]),
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
     )
     code = _run_main(monkeypatch, ["example.com"])
     assert code == 0
@@ -113,8 +121,8 @@ def test_main_hostname_match_exit_zero(monkeypatch, capsys, make_cert):
 
 def test_main_hostname_mismatch_exit_five(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
-        "certinspect.cli.get_server_cert_der",
-        lambda host, port: make_cert(san=["example.com"]),
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
     )
     code = _run_main(monkeypatch, ["other.com"])
     assert code == 5
@@ -122,8 +130,8 @@ def test_main_hostname_mismatch_exit_five(monkeypatch, capsys, make_cert):
 
 def test_main_hostname_match_in_json(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
-        "certinspect.cli.get_server_cert_der",
-        lambda host, port: make_cert(san=["example.com"]),
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
     )
     _run_main(monkeypatch, ["example.com", "--json"])
     data = json.loads(capsys.readouterr().out)
@@ -149,10 +157,10 @@ def test_main_export_writes_pem(monkeypatch, capsys, tmp_path, make_cert):
 
 
 def _fake_fetch(mapping):
-    """Return a get_server_cert_der replacement backed by host->bytes mapping."""
+    """Return a get_server_cert replacement backed by host->bytes mapping."""
 
-    def _fetch(host, port):
-        return mapping[host]
+    def _fetch(host, port, timeout):
+        return mapping[host], CONN
 
     return _fetch
 
@@ -162,7 +170,7 @@ def test_main_batch_human_has_headers(monkeypatch, capsys, make_cert):
         "a.com": make_cert(san=["a.com"]),
         "b.com": make_cert(san=["b.com"]),
     }
-    monkeypatch.setattr("certinspect.cli.get_server_cert_der", _fake_fetch(certs))
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
     code = _run_main(monkeypatch, ["a.com", "b.com"])
     out = capsys.readouterr().out
     assert "=== a.com ===" in out
@@ -175,7 +183,7 @@ def test_main_batch_json_is_list(monkeypatch, capsys, make_cert):
         "a.com": make_cert(common_name="a.com", san=["a.com"]),
         "b.com": make_cert(common_name="b.com", san=["b.com"]),
     }
-    monkeypatch.setattr("certinspect.cli.get_server_cert_der", _fake_fetch(certs))
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
     _run_main(monkeypatch, ["a.com", "b.com", "--json"])
     data = json.loads(capsys.readouterr().out)
     assert isinstance(data, list)
@@ -188,7 +196,7 @@ def test_main_batch_worst_exit_code(monkeypatch, capsys, make_cert):
         "good.com": make_cert(san=["good.com"], days_valid=200),
         "bad.com": make_cert(san=["bad.com"], days_valid=-5, days_ago_start=365),
     }
-    monkeypatch.setattr("certinspect.cli.get_server_cert_der", _fake_fetch(certs))
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
     code = _run_main(monkeypatch, ["good.com", "bad.com"])
     assert code == 4
 
@@ -196,15 +204,69 @@ def test_main_batch_worst_exit_code(monkeypatch, capsys, make_cert):
 def test_main_batch_continues_on_error(monkeypatch, capsys, make_cert):
     certs = {"ok.com": make_cert(san=["ok.com"], days_valid=200)}
 
-    def _fetch(host, port):
+    def _fetch(host, port, timeout):
         if host == "down.com":
             raise OSError("connection refused")
-        return certs[host]
+        return certs[host], CONN
 
-    monkeypatch.setattr("certinspect.cli.get_server_cert_der", _fetch)
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
     code = _run_main(monkeypatch, ["down.com", "ok.com"])
     captured = capsys.readouterr()
     # The reachable host is still inspected despite the failing one.
     assert "ok.com" in captured.out
     assert "down.com" in captured.err
     assert code == 1
+
+
+def test_main_version_flag(monkeypatch, capsys):
+    from certinspect import __version__
+
+    code = _run_main(monkeypatch, ["--version"])
+    assert code == 0
+    assert __version__ in capsys.readouterr().out
+
+
+def test_main_shows_tls_info(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    _run_main(monkeypatch, ["example.com"])
+    out = capsys.readouterr().out
+    assert "TLS version:" in out
+    assert "TLSv1.3" in out
+
+
+def test_main_tls_info_in_json(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    _run_main(monkeypatch, ["example.com", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["tls_version"] == "TLSv1.3"
+    assert data[0]["cipher"] == "TLS_AES_256_GCM_SHA384"
+
+
+def test_main_file_has_no_tls_info(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert())
+    _run_main(monkeypatch, ["--file", str(cert_path), "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert "tls_version" not in data[0]
+
+
+def test_main_quiet_suppresses_valid(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert(days_valid=200))
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--quiet"])
+    assert code == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_main_quiet_shows_problem(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert(days_valid=10))
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--quiet", "--days", "30"])
+    assert code == 3
+    assert "Status:" in capsys.readouterr().out

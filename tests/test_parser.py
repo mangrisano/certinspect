@@ -99,11 +99,14 @@ def test_analyze_keys_match_expected_set(der_cert):
         "serial_number",
         "signature_algorithm",
         "days_to_expire",
+        "validity_days",
         "key_size",
         "san",
         "fingerprint_sha256",
         "is_ca",
         "self_signed",
+        "key_usage",
+        "extended_key_usage",
         "weak",
     }
     assert set(info) == expected
@@ -146,6 +149,52 @@ def test_analyze_weak_flags_sha1_signature(make_cert):
         pytest.skip("SHA-1 signatures are not supported by this OpenSSL build")
     info = analyze(load_certificate(cert_bytes))
     assert any("signature" in reason.lower() for reason in info["weak"])
+
+
+def test_analyze_validity_days(make_cert):
+    info = analyze(load_certificate(make_cert(days_valid=90, days_ago_start=10)))
+    # 10 days in the past + 90 days in the future = 100 days total.
+    assert info["validity_days"] == 100
+
+
+def test_analyze_key_usage_empty_when_absent(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    assert info["key_usage"] == []
+    assert info["extended_key_usage"] == []
+
+
+def test_analyze_key_usage_lists_enabled_flags(make_cert):
+    from cryptography import x509
+
+    ku = x509.KeyUsage(
+        digital_signature=True,
+        content_commitment=False,
+        key_encipherment=True,
+        data_encipherment=False,
+        key_agreement=False,
+        key_cert_sign=False,
+        crl_sign=False,
+        encipher_only=False,
+        decipher_only=False,
+    )
+    info = analyze(load_certificate(make_cert(key_usage=ku)))
+    assert info["key_usage"] == ["digital_signature", "key_encipherment"]
+
+
+def test_analyze_extended_key_usage_names(make_cert):
+    from cryptography.x509.oid import ExtendedKeyUsageOID
+
+    info = analyze(
+        load_certificate(
+            make_cert(
+                extended_key_usage=[
+                    ExtendedKeyUsageOID.SERVER_AUTH,
+                    ExtendedKeyUsageOID.CLIENT_AUTH,
+                ]
+            )
+        )
+    )
+    assert info["extended_key_usage"] == ["serverAuth", "clientAuth"]
 
 
 def _info_with_san(make_cert, san):

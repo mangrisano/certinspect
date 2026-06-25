@@ -25,6 +25,8 @@ def build_certificate(
     sig_hash: hashes.HashAlgorithm | None = None,
     encoding: serialization.Encoding = serialization.Encoding.DER,
     ec_curve: ec.EllipticCurve | None = None,
+    key_usage: x509.KeyUsage | None = None,
+    extended_key_usage: list | None = None,
 ) -> bytes:
     """Build a self-signed certificate and return its serialized bytes.
 
@@ -69,6 +71,12 @@ def build_certificate(
         builder = builder.add_extension(
             x509.BasicConstraints(ca=True, path_length=None),
             critical=True,
+        )
+    if key_usage is not None:
+        builder = builder.add_extension(key_usage, critical=True)
+    if extended_key_usage is not None:
+        builder = builder.add_extension(
+            x509.ExtendedKeyUsage(extended_key_usage), critical=False
         )
 
     cert = builder.sign(key, sig_hash or hashes.SHA256())
