@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from certinspect.cli import build_parser, main
+from certinspect.cli import _split_target, build_parser, main
 
 # Connection info returned by the patched network fetch.
 CONN = {"tls_version": "TLSv1.3", "cipher": "TLS_AES_256_GCM_SHA384"}
@@ -34,6 +34,21 @@ def test_build_parser_options():
 def test_build_parser_multiple_targets():
     args = build_parser().parse_args(["a.com", "b.com", "c.com"])
     assert args.target == ["a.com", "b.com", "c.com"]
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("example.com", ("example.com", 443)),
+        ("https://example.com", ("example.com", 443)),
+        ("https://example.com/", ("example.com", 443)),
+        ("https://example.com/path?q=1", ("example.com", 443)),
+        ("http://example.com:8443/x", ("example.com", 8443)),
+        ("example.com:8443", ("example.com", 8443)),
+    ],
+)
+def test_split_target(raw, expected):
+    assert _split_target(raw, 443) == expected
 
 
 def _run_main(monkeypatch, argv):
@@ -126,6 +141,20 @@ def test_main_hostname_mismatch_exit_five(monkeypatch, capsys, make_cert):
     )
     code = _run_main(monkeypatch, ["other.com"])
     assert code == 5
+
+
+def test_main_url_target_is_normalized(monkeypatch, capsys, make_cert):
+    seen = {}
+
+    def _fetch(host, port, timeout):
+        seen["host"], seen["port"] = host, port
+        return make_cert(san=["example.com"]), CONN
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    code = _run_main(monkeypatch, ["https://example.com:8443/path"])
+    assert code == 0
+    assert seen == {"host": "example.com", "port": 8443}
+    assert "=== example.com ===" in capsys.readouterr().out
 
 
 def test_main_hostname_match_in_json(monkeypatch, capsys, make_cert):
