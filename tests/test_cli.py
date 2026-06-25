@@ -382,3 +382,81 @@ def test_main_file_verify_is_skipped(monkeypatch, capsys, tmp_path, make_cert):
     _run_main(monkeypatch, ["--file", str(cert_path), "--verify", "--json"])
     data = json.loads(capsys.readouterr().out)
     assert "chain_trusted" not in data[0]
+
+
+def _fingerprint(cert_bytes):
+    from certinspect.parser import analyze, load_certificate
+
+    return analyze(load_certificate(cert_bytes))["fingerprint_sha256"]
+
+
+def test_main_pin_match_exit_zero(monkeypatch, capsys, make_cert):
+    cert = make_cert(san=["example.com"])
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _const_fetch(cert))
+    code = _run_main(monkeypatch, ["example.com", "--pin", _fingerprint(cert)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Pin match:" in out
+
+
+def test_main_pin_mismatch_exit_seven(monkeypatch, capsys, make_cert):
+    cert = make_cert(san=["example.com"])
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _const_fetch(cert))
+    code = _run_main(monkeypatch, ["example.com", "--pin", "00:11:22:33"])
+    out = capsys.readouterr().out
+    assert code == 7
+    assert "does not match the expected pin" in out
+
+
+def test_main_pin_ignores_colons_and_case(monkeypatch, capsys, make_cert):
+    cert = make_cert(san=["example.com"])
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _const_fetch(cert))
+    pin = _fingerprint(cert).replace(":", "").lower()
+    code = _run_main(monkeypatch, ["example.com", "--pin", pin])
+    assert code == 0
+
+
+def test_main_chain_shows_chain(monkeypatch, capsys, make_cert):
+    cert = make_cert(san=["example.com"])
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _const_fetch(cert))
+    code = _run_main(monkeypatch, ["example.com", "--chain"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Certificate chain:" in out
+    assert "[0] CN=example.com" in out
+
+
+def test_main_chain_in_json(monkeypatch, capsys, make_cert):
+    cert = make_cert(san=["example.com"])
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _const_fetch(cert))
+    _run_main(monkeypatch, ["example.com", "--chain", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["chain"][0]["subject"] == "CN=example.com"
+
+
+def test_main_input_reads_targets_from_file(monkeypatch, capsys, tmp_path, make_cert):
+    certs = {
+        "a.com": make_cert(san=["a.com"]),
+        "b.com": make_cert(san=["b.com"]),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    hosts = tmp_path / "hosts.txt"
+    hosts.write_text("# comment\na.com\n\nb.com\n")
+    code = _run_main(monkeypatch, ["--input", str(hosts)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "=== a.com ===" in out
+    assert "=== b.com ===" in out
+
+
+def test_main_input_reads_targets_from_stdin(monkeypatch, capsys, make_cert):
+    import io
+
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    monkeypatch.setattr("sys.stdin", io.StringIO("example.com\n"))
+    code = _run_main(monkeypatch, ["--input", "-"])
+    assert code == 0
+    assert "CN=example.com" in capsys.readouterr().out

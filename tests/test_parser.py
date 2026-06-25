@@ -8,8 +8,10 @@ from certinspect.parser import (
     CertificateLoadError,
     analyze,
     certificate_status,
+    chain_summary,
     hostname_matches,
     load_certificate,
+    pin_matches,
     to_pem,
 )
 
@@ -273,3 +275,27 @@ def test_status_expired(make_cert):
 def test_status_threshold_is_configurable(make_cert):
     info = analyze(load_certificate(make_cert(days_valid=10)))
     assert certificate_status(info, warn_days=5) == "VALID"
+
+
+def test_pin_matches_exact(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    assert pin_matches(info, info["fingerprint_sha256"]) is True
+
+
+def test_pin_matches_ignores_colons_and_case(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    pin = info["fingerprint_sha256"].replace(":", "").lower()
+    assert pin_matches(info, pin) is True
+
+
+def test_pin_does_not_match_other(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    assert pin_matches(info, "00:11:22") is False
+
+
+def test_chain_summary_fields(make_cert):
+    summary = chain_summary(load_certificate(make_cert(ca=True)))
+    assert summary["subject"] == "CN=example.com"
+    assert summary["is_ca"] is True
+    assert "not_valid_after" in summary
+    assert "serial_number" in summary
