@@ -1,95 +1,117 @@
 # certinspect
 
-Ispettore di certificati TLS da riga di comando.
+Command-line TLS certificate inspector.
 
-Dato uno o più domini (o un file `.pem`/`.der`), mostra validità, giorni alla
-scadenza, soggetto, issuer, SAN, algoritmo di firma, dimensione della chiave,
-fingerprint SHA-256, flag CA, self-signed, eventuali debolezze crittografiche e
-la corrispondenza dell'hostname.
+Given one or more domains (or a `.pem`/`.der` file), it reports validity,
+days to expiry, total validity period, subject, issuer, SAN, signature
+algorithm, key size, SHA-256 fingerprint, CA flag, self-signed flag, key
+usage and extended key usage, weak-crypto warnings, the negotiated TLS
+version and cipher, and whether the hostname matches the certificate.
 
-## Requisiti
+## Requirements
 
-- Python >= 3.14
+- Python >= 3.10
 
-## Installazione (sviluppo)
+## Installation
 
 ```bash
-python3.14 -m venv .venv
+pip install certinspect
+```
+
+### From source (development)
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
 pip install -e ".[dev]"
 ```
 
-## Uso
+## Usage
 
 ```bash
-# Ispeziona un host
+# Inspect a host
 certinspect example.com
 
-# Più host in una volta (modalità batch)
+# Multiple hosts at once (batch mode)
 certinspect example.com github.com api.example.com
 
-# Porta personalizzata
+# Custom port
 certinspect example.com --port 8443
 
-# Output JSON (sempre una lista di oggetti)
+# Custom connection timeout in seconds (default: 5)
+certinspect example.com --timeout 10
+
+# JSON output (always a list of objects)
 certinspect example.com --json
 
-# Ispeziona un certificato locale
-certinspect --file ./certificato.pem
+# Inspect a local certificate
+certinspect --file ./certificate.pem
 
-# Soglia di avviso scadenza personalizzata (default: 30 giorni)
+# Custom expiry warning threshold (default: 30 days)
 certinspect example.com --days 14
 
-# Salva il certificato scaricato in formato PEM
-certinspect example.com --export ./scaricato.pem
+# Only print certificates that have a problem
+certinspect example.com github.com --quiet
+
+# Save the fetched certificate as PEM
+certinspect example.com --export ./fetched.pem
+
+# Print the version
+certinspect --version
 ```
 
-## Opzioni
+## Options
 
-| Opzione         | Descrizione                                                    |
-| --------------- | -------------------------------------------------------------- |
-| `target...`     | Uno o più domini da ispezionare. Ometti quando usi `--file`.   |
-| `--file PATH`   | Ispeziona un certificato locale (PEM o DER) invece di un host. |
-| `--port N`      | Porta TCP a cui connettersi (default: 443).                    |
-| `--json`        | Stampa il risultato come JSON invece del testo leggibile.      |
-| `--days N`      | Avvisa se il certificato scade entro N giorni (default: 30).   |
-| `--export PATH` | Salva il certificato ispezionato come file PEM in PATH.        |
+| Option          | Description                                                  |
+| --------------- | ------------------------------------------------------------ |
+| `target...`     | One or more domains to inspect. Omit when using `--file`.    |
+| `--file PATH`   | Inspect a local certificate (PEM or DER) instead of a host.  |
+| `--port N`      | TCP port to connect to (default: 443).                       |
+| `--timeout N`   | Connection timeout in seconds (default: 5).                  |
+| `--json`        | Print the result as JSON instead of human-readable text.     |
+| `--quiet`       | Only print certificates that have a problem.                 |
+| `--days N`      | Warn if the certificate expires within N days (default: 30). |
+| `--export PATH` | Save the inspected certificate as a PEM file at PATH.        |
+| `--version`     | Print the version and exit.                                  |
 
-## Exit code
+## Exit codes
 
-Pensati per l'automazione (cron, CI, script di monitoraggio). In modalità batch
-viene restituito il caso peggiore tra tutti i target.
+Designed for automation (cron, CI, monitoring scripts). In batch mode the
+worst code across all targets is returned.
 
-| Code | Significato                                  |
-| ---- | -------------------------------------------- |
-| 0    | Certificato valido                           |
-| 1    | Errore di runtime (rete, file, parsing)      |
-| 2    | Errore negli argomenti della riga di comando |
-| 3    | In scadenza entro la soglia `--days`         |
-| 4    | Scaduto o con date non valide                |
-| 5    | L'hostname non corrisponde al certificato    |
+| Code | Meaning                                 |
+| ---- | --------------------------------------- |
+| 0    | Valid certificate                       |
+| 1    | Runtime error (network, file, parse)    |
+| 2    | Command-line usage error                |
+| 3    | Expiring within the `--days` threshold  |
+| 4    | Expired or with invalid dates           |
+| 5    | Hostname does not match the certificate |
 
-Esempio in uno script:
+Example in a script:
 
 ```bash
-certinspect tuosito.it --days 21
+certinspect yoursite.com --days 21
 case $? in
-  0) ;;                                          # tutto ok
-  3) echo "In scadenza" | mail -s "Avviso" tu@mail.it ;;
-  4) echo "Scaduto"     | mail -s "Urgente" tu@mail.it ;;
-  5) echo "Host errato" | mail -s "Urgente" tu@mail.it ;;
-  *) echo "Check fallito" ;;
+  0) ;;                                        # all good
+  3) echo "Expiring" | mail -s "Warning" you@mail.com ;;
+  4) echo "Expired"  | mail -s "Urgent"  you@mail.com ;;
+  5) echo "Bad host" | mail -s "Urgent"  you@mail.com ;;
+  *) echo "Check failed" ;;
 esac
 ```
 
-## Sviluppo
+## Development
 
 ```bash
-# Test
+# Tests
 pytest
 
-# Lint e formattazione (Ruff)
+# Lint and formatting (Ruff)
 ruff check src tests
 ruff format src tests
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
