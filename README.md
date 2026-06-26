@@ -545,14 +545,43 @@ Days to expiry: 65
 
 ### `--concurrency N`
 
-Inspect hosts in parallel in batch mode; output order is preserved.
+Inspect hosts in parallel in batch mode; the output is identical to the
+sequential run (order is preserved), only faster. The speedup grows with the
+number of hosts and their latency. Measured here on a 20-host list (the normal
+per-host report is sent to `/dev/null` to focus on wall-clock time):
 
 ```console
-$ certinspect example.com github.com --concurrency 10 --csv
-target,common_name,status,days_to_expire,valid_from,valid_until,issuer,hostname_match
-example.com,example.com,VALID,64,2026-05-31 21:39:12+00:00,2026-08-29 21:41:26+00:00,Cloudflare TLS Issuing ECC CA 3,True
-github.com,github.com,VALID,37,2026-05-05 00:00:00+00:00,2026-08-02 23:59:59+00:00,Sectigo Public Server Authentication CA DV E36,True
+$ cat hosts.txt
+example.com
+github.com
+pypi.org
+wikipedia.org
+cloudflare.com
+mozilla.org
+python.org
+djangoproject.com
+debian.org
+archlinux.org
+rust-lang.org
+nodejs.org
+gitlab.com
+stackoverflow.com
+reddit.com
+apache.org
+postgresql.org
+docker.com
+kubernetes.io
+php.net
+
+$ time certinspect --input hosts.txt >/dev/null            # sequential (default)
+real 1.35
+
+$ time certinspect --input hosts.txt --concurrency 20 >/dev/null
+real 0.32
 ```
+
+Same 20 certificates, ~4× faster. Without the redirect you still get the usual
+`=== host ===` report for every target, in the original input order.
 
 ### `--exporter {nagios,prometheus}`
 
