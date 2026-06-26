@@ -86,3 +86,74 @@ def test_negotiate_starttls_unsupported_protocol():
 
     with pytest.raises(ValueError, match="unsupported STARTTLS protocol"):
         _negotiate_starttls(_FakeSocket(b""), "xmpp")
+
+
+def test_verify_chain_uses_custom_ca(monkeypatch):
+    """--cafile/--capath must build the SSL context from the given bundle."""
+    import ssl
+
+    from certinspect import fetch
+
+    recorded = {}
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class _Context:
+        def wrap_socket(self, sock, server_hostname=None):
+            err = ssl.SSLCertVerificationError("self signed certificate")
+            err.verify_message = "self signed certificate"
+            raise err
+
+    def _fake_create(*args, **kwargs):
+        recorded["kwargs"] = kwargs
+        return _Context()
+
+    monkeypatch.setattr(fetch.ssl, "create_default_context", _fake_create)
+    monkeypatch.setattr(fetch.socket, "create_connection", lambda *a, **k: _Conn())
+
+    trusted, reason, chain = fetch.verify_chain(
+        "example.com", cafile="/tmp/ca.pem", capath="/tmp/certs"
+    )
+
+    assert recorded["kwargs"] == {"cafile": "/tmp/ca.pem", "capath": "/tmp/certs"}
+    assert trusted is False
+    assert reason == "self signed certificate"
+    assert chain == []
+
+
+def test_verify_chain_default_uses_system_store(monkeypatch):
+    """Without --cafile/--capath the system trust store is used (no kwargs)."""
+    import ssl
+
+    from certinspect import fetch
+
+    recorded = {}
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class _Context:
+        def wrap_socket(self, sock, server_hostname=None):
+            err = ssl.SSLCertVerificationError("unable to get local issuer")
+            err.verify_message = "unable to get local issuer"
+            raise err
+
+    def _fake_create(*args, **kwargs):
+        recorded["kwargs"] = kwargs
+        return _Context()
+
+    monkeypatch.setattr(fetch.ssl, "create_default_context", _fake_create)
+    monkeypatch.setattr(fetch.socket, "create_connection", lambda *a, **k: _Conn())
+
+    fetch.verify_chain("example.com")
+
+    assert recorded["kwargs"] == {}

@@ -308,7 +308,11 @@ def test_main_verify_trusted_exit_zero(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None: (True, None, []),
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
+            True,
+            None,
+            [],
+        ),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
@@ -328,7 +332,7 @@ def test_main_verify_untrusted_exit_six(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None: (
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
             False,
             "self signed certificate",
             [],
@@ -355,7 +359,11 @@ def test_main_verify_in_json(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None: (True, None, []),
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
+            True,
+            None,
+            [],
+        ),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
@@ -374,7 +382,11 @@ def test_main_verify_revoked_exit_six(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None: (True, None, []),
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
+            True,
+            None,
+            [],
+        ),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
@@ -399,7 +411,11 @@ def test_main_verify_revocation_unavailable_is_soft_fail(
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None: (True, None, []),
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
+            True,
+            None,
+            [],
+        ),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
@@ -692,6 +708,50 @@ def test_main_csv_rejects_exporter(monkeypatch, capsys, make_cert):
     code = _run_main(monkeypatch, ["a.com", "--csv", "--exporter", "nagios"])
     assert code == 2
     assert "cannot be used together" in capsys.readouterr().err
+
+
+def test_main_cafile_requires_verify(monkeypatch, capsys):
+    code = _run_main(monkeypatch, ["example.com", "--cafile", "/tmp/ca.pem"])
+    assert code == 2
+    assert "require --verify" in capsys.readouterr().err
+
+
+def test_main_capath_requires_verify(monkeypatch, capsys):
+    code = _run_main(monkeypatch, ["example.com", "--capath", "/tmp/certs"])
+    assert code == 2
+    assert "require --verify" in capsys.readouterr().err
+
+
+def test_main_cafile_forwarded_to_verify_chain(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    recorded = {}
+
+    def _fake_verify(host, port, timeout, starttls=None, cafile=None, capath=None):
+        recorded["cafile"] = cafile
+        recorded["capath"] = capath
+        return True, None, []
+
+    monkeypatch.setattr("certinspect.cli.verify_chain", _fake_verify)
+    monkeypatch.setattr(
+        "certinspect.cli.check_revocation",
+        lambda cert, timeout, issuer=None: ("GOOD", None),
+    )
+    code = _run_main(
+        monkeypatch,
+        [
+            "example.com",
+            "--verify",
+            "--cafile",
+            "/tmp/ca.pem",
+            "--capath",
+            "/tmp/certs",
+        ],
+    )
+    assert code == 0
+    assert recorded == {"cafile": "/tmp/ca.pem", "capath": "/tmp/certs"}
 
 
 def test_main_max_days_filters_output(monkeypatch, capsys, make_cert):

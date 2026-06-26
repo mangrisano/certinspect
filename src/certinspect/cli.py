@@ -122,6 +122,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--cafile",
+        metavar="PATH",
+        help=(
+            "Verify the chain against this CA bundle (PEM) instead of the "
+            "system trust store. Requires --verify; useful behind an "
+            "internal/private PKI."
+        ),
+    )
+    parser.add_argument(
+        "--capath",
+        metavar="DIR",
+        help=(
+            "Verify the chain against the hashed CA certificates in this "
+            "directory (OpenSSL c_rehash layout) instead of the system trust "
+            "store. Requires --verify; may be combined with --cafile."
+        ),
+    )
+    parser.add_argument(
         "--chain",
         action="store_true",
         help="Show the certificate chain presented by the server.",
@@ -269,6 +287,8 @@ def _inspect(
     chain: bool,
     pin: str | None,
     starttls: str | None = None,
+    cafile: str | None = None,
+    capath: str | None = None,
 ) -> tuple[dict, int]:
     """Inspect one source and return its (info, exit_code).
 
@@ -294,7 +314,7 @@ def _inspect(
 
     if verify and target:
         trusted, reason, verified = verify_chain(
-            target, port, timeout, starttls=starttls
+            target, port, timeout, starttls=starttls, cafile=cafile, capath=capath
         )
         info["chain_trusted"] = trusted
         info["chain_error"] = reason
@@ -429,6 +449,8 @@ def main() -> None:
         parser.error("--csv-delimiter must be a single character.")
     if args.critical_days is not None and args.critical_days > args.days:
         parser.error("--critical-days must be less than or equal to --days.")
+    if (args.cafile or args.capath) and not args.verify:
+        parser.error("--cafile/--capath require --verify.")
 
     extra_targets = _read_targets(args.input) if args.input else []
     if not args.target and not extra_targets and not args.file:
@@ -469,6 +491,8 @@ def main() -> None:
                 chain=args.chain,
                 pin=args.pin,
                 starttls=args.starttls,
+                cafile=args.cafile,
+                capath=args.capath,
             )
         except (OSError, ssl.SSLError, ValueError) as err:
             return raw_target, None, str(err)

@@ -23,6 +23,7 @@ Given one or more domains (or a `.pem`/`.der` file), it reports:
 It can also:
 
 - [x] Verify the chain + OCSP revocation against the system trust store (`--verify`)
+- [x] Verify the chain against a private/internal CA bundle (`--cafile`/`--capath`)
 - [x] Show the chain presented by the server (`--chain`)
 - [x] Pin the certificate by SHA-256 fingerprint (`--pin`)
 - [x] Inspect many hosts at once with text or JSON output (batch mode, `--json`)
@@ -110,6 +111,10 @@ certinspect example.com github.com --summary
 # Verify the certificate chain against the system trust store
 certinspect example.com --verify
 
+# Verify against an internal/private CA instead of the system trust store
+certinspect internal.example.lan --verify --cafile ./internal-ca.pem
+certinspect internal.example.lan --verify --capath /etc/ssl/internal-certs
+
 # Show the certificate chain presented by the server
 certinspect example.com --chain
 
@@ -194,6 +199,8 @@ not checked via CRLs.
 | `--csv-delimiter SEP`             | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.                                                                 |
 | `--quiet`                         | Only print certificates that have a problem.                                                                                                                    |
 | `--verify`                        | Verify the chain + OCSP revocation, system trust store (hosts only).                                                                                            |
+| `--cafile PATH`                   | Verify the chain against this CA bundle (PEM) instead of the system trust store. Requires `--verify`; for internal/private PKI.                                 |
+| `--capath DIR`                    | Verify the chain against the hashed CA certificates in this directory (OpenSSL `c_rehash` layout). Requires `--verify`; may be combined with `--cafile`.        |
 | `--chain`                         | Show the certificate chain presented by the server.                                                                                                             |
 | `--pin SHA256`                    | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).                                                                                     |
 | `--input PATH`                    | Read extra targets from a file, one per line ('-' for stdin).                                                                                                   |
@@ -268,6 +275,10 @@ case $? in
   *) echo "Check failed" ;;
 esac
 ```
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for the release history.
 
 ## Development
 

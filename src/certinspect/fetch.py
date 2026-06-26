@@ -139,7 +139,12 @@ def _presented_chain(ssock: ssl.SSLSocket) -> list[x509.Certificate]:
 
 
 def verify_chain(
-    host: str, port: int = 443, timeout: float = 5.0, starttls: str | None = None
+    host: str,
+    port: int = 443,
+    timeout: float = 5.0,
+    starttls: str | None = None,
+    cafile: str | None = None,
+    capath: str | None = None,
 ) -> tuple[bool, str | None, list[x509.Certificate]]:
     """Check whether the server's certificate chain is trusted.
 
@@ -150,8 +155,15 @@ def verify_chain(
     ``reason`` is None on success or the verification message on failure.
     Network-level failures are left to propagate. When ``starttls`` is set the
     plaintext protocol is upgraded to TLS before the handshake.
+
+    When ``cafile`` and/or ``capath`` are given, the chain is verified against
+    that CA bundle/directory instead of the system trust store, which is what
+    you want behind an internal/private PKI.
     """
-    context = ssl.create_default_context()
+    if cafile or capath:
+        context = ssl.create_default_context(cafile=cafile, capath=capath)
+    else:
+        context = ssl.create_default_context()
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
             if starttls:
