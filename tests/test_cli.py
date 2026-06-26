@@ -647,3 +647,75 @@ def test_main_concurrency_one_is_serial(monkeypatch, capsys, make_cert):
     assert code == 0
     assert "=== a.com ===" in out
     assert "=== b.com ===" in out
+
+
+def test_main_csv_output(monkeypatch, capsys, make_cert):
+    import csv
+    import io
+
+    certs = {"a.com": make_cert(san=["a.com"]), "b.com": make_cert(san=["b.com"])}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["a.com", "b.com", "--csv"])
+    out = capsys.readouterr().out
+    assert code == 0
+    rows = list(csv.DictReader(io.StringIO(out)))
+    assert [r["target"] for r in rows] == ["a.com", "b.com"]
+    assert rows[0]["status"] == "VALID"
+
+
+def test_main_csv_rejects_json(monkeypatch, capsys, make_cert):
+    code = _run_main(monkeypatch, ["a.com", "--csv", "--json"])
+    assert code == 2
+    assert "cannot be used together" in capsys.readouterr().err
+
+
+def test_main_csv_rejects_exporter(monkeypatch, capsys, make_cert):
+    code = _run_main(monkeypatch, ["a.com", "--csv", "--exporter", "nagios"])
+    assert code == 2
+    assert "cannot be used together" in capsys.readouterr().err
+
+
+def test_main_max_days_filters_output(monkeypatch, capsys, make_cert):
+    certs = {
+        "soon.com": make_cert(san=["soon.com"], days_valid=10),
+        "later.com": make_cert(san=["later.com"], days_valid=200),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["soon.com", "later.com", "--max-days", "30"])
+    out = capsys.readouterr().out
+    assert "=== soon.com ===" in out
+    assert "=== later.com ===" not in out
+    # soon.com is EXPIRING (code 3); the filter hides later.com from the output
+    # but the exit code still reflects every inspected target.
+    assert code == 3
+
+
+def test_main_max_days_keeps_expired(monkeypatch, capsys, make_cert):
+    certs = {
+        "expired.com": make_cert(
+            san=["expired.com"], days_valid=-5, days_ago_start=365
+        ),
+        "later.com": make_cert(san=["later.com"], days_valid=200),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["expired.com", "later.com", "--max-days", "30"])
+    out = capsys.readouterr().out
+    assert "=== expired.com ===" in out
+    assert "=== later.com ===" not in out
+    # An expired certificate still drives the exit code even when filtered in.
+    assert code == 4
+
+
+def test_main_max_days_applies_to_csv(monkeypatch, capsys, make_cert):
+    import csv
+    import io
+
+    certs = {
+        "soon.com": make_cert(san=["soon.com"], days_valid=10),
+        "later.com": make_cert(san=["later.com"], days_valid=200),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    _run_main(monkeypatch, ["soon.com", "later.com", "--max-days", "30", "--csv"])
+    out = capsys.readouterr().out
+    rows = list(csv.DictReader(io.StringIO(out)))
+    assert [r["target"] for r in rows] == ["soon.com"]

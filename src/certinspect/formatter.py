@@ -5,6 +5,8 @@ human-readable text or as JSON. This module only PRESENTS data; all the
 analysis logic lives in parser.py.
 """
 
+import csv
+import io
 import json
 
 from certinspect.parser import certificate_status
@@ -98,6 +100,40 @@ def format_human(info: dict, warn_days: int = 30) -> str:
 def format_json(info: dict) -> str:
     """Return a JSON representation."""
     return json.dumps(info, indent=2, default=str)
+
+
+# Columns emitted by format_csv, in order. The first element is the header
+# label; the second pulls the value out of a (target, info) pair.
+_CSV_COLUMNS = (
+    ("target", lambda target, info: target or ""),
+    ("subject", lambda target, info: info["subject"]),
+    ("issuer", lambda target, info: info["issuer"]),
+    ("status", lambda target, info: info["_status"]),
+    ("days_to_expire", lambda target, info: info["days_to_expire"]),
+    ("not_valid_before", lambda target, info: info["not_valid_before"]),
+    ("not_valid_after", lambda target, info: info["not_valid_after"]),
+    ("serial_number", lambda target, info: info["serial_number"]),
+    ("fingerprint_sha256", lambda target, info: info["fingerprint_sha256"]),
+    ("hostname_match", lambda target, info: info.get("hostname_match")),
+)
+
+
+def format_csv(
+    results: list[tuple[str | None, dict, int]],
+    warn_days: int = 30,
+) -> str:
+    """Render results as CSV with a header row, one line per target.
+
+    Returns the whole CSV document (trailing newline included). The status
+    column reuses certificate_status() so it matches the other output modes.
+    """
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow([label for label, _ in _CSV_COLUMNS])
+    for target, info, _ in results:
+        info = {**info, "_status": certificate_status(info, warn_days)}
+        writer.writerow([getter(target, info) for _, getter in _CSV_COLUMNS])
+    return buffer.getvalue()
 
 
 # Nagios/Icinga plugin exit codes.

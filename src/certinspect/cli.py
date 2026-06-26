@@ -29,7 +29,12 @@ from certinspect.parser import (
     pin_matches,
     to_pem,
 )
-from certinspect.formatter import format_human, format_nagios, format_prometheus
+from certinspect.formatter import (
+    format_csv,
+    format_human,
+    format_nagios,
+    format_prometheus,
+)
 
 # Exit codes reflecting the certificate status, kept distinct from
 # argparse's usage error (2) and the generic runtime error (1).
@@ -83,6 +88,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Output the result as JSON instead of human-readable text.",
+    )
+    parser.add_argument(
+        "--csv",
+        action="store_true",
+        help=(
+            "Output the results as CSV (one row per target, with a header), "
+            "convenient for spreadsheets."
+        ),
     )
     parser.add_argument(
         "--quiet",
@@ -156,6 +169,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Number of hosts to inspect in parallel in batch mode "
             "(default: 1). Output order is preserved regardless of N."
+        ),
+    )
+    parser.add_argument(
+        "--max-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Only show certificates that expire within N days (already-expired "
+            "ones are always shown). Filters the output only; the exit code "
+            "still reflects every inspected target."
         ),
     )
 
@@ -260,6 +284,8 @@ def _render(
     as_json: bool,
     days: int,
     quiet: bool,
+    as_csv: bool = False,
+    max_days: int | None = None,
     exporter: str | None = None,
     errors: list[tuple[str | None, str]] = (),
 ) -> int | None:
@@ -267,8 +293,9 @@ def _render(
 
     With ``exporter`` set, render monitoring output: 'nagios' returns its
     plugin exit code (the override), 'prometheus' returns None. Otherwise
-    print JSON (always a list) or human text; when ``quiet`` is set, only
-    results with a non-zero exit code are shown.
+    print JSON, CSV, or human text; ``quiet`` keeps only results with a
+    non-zero exit code and ``max_days`` keeps only those expiring within that
+    many days. Both filters affect the display only, never the exit code.
     """
     if exporter == "nagios":
         text, code = format_nagios(results, errors, warn_days=days)
@@ -280,6 +307,12 @@ def _render(
 
     if quiet:
         results = [r for r in results if r[2] != 0]
+    if max_days is not None:
+        results = [r for r in results if r[1]["days_to_expire"] <= max_days]
+
+    if as_csv:
+        print(format_csv(results, warn_days=days), end="")
+        return None
 
     if as_json:
         print(json.dumps([info for _, info, _ in results], indent=2, default=str))
@@ -319,6 +352,10 @@ def main() -> None:
 
     if args.exporter and args.json:
         parser.error("--exporter and --json cannot be used together.")
+    if args.csv and args.json:
+        parser.error("--csv and --json cannot be used together.")
+    if args.csv and args.exporter:
+        parser.error("--csv and --exporter cannot be used together.")
 
     extra_targets = _read_targets(args.input) if args.input else []
     if not args.target and not extra_targets and not args.file:
@@ -390,6 +427,8 @@ def main() -> None:
         as_json=args.json,
         days=args.days,
         quiet=args.quiet,
+        as_csv=args.csv,
+        max_days=args.max_days,
         exporter=args.exporter,
         errors=errors,
     )

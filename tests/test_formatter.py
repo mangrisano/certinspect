@@ -1,5 +1,7 @@
 """Tests for the formatter module: format_human and format_json."""
 
+import csv
+import io
 import json
 
 import pytest
@@ -9,6 +11,7 @@ from certinspect.formatter import (
     NAGIOS_OK,
     NAGIOS_UNKNOWN,
     NAGIOS_WARNING,
+    format_csv,
     format_human,
     format_json,
     format_nagios,
@@ -210,3 +213,44 @@ def test_format_prometheus_output_parses_with_prometheus_client(make_cert):
     assert len(expiry) == 1
     assert expiry[0].labels == {"target": "example.com"}
     assert expiry[0].value == float(info["days_to_expire"])
+
+
+def _parse_csv(text):
+    return list(csv.DictReader(io.StringIO(text)))
+
+
+def test_format_csv_has_header_and_one_row_per_target(make_cert):
+    results = [
+        ("a.example.com", _info(make_cert(san=["a.example.com"])), 0),
+        ("b.example.com", _info(make_cert(san=["b.example.com"])), 0),
+    ]
+    rows = _parse_csv(format_csv(results))
+    assert [r["target"] for r in rows] == ["a.example.com", "b.example.com"]
+
+
+def test_format_csv_includes_expected_columns(make_cert):
+    info = _info(make_cert(san=["example.com"], days_valid=200))
+    rows = _parse_csv(format_csv([("example.com", info, 0)]))
+    row = rows[0]
+    assert row["status"] == "VALID"
+    assert row["days_to_expire"] == str(info["days_to_expire"])
+    assert row["subject"] == info["subject"]
+    assert row["fingerprint_sha256"] == info["fingerprint_sha256"]
+
+
+def test_format_csv_status_reflects_expiry(make_cert):
+    info = _info(make_cert(days_valid=10))
+    rows = _parse_csv(format_csv([("example.com", info, 3)], warn_days=30))
+    assert rows[0]["status"] == "EXPIRING"
+
+
+def test_format_csv_empty_results_has_header_only(make_cert):
+    text = format_csv([])
+    rows = _parse_csv(text)
+    assert rows == []
+    assert text.splitlines()[0].startswith("target,")
+
+
+def test_format_csv_empty_target_for_file_source(der_cert):
+    rows = _parse_csv(format_csv([(None, _info(der_cert), 0)]))
+    assert rows[0]["target"] == ""
