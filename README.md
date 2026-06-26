@@ -17,12 +17,13 @@ Given one or more domains (or a `.pem`/`.der` file), it reports:
 - [x] CA flag and self-signed flag
 - [x] Key usage and extended key usage
 - [x] Weak-crypto warnings
+- [x] Warn about expired or soon-to-expire intermediate CA certificates in the chain
 - [x] Negotiated TLS version and cipher
 - [x] Hostname match against the certificate
 
 It can also:
 
-- [x] Verify the chain + OCSP revocation against the system trust store (`--verify`)
+- [x] Verify the chain + OCSP/CRL revocation against the system trust store (`--verify`)
 - [x] Verify the chain against a private/internal CA bundle (`--cafile`/`--capath`)
 - [x] Show the chain presented by the server (`--chain`)
 - [x] Pin the certificate by SHA-256 fingerprint (`--pin`)
@@ -181,10 +182,12 @@ SAN:
 
 With `--verify`, certinspect opens a fully verified TLS handshake (chain +
 hostname against the Python/OpenSSL trust store) and, when the certificate
-advertises an OCSP responder, queries it for the revocation status. OCSP is
-soft-fail: an unreachable responder reports `UNAVAILABLE` and does not change
-the exit code, while a `REVOKED` status fails with exit code 6. Revocation is
-not checked via CRLs.
+advertises an OCSP responder, queries it for the revocation status. If OCSP is
+unavailable, certinspect falls back to the certificate's CRL distribution
+points (downloaded over HTTP and verified against the issuer). Both checks are
+soft-fail: when neither OCSP nor the CRL gives an answer the status is
+`UNAVAILABLE` and the exit code is unchanged, while a `REVOKED` status fails
+with exit code 6.
 
 ## Options
 
@@ -198,7 +201,7 @@ not checked via CRLs.
 | `--csv`                           | Print the results as CSV (one row per target, with a header).                                                                                                   |
 | `--csv-delimiter SEP`             | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.                                                                 |
 | `--quiet`                         | Only print certificates that have a problem.                                                                                                                    |
-| `--verify`                        | Verify the chain + OCSP revocation, system trust store (hosts only).                                                                                            |
+| `--verify`                        | Verify the chain + OCSP/CRL revocation, system trust store (hosts only).                                                                                        |
 | `--cafile PATH`                   | Verify the chain against this CA bundle (PEM) instead of the system trust store. Requires `--verify`; for internal/private PKI.                                 |
 | `--capath DIR`                    | Verify the chain against the hashed CA certificates in this directory (OpenSSL `c_rehash` layout). Requires `--verify`; may be combined with `--cafile`.        |
 | `--chain`                         | Show the certificate chain presented by the server.                                                                                                             |

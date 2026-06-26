@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CRL revocation fallback: when OCSP is unavailable, `--verify` now downloads
+  the certificate's CRL distribution points (verified against the issuer) to
+  determine the revocation status.
+- Warn when an intermediate or root certificate in the chain is already expired
+  or expires within the `--days` window (uses the verified chain with
+  `--verify`, otherwise the chain presented by the server).
+
 ## [0.11.0] - 2026-06-26
 
 ### Added
