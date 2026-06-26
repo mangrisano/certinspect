@@ -97,7 +97,6 @@ def format_human(info: dict, warn_days: int = 30) -> str:
 
 def format_json(info: dict) -> str:
     """Return a JSON representation."""
-
     return json.dumps(info, indent=2, default=str)
 
 

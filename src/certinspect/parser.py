@@ -29,7 +29,6 @@ def _name_matches(pattern: str, hostname: str) -> bool:
 
 def hostname_matches(info: dict, hostname: str) -> bool:
     """Return True if hostname is covered by the certificate's SAN names."""
-
     return any(_name_matches(name, hostname) for name in info["san"])
 
 
@@ -84,7 +83,6 @@ def _weak_key(public_key) -> str | None:
 
 def load_certificate(data: bytes) -> x509.Certificate:
     """Load a certificate from DER or PEM bytes."""
-
     if not data:
         raise CertificateLoadError("There is no certificate to load.")
     try:
@@ -129,7 +127,6 @@ def _extended_key_usage(cert: x509.Certificate) -> list[str]:
 
 def analyze(cert: x509.Certificate) -> dict:
     """Extract the relevant information from the certificate as a dict."""
-
     now = datetime.now(timezone.utc)
     days_to_expire = (cert.not_valid_after_utc - now).days
     validity_days = (cert.not_valid_after_utc - cert.not_valid_before_utc).days
@@ -176,7 +173,6 @@ def certificate_status(info: dict, warn_days: int = 30) -> str:
     'EXPIRING' means the certificate is still valid but expires within
     ``warn_days`` days.
     """
-
     if info["not_valid_before"] > info["not_valid_after"]:
         return "INVALID DATES"
     days = info["days_to_expire"]
