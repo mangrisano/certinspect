@@ -191,6 +191,16 @@ def build_parser() -> argparse.ArgumentParser:
             "still reflects every inspected target."
         ),
     )
+    parser.add_argument(
+        "--sort",
+        choices=("host", "expiry"),
+        default=None,
+        help=(
+            "Sort the output: 'host' alphabetically by target, 'expiry' by "
+            "days left (soonest first). Affects the display only, not the "
+            "exit code."
+        ),
+    )
 
     return parser
 
@@ -296,6 +306,7 @@ def _render(
     as_csv: bool = False,
     csv_delimiter: str = ",",
     max_days: int | None = None,
+    sort: str | None = None,
     exporter: str | None = None,
     errors: list[tuple[str | None, str]] = (),
 ) -> int | None:
@@ -305,7 +316,8 @@ def _render(
     plugin exit code (the override), 'prometheus' returns None. Otherwise
     print JSON, CSV, or human text; ``quiet`` keeps only results with a
     non-zero exit code and ``max_days`` keeps only those expiring within that
-    many days. Both filters affect the display only, never the exit code.
+    many days. ``sort`` reorders the kept results ('host' or 'expiry'). All
+    three affect the display only, never the exit code.
     """
     if exporter == "nagios":
         text, code = format_nagios(results, errors, warn_days=days)
@@ -319,6 +331,10 @@ def _render(
         results = [r for r in results if r[2] != 0]
     if max_days is not None:
         results = [r for r in results if r[1]["days_to_expire"] <= max_days]
+    if sort == "host":
+        results = sorted(results, key=lambda r: r[0] or "")
+    elif sort == "expiry":
+        results = sorted(results, key=lambda r: r[1]["days_to_expire"])
 
     if as_csv:
         print(format_csv(results, warn_days=days, delimiter=csv_delimiter), end="")
@@ -442,6 +458,7 @@ def main() -> None:
         as_csv=args.csv,
         csv_delimiter=args.csv_delimiter,
         max_days=args.max_days,
+        sort=args.sort,
         exporter=args.exporter,
         errors=errors,
     )

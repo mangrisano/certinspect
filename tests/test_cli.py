@@ -738,3 +738,40 @@ def test_main_max_days_applies_to_csv(monkeypatch, capsys, make_cert):
     out = capsys.readouterr().out
     rows = list(csv.DictReader(io.StringIO(out)))
     assert [r["target"] for r in rows] == ["soon.com"]
+
+
+def test_main_sort_host_orders_alphabetically(monkeypatch, capsys, make_cert):
+    certs = {
+        "b.com": make_cert(san=["b.com"]),
+        "a.com": make_cert(san=["a.com"]),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    _run_main(monkeypatch, ["b.com", "a.com", "--sort", "host"])
+    out = capsys.readouterr().out
+    assert out.index("=== a.com ===") < out.index("=== b.com ===")
+
+
+def test_main_sort_expiry_soonest_first(monkeypatch, capsys, make_cert):
+    import csv
+    import io
+
+    certs = {
+        "later.com": make_cert(san=["later.com"], days_valid=200),
+        "soon.com": make_cert(san=["soon.com"], days_valid=10),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    _run_main(monkeypatch, ["later.com", "soon.com", "--sort", "expiry", "--csv"])
+    out = capsys.readouterr().out
+    rows = list(csv.DictReader(io.StringIO(out)))
+    assert [r["target"] for r in rows] == ["soon.com", "later.com"]
+
+
+def test_main_sort_does_not_change_exit_code(monkeypatch, capsys, make_cert):
+    certs = {
+        "ok.com": make_cert(san=["ok.com"], days_valid=200),
+        "soon.com": make_cert(san=["soon.com"], days_valid=10),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["ok.com", "soon.com", "--sort", "host"])
+    # soon.com is EXPIRING (code 3); sorting must not alter the exit code.
+    assert code == 3
