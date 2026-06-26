@@ -189,6 +189,41 @@ soft-fail: when neither OCSP nor the CRL gives an answer the status is
 `UNAVAILABLE` and the exit code is unchanged, while a `REVOKED` status fails
 with exit code 6.
 
+When the responder is down (or the certificate has no OCSP URL at all) the CRL
+fallback can still catch a revoked certificate; the `via CRL` note shows which
+source answered:
+
+```console
+$ certinspect revoked.example.com --verify
+=== revoked.example.com ===
+Subject:        CN=revoked.example.com
+Status:         VALID
+...
+Chain trusted:  True
+Revocation:     REVOKED
+WARNING: certificate revoked (revoked at 2026-05-14 09:21:03+00:00 (via CRL))
+$ echo $?
+6
+```
+
+certinspect also inspects the other certificates in the chain (the verified
+chain with `--verify`, otherwise the chain presented by the server) and warns
+when an intermediate or root CA is already expired or expires within the
+`--days` window — an expired intermediate breaks the chain even when the leaf
+itself is still valid:
+
+```console
+$ certinspect internal.example.lan --verify --cafile ./internal-ca.pem
+=== internal.example.lan ===
+Subject:        CN=internal.example.lan
+Status:         VALID
+...
+Chain trusted:  True
+WARNING: chain certificate 'Example Intermediate CA' expires in 12 days
+WARNING: chain certificate 'Example Legacy Root CA' expired 3 days ago
+Revocation:     GOOD
+```
+
 ## Options
 
 | Option                            | Description                                                                                                                                                     |
@@ -217,6 +252,336 @@ with exit code 6.
 | `--exporter {nagios,prometheus}`  | Emit machine-readable monitoring output (ignores `--quiet`).                                                                                                    |
 | `--concurrency N`                 | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved).                                                                               |
 | `--version`                       | Print the version and exit.                                                                                                                                     |
+
+## Options in action
+
+Worked examples with real output for every option. Long values (fingerprints,
+issuer names) are trimmed with `...`; `$?` is the process exit code.
+
+### `target` — inspect a host
+
+```console
+$ certinspect example.com
+=== example.com ===
+Subject:        CN=example.com
+Status:         VALID
+
+Issuer:         CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US
+Valid from:     2026-05-31 21:39:12+00:00
+Valid until:    2026-08-29 21:41:26+00:00
+Days to expiry: 64
+Total validity: 90 days
+
+Serial number:  35428337808578903465180920265426569102
+Signature:      ecdsa-with-SHA256
+Key size:       256 bit
+Fingerprint:    BE:AB:14:CF:39:67:8F:DA:0E:F1:60:6E:ED:B8:18:C2:...
+CA:             False
+Self-Signed:    False
+TLS version:    TLSv1.3
+Cipher:         TLS_AES_256_GCM_SHA384
+Key usage:      digital_signature
+Ext. key usage: serverAuth
+Hostname match: True
+
+SAN:
+  - example.com
+  - *.example.com
+```
+
+Passing several hosts prints one `=== host ===` block per target (batch mode).
+
+### `--file PATH` — inspect a local certificate
+
+No live handshake, so there is no `=== host ===` header, no TLS version/cipher
+and no hostname match.
+
+```console
+$ certinspect --file ./fetched.pem
+Subject:        CN=example.com
+Status:         VALID
+
+Issuer:         CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US
+Valid from:     2026-05-31 21:39:12+00:00
+Valid until:    2026-08-29 21:41:26+00:00
+...
+```
+
+### `--port N` / `--timeout N` — connection tuning
+
+The report is identical to a plain inspection; only how/where certinspect
+connects changes.
+
+```console
+$ certinspect example.com --port 443 --timeout 10
+=== example.com ===
+Subject:        CN=example.com
+Status:         VALID
+...
+```
+
+### `--json`
+
+```console
+$ certinspect example.com --json
+[
+  {
+    "subject": "CN=example.com",
+    "issuer": "CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US",
+    "not_valid_before": "2026-05-31 21:39:12+00:00",
+    "not_valid_after": "2026-08-29 21:41:26+00:00",
+    "serial_number": 35428337808578903465180920265426569102,
+    "signature_algorithm": "ecdsa-with-SHA256",
+    "days_to_expire": 64,
+    "validity_days": 90,
+    "key_size": 256,
+    "san": ["example.com", "*.example.com"],
+    "fingerprint_sha256": "BE:AB:14:CF:39:67:8F:DA:...",
+    "is_ca": false,
+    "self_signed": false,
+    "key_usage": ["digital_signature"],
+    "extended_key_usage": ["serverAuth"],
+    "weak": [],
+    "tls_version": "TLSv1.3",
+    "cipher": "TLS_AES_256_GCM_SHA384",
+    "hostname_match": true
+  }
+]
+```
+
+### `--csv` / `--csv-delimiter SEP`
+
+```console
+$ certinspect example.com github.com --csv
+target,common_name,status,days_to_expire,valid_from,valid_until,issuer,hostname_match
+example.com,example.com,VALID,64,2026-05-31 21:39:12+00:00,2026-08-29 21:41:26+00:00,Cloudflare TLS Issuing ECC CA 3,True
+github.com,github.com,VALID,37,2026-05-05 00:00:00+00:00,2026-08-02 23:59:59+00:00,Sectigo Public Server Authentication CA DV E36,True
+
+$ certinspect example.com --csv --csv-delimiter ';'
+target;common_name;status;days_to_expire;valid_from;valid_until;issuer;hostname_match
+example.com;example.com;VALID;64;2026-05-31 21:39:12+00:00;2026-08-29 21:41:26+00:00;Cloudflare TLS Issuing ECC CA 3;True
+```
+
+### `--quiet`
+
+Healthy certificates produce no output; only problem targets (and fetch
+errors) are printed.
+
+```console
+$ certinspect example.com github.com --quiet
+$ echo $?
+0
+```
+
+### `--verify` (+ `--cafile PATH` / `--capath DIR`)
+
+Adds `Chain trusted` and `Revocation` to the report.
+
+```console
+$ certinspect example.com --verify
+...
+Hostname match: True
+Chain trusted:  True
+Revocation:     GOOD
+
+SAN:
+  - example.com
+  - *.example.com
+```
+
+Verify against a specific CA bundle instead of the system trust store (useful
+behind an internal/private PKI):
+
+```console
+$ certinspect example.com --verify --cafile /path/to/ca-bundle.pem
+...
+Chain trusted:  True
+Revocation:     GOOD
+```
+
+### `--chain`
+
+```console
+$ certinspect example.com --chain
+...
+Certificate chain:
+  [0] CN=example.com
+      issuer:  CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US
+      expires: 2026-08-29 21:41:26+00:00
+      CA:      False
+  [1] CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US
+      issuer:  CN=SSL.com TLS Transit ECC CA R2,O=SSL Corporation,C=US
+      expires: 2035-05-27 19:49:44+00:00
+      CA:      True
+  [2] CN=SSL.com TLS Transit ECC CA R2,O=SSL Corporation,C=US
+      issuer:  CN=SSL.com TLS ECC Root CA 2022,O=SSL Corporation,C=US
+      expires: 2037-10-17 17:02:22+00:00
+      CA:      True
+```
+
+### `--pin SHA256`
+
+```console
+$ certinspect example.com --pin BE:AB:14:CF:39:67:8F:DA:...
+...
+Pin match:      True
+
+$ certinspect example.com --pin AA:BB:CC
+...
+Pin match:      False
+WARNING: fingerprint does not match the expected pin
+$ echo $?
+7
+```
+
+### `--input PATH`
+
+Read targets from a file (`#` comments allowed, `-` for stdin).
+
+```console
+$ cat hosts.txt
+example.com
+# a comment
+github.com
+$ certinspect --input hosts.txt --csv
+target,common_name,status,days_to_expire,valid_from,valid_until,issuer,hostname_match
+example.com,example.com,VALID,64,2026-05-31 21:39:12+00:00,2026-08-29 21:41:26+00:00,Cloudflare TLS Issuing ECC CA 3,True
+github.com,github.com,VALID,37,2026-05-05 00:00:00+00:00,2026-08-02 23:59:59+00:00,Sectigo Public Server Authentication CA DV E36,True
+```
+
+### `--days N`
+
+Tighten or relax the expiry warning window (`EXPIRING`, exit 3).
+
+```console
+$ certinspect example.com --days 90
+...
+Status:         EXPIRING
+...
+WARNING: certificate expires in 64 days
+$ echo $?
+3
+```
+
+### `--critical-days N`
+
+Two-tier threshold; near-expiry escalates to `CRITICAL` (exit 4).
+
+```console
+$ certinspect example.com --days 90 --critical-days 70
+...
+Status:         CRITICAL
+...
+CRITICAL: certificate expires in 64 days
+$ echo $?
+4
+```
+
+### `--max-days N`
+
+Show only certificates expiring within N days (display filter; the exit code
+still reflects every target).
+
+```console
+$ certinspect example.com github.com --max-days 50 --csv
+target,common_name,status,days_to_expire,valid_from,valid_until,issuer,hostname_match
+github.com,github.com,VALID,37,2026-05-05 00:00:00+00:00,2026-08-02 23:59:59+00:00,Sectigo Public Server Authentication CA DV E36,True
+```
+
+### `--sort host|expiry`
+
+Reorder the output (soonest expiry first shown here).
+
+```console
+$ certinspect example.com github.com --sort expiry --csv
+target,common_name,status,days_to_expire,valid_from,valid_until,issuer,hostname_match
+github.com,github.com,VALID,37,2026-05-05 00:00:00+00:00,2026-08-02 23:59:59+00:00,Sectigo Public Server Authentication CA DV E36,True
+example.com,example.com,VALID,64,2026-05-31 21:39:12+00:00,2026-08-29 21:41:26+00:00,Cloudflare TLS Issuing ECC CA 3,True
+```
+
+### `--summary`
+
+One-line tally on stderr, counting every target before filtering.
+
+```console
+$ certinspect example.com doesnotexist.invalid --summary --csv
+error: doesnotexist.invalid: [Errno 8] nodename nor servname provided, or not known
+target,common_name,status,days_to_expire,valid_from,valid_until,issuer,hostname_match
+example.com,example.com,VALID,64,2026-05-31 21:39:12+00:00,2026-08-29 21:41:26+00:00,Cloudflare TLS Issuing ECC CA 3,True
+summary: 1 valid · 0 expiring · 0 expired · 1 error (2 targets)
+```
+
+### `--export PATH`
+
+Save the fetched certificate as PEM and still print the report.
+
+```console
+$ certinspect example.com --export ./fetched.pem
+=== example.com ===
+Subject:        CN=example.com
+Status:         VALID
+...
+$ head -1 ./fetched.pem
+-----BEGIN CERTIFICATE-----
+```
+
+### `--starttls {smtp,imap,pop3,ftp}`
+
+Upgrade a plaintext protocol to TLS before inspecting (the protocol's standard
+port is used unless `--port` is given).
+
+```console
+$ certinspect smtp.gmail.com --starttls smtp
+=== smtp.gmail.com ===
+Subject:        CN=smtp.gmail.com
+Status:         VALID
+
+Issuer:         CN=WE2,O=Google Trust Services,C=US
+Valid from:     2026-06-08 08:38:06+00:00
+Valid until:    2026-08-31 08:38:05+00:00
+Days to expiry: 65
+...
+```
+
+### `--concurrency N`
+
+Inspect hosts in parallel in batch mode; output order is preserved.
+
+```console
+$ certinspect example.com github.com --concurrency 10 --csv
+target,common_name,status,days_to_expire,valid_from,valid_until,issuer,hostname_match
+example.com,example.com,VALID,64,2026-05-31 21:39:12+00:00,2026-08-29 21:41:26+00:00,Cloudflare TLS Issuing ECC CA 3,True
+github.com,github.com,VALID,37,2026-05-05 00:00:00+00:00,2026-08-02 23:59:59+00:00,Sectigo Public Server Authentication CA DV E36,True
+```
+
+### `--exporter {nagios,prometheus}`
+
+Machine-readable monitoring output (full examples in
+[Monitoring](#monitoring)).
+
+```console
+$ certinspect example.com --exporter nagios
+OK: example.com certificate VALID (64 days to expiry) | days=64;30;0
+```
+
+### `--version`
+
+```console
+$ certinspect --version
+certinspect 0.11.0
+```
+
+### Fetch error (`exit 1`)
+
+An unreachable target prints an `error:` line to stderr and yields exit code 1;
+in batch mode the other targets are still inspected.
+
+```console
+$ certinspect doesnotexist.invalid
+error: doesnotexist.invalid: [Errno 8] nodename nor servname provided, or not known
+$ echo $?
+1
+```
 
 ## Monitoring
 
