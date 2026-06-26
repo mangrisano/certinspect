@@ -6,11 +6,19 @@
 
 Command-line TLS certificate inspector.
 
-Given one or more domains (or a `.pem`/`.der` file), it reports validity,
-days to expiry, total validity period, subject, issuer, SAN, signature
-algorithm, key size, SHA-256 fingerprint, CA flag, self-signed flag, key
-usage and extended key usage, weak-crypto warnings, the negotiated TLS
-version and cipher, and whether the hostname matches the certificate.
+Given one or more domains (or a `.pem`/`.der` file), it reports:
+
+- [x] Validity and days to expiry
+- [x] Total validity period
+- [x] Subject and issuer
+- [x] Subject Alternative Names (SAN)
+- [x] Signature algorithm and key size
+- [x] SHA-256 fingerprint
+- [x] CA flag and self-signed flag
+- [x] Key usage and extended key usage
+- [x] Weak-crypto warnings
+- [x] Negotiated TLS version and cipher
+- [x] Hostname match against the certificate
 
 ## Requirements
 
