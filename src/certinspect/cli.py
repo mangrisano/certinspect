@@ -34,6 +34,7 @@ from certinspect.formatter import (
     format_human,
     format_nagios,
     format_prometheus,
+    format_summary,
 )
 
 # Exit codes reflecting the certificate status, kept distinct from
@@ -201,6 +202,15 @@ def build_parser() -> argparse.ArgumentParser:
             "exit code."
         ),
     )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help=(
+            "Print a one-line tally (valid/expiring/expired/errors) to stderr "
+            "after the report. Counts every inspected target, ignoring "
+            "--quiet/--max-days filtering."
+        ),
+    )
 
     return parser
 
@@ -307,6 +317,7 @@ def _render(
     csv_delimiter: str = ",",
     max_days: int | None = None,
     sort: str | None = None,
+    summary: bool = False,
     exporter: str | None = None,
     errors: list[tuple[str | None, str]] = (),
 ) -> int | None:
@@ -317,7 +328,8 @@ def _render(
     print JSON, CSV, or human text; ``quiet`` keeps only results with a
     non-zero exit code and ``max_days`` keeps only those expiring within that
     many days. ``sort`` reorders the kept results ('host' or 'expiry'). All
-    three affect the display only, never the exit code.
+    three affect the display only, never the exit code. ``summary`` prints a
+    one-line tally to stderr, counting every target before filtering.
     """
     if exporter == "nagios":
         text, code = format_nagios(results, errors, warn_days=days)
@@ -326,6 +338,9 @@ def _render(
     if exporter == "prometheus":
         print(format_prometheus(results, errors, warn_days=days))
         return None
+
+    # Computed from the full result set, before --quiet/--max-days filtering.
+    summary_line = format_summary(results, errors) if summary else None
 
     if quiet:
         results = [r for r in results if r[2] != 0]
@@ -338,18 +353,18 @@ def _render(
 
     if as_csv:
         print(format_csv(results, warn_days=days, delimiter=csv_delimiter), end="")
-        return None
-
-    if as_json:
+    elif as_json:
         print(json.dumps([info for _, info, _ in results], indent=2, default=str))
-        return None
+    else:
+        blocks = []
+        for target, info, _ in results:
+            text = format_human(info, warn_days=days)
+            blocks.append(f"=== {target} ===\n{text}" if target else text)
+        if blocks:
+            print("\n\n".join(blocks))
 
-    blocks = []
-    for target, info, _ in results:
-        text = format_human(info, warn_days=days)
-        blocks.append(f"=== {target} ===\n{text}" if target else text)
-    if blocks:
-        print("\n\n".join(blocks))
+    if summary_line:
+        print(summary_line, file=sys.stderr)
     return None
 
 
@@ -459,6 +474,7 @@ def main() -> None:
         csv_delimiter=args.csv_delimiter,
         max_days=args.max_days,
         sort=args.sort,
+        summary=args.summary,
         exporter=args.exporter,
         errors=errors,
     )

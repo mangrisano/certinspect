@@ -775,3 +775,43 @@ def test_main_sort_does_not_change_exit_code(monkeypatch, capsys, make_cert):
     code = _run_main(monkeypatch, ["ok.com", "soon.com", "--sort", "host"])
     # soon.com is EXPIRING (code 3); sorting must not alter the exit code.
     assert code == 3
+
+
+def test_main_summary_goes_to_stderr(monkeypatch, capsys, make_cert):
+    certs = {
+        "ok.com": make_cert(san=["ok.com"], days_valid=200),
+        "soon.com": make_cert(san=["soon.com"], days_valid=10),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    _run_main(monkeypatch, ["ok.com", "soon.com", "--summary"])
+    captured = capsys.readouterr()
+    assert "summary: 1 valid · 1 expiring · 0 expired (2 targets)" in captured.err
+    # The report itself stays on stdout, untouched by the summary line.
+    assert "summary:" not in captured.out
+
+
+def test_main_summary_counts_before_filtering(monkeypatch, capsys, make_cert):
+    certs = {
+        "soon.com": make_cert(san=["soon.com"], days_valid=10),
+        "later.com": make_cert(san=["later.com"], days_valid=200),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    _run_main(monkeypatch, ["soon.com", "later.com", "--max-days", "30", "--summary"])
+    err = capsys.readouterr().err
+    # later.com is filtered out of the report but still counted in the summary.
+    assert "1 valid" in err
+    assert "1 expiring" in err
+    assert "(2 targets)" in err
+
+
+def test_main_summary_with_csv_keeps_csv_clean(monkeypatch, capsys, make_cert):
+    import csv
+    import io
+
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=200)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    _run_main(monkeypatch, ["a.com", "--csv", "--summary"])
+    captured = capsys.readouterr()
+    assert "summary:" in captured.err
+    rows = list(csv.DictReader(io.StringIO(captured.out)))
+    assert [r["target"] for r in rows] == ["a.com"]

@@ -149,6 +149,45 @@ def format_csv(
     return buffer.getvalue()
 
 
+# Summary categories keyed by per-target exit code, in display order. The
+# first three (valid/expiring/expired) are always shown; the rest only when
+# their count is non-zero, to keep the line short.
+_SUMMARY_LABELS = (
+    (0, "valid"),
+    (3, "expiring"),
+    (4, "expired"),
+    (5, "mismatch"),
+    (6, "untrusted"),
+    (7, "pin-mismatch"),
+)
+
+
+def format_summary(
+    results: list[tuple[str | None, dict, int]],
+    errors: list[tuple[str | None, str]] = (),
+) -> str:
+    """Return a one-line tally of the inspected targets.
+
+    Counts come from each target's exit code, so the line reflects the worst
+    state found per host (e.g. an expired cert counts as 'expired'). Failed
+    fetches are counted separately as errors. valid/expiring/expired are
+    always shown; the other categories appear only when non-zero.
+    """
+    counts: dict[int, int] = {}
+    for _, _, code in results:
+        counts[code] = counts.get(code, 0) + 1
+    parts = [
+        f"{counts.get(code, 0)} {label}"
+        for code, label in _SUMMARY_LABELS
+        if code in (0, 3, 4) or counts.get(code, 0)
+    ]
+    n_err = len(errors)
+    if n_err:
+        parts.append(f"{n_err} error{'s' if n_err != 1 else ''}")
+    total = len(results) + n_err
+    return f"summary: {' · '.join(parts)} ({total} target{'s' if total != 1 else ''})"
+
+
 # Nagios/Icinga plugin exit codes.
 NAGIOS_OK = 0
 NAGIOS_WARNING = 1

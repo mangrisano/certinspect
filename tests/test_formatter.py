@@ -16,6 +16,7 @@ from certinspect.formatter import (
     format_json,
     format_nagios,
     format_prometheus,
+    format_summary,
 )
 from certinspect.parser import analyze, load_certificate
 
@@ -276,3 +277,32 @@ def test_format_csv_empty_results_has_header_only(make_cert):
 def test_format_csv_empty_target_for_file_source(der_cert):
     rows = _parse_csv(format_csv([(None, _info(der_cert), 0)]))
     assert rows[0]["target"] == ""
+
+
+def test_format_summary_counts_by_code(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    results = [
+        ("a.com", info, 0),
+        ("b.com", info, 0),
+        ("c.com", info, 3),
+        ("d.com", info, 4),
+    ]
+    line = format_summary(results)
+    assert line == "summary: 2 valid · 1 expiring · 1 expired (4 targets)"
+
+
+def test_format_summary_includes_errors_and_problem_codes(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    results = [("a.com", info, 0), ("b.com", info, 5)]
+    line = format_summary(results, errors=[("x.com", "boom")])
+    assert "1 mismatch" in line
+    assert "1 error" in line
+    assert line.endswith("(3 targets)")
+
+
+def test_format_summary_hides_zero_problem_categories(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    line = format_summary([("a.com", info, 0)])
+    assert "mismatch" not in line
+    assert "untrusted" not in line
+    assert line == "summary: 1 valid · 0 expiring · 0 expired (1 target)"
