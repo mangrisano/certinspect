@@ -11,6 +11,7 @@ import argparse
 import json
 import sys
 import ssl
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 from certinspect import __version__
 from certinspect.fetch import (
@@ -145,6 +146,16 @@ def build_parser() -> argparse.ArgumentParser:
             "report: a Nagios/Icinga plugin line per target (exit code follows "
             "the plugin convention) or Prometheus textfile metrics. Ignores "
             "--quiet so every target is always reported."
+        ),
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Number of hosts to inspect in parallel in batch mode "
+            "(default: 1). Output order is preserved regardless of N."
         ),
     )
 
@@ -325,10 +336,13 @@ def main() -> None:
     if args.starttls and default_port == 443:
         default_port = STARTTLS_PORTS[args.starttls]
 
-    results: list[tuple[str | None, dict, int]] = []
-    errors: list[tuple[str | None, str]] = []
-    codes: list[int] = []
-    for raw_target in targets:
+    def _run(raw_target: str | None) -> tuple[str | None, tuple | None, str | None]:
+        """Inspect one target, returning (raw_target, payload, error).
+
+        ``payload`` is ``(target, info, code)`` on success and None on failure,
+        in which case ``error`` carries the message. Runs in worker threads, so
+        it must not perform any I/O on shared streams.
+        """
         target, port = raw_target, default_port
         try:
             if raw_target is not None:
@@ -346,14 +360,30 @@ def main() -> None:
                 starttls=args.starttls,
             )
         except (OSError, ssl.SSLError, ValueError) as err:
+            return raw_target, None, str(err)
+        return raw_target, (target, info, code), None
+
+    # Inspect in parallel when asked; ThreadPoolExecutor.map preserves order.
+    workers = max(1, args.concurrency)
+    if workers > 1 and len(targets) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            outcomes = list(pool.map(_run, targets))
+    else:
+        outcomes = [_run(t) for t in targets]
+
+    results: list[tuple[str | None, dict, int]] = []
+    errors: list[tuple[str | None, str]] = []
+    codes: list[int] = []
+    for raw_target, payload, err in outcomes:
+        if err is not None:
             if not args.exporter:
                 label = f"{raw_target}: " if raw_target else ""
                 print(f"error: {label}{err}", file=sys.stderr)
-            errors.append((raw_target, str(err)))
+            errors.append((raw_target, err))
             codes.append(1)
             continue
-        results.append((target, info, code))
-        codes.append(code)
+        results.append(payload)
+        codes.append(payload[2])
 
     override = _render(
         results,

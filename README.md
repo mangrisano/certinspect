@@ -20,6 +20,16 @@ Given one or more domains (or a `.pem`/`.der` file), it reports:
 - [x] Negotiated TLS version and cipher
 - [x] Hostname match against the certificate
 
+It can also:
+
+- [x] Verify the chain + OCSP revocation against the system trust store (`--verify`)
+- [x] Show the chain presented by the server (`--chain`)
+- [x] Pin the certificate by SHA-256 fingerprint (`--pin`)
+- [x] Inspect many hosts at once with text or JSON output (batch mode, `--json`)
+- [x] Inspect hosts in parallel in batch mode (`--concurrency`)
+- [x] Inspect certificates behind STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)
+- [x] Emit monitoring output for Nagios/Icinga and Prometheus (`--exporter`)
+
 ## Requirements
 
 - Python >= 3.10
@@ -50,6 +60,9 @@ certinspect example.com:8443
 
 # Multiple hosts at once (batch mode)
 certinspect example.com github.com api.example.com
+
+# Inspect many hosts in parallel (output order is preserved)
+certinspect example.com github.com api.example.com --concurrency 10
 
 # Custom port
 certinspect example.com --port 8443
@@ -161,6 +174,7 @@ not checked via CRLs.
 | `--export PATH`                   | Save the inspected certificate as a PEM file at PATH.                                             |
 | `--starttls {smtp,imap,pop3,ftp}` | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given). |
 | `--exporter {nagios,prometheus}`  | Emit machine-readable monitoring output (ignores `--quiet`).                                      |
+| `--concurrency N`                 | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved).                 |
 | `--version`                       | Print the version and exit.                                                                       |
 
 ## Monitoring

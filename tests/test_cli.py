@@ -603,3 +603,47 @@ def test_main_starttls_rejects_invalid_protocol(monkeypatch, capsys):
     code = _run_main(monkeypatch, ["example.com", "--starttls", "xmpp"])
     assert code == 2
     assert "invalid choice" in capsys.readouterr().err
+
+
+def test_build_parser_concurrency_default():
+    args = build_parser().parse_args(["example.com"])
+    assert args.concurrency == 1
+
+
+def test_main_concurrency_preserves_order(monkeypatch, capsys, make_cert):
+    hosts = ["a.com", "b.com", "c.com", "d.com"]
+    certs = {h: make_cert(san=[h]) for h in hosts}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, [*hosts, "--concurrency", "3"])
+    out = capsys.readouterr().out
+    assert code == 0
+    positions = [out.index(f"=== {h} ===") for h in hosts]
+    assert positions == sorted(positions)
+
+
+def test_main_concurrency_runs_in_parallel(monkeypatch, capsys, make_cert):
+    import threading
+
+    # The barrier only releases when both fetches are in flight at once, so
+    # the test would time out (BrokenBarrierError) if execution were serial.
+    barrier = threading.Barrier(2, timeout=5)
+    certs = {"a.com": make_cert(san=["a.com"]), "b.com": make_cert(san=["b.com"])}
+
+    def _fetch(host, port, timeout, starttls=None):
+        barrier.wait()
+        return certs[host], CONN
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    code = _run_main(monkeypatch, ["a.com", "b.com", "--concurrency", "2"])
+    assert code == 0
+    assert not barrier.broken
+
+
+def test_main_concurrency_one_is_serial(monkeypatch, capsys, make_cert):
+    certs = {"a.com": make_cert(san=["a.com"]), "b.com": make_cert(san=["b.com"])}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["a.com", "b.com", "--concurrency", "1"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "=== a.com ===" in out
+    assert "=== b.com ===" in out
