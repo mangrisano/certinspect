@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-06-26
+
+### Added
+
+- README: per-option examples with real output, and a reproducible
+  `--concurrency` benchmark showing the parallel speedup.
+
+### Fixed
+
+- Publish workflow: skip the PyPI upload when the version already exists, so
+  re-pushing a tag no longer fails the release pipeline.
+
 ## [1.0.0] - 2026-06-26
 
 ### Added
