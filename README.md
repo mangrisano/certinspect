@@ -85,6 +85,13 @@ cat hosts.txt | certinspect --input -
 # Save the fetched certificate as PEM
 certinspect example.com --export ./fetched.pem
 
+# Monitoring output: a Nagios/Icinga plugin line per target
+# (exit code follows the plugin convention: 0=OK, 1=WARNING, 2=CRITICAL)
+certinspect example.com --exporter nagios
+
+# Monitoring output: Prometheus textfile-collector metrics
+certinspect example.com github.com --exporter prometheus
+
 # Print the version
 certinspect --version
 ```
@@ -133,21 +140,54 @@ not checked via CRLs.
 
 ## Options
 
-| Option          | Description                                                                    |
-| --------------- | ------------------------------------------------------------------------------ |
-| `target...`     | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`. |
-| `--file PATH`   | Inspect a local certificate (PEM or DER) instead of a host.                    |
-| `--port N`      | TCP port to connect to (default: 443).                                         |
-| `--timeout N`   | Connection timeout in seconds (default: 5).                                    |
-| `--json`        | Print the result as JSON instead of human-readable text.                       |
-| `--quiet`       | Only print certificates that have a problem.                                   |
-| `--verify`      | Verify the chain + OCSP revocation, system trust store (hosts only).           |
-| `--chain`       | Show the certificate chain presented by the server.                            |
-| `--pin SHA256`  | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).    |
-| `--input PATH`  | Read extra targets from a file, one per line ('-' for stdin).                  |
-| `--days N`      | Warn if the certificate expires within N days (default: 30).                   |
-| `--export PATH` | Save the inspected certificate as a PEM file at PATH.                          |
-| `--version`     | Print the version and exit.                                                    |
+| Option                           | Description                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| `target...`                      | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`. |
+| `--file PATH`                    | Inspect a local certificate (PEM or DER) instead of a host.                    |
+| `--port N`                       | TCP port to connect to (default: 443).                                         |
+| `--timeout N`                    | Connection timeout in seconds (default: 5).                                    |
+| `--json`                         | Print the result as JSON instead of human-readable text.                       |
+| `--quiet`                        | Only print certificates that have a problem.                                   |
+| `--verify`                       | Verify the chain + OCSP revocation, system trust store (hosts only).           |
+| `--chain`                        | Show the certificate chain presented by the server.                            |
+| `--pin SHA256`                   | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).    |
+| `--input PATH`                   | Read extra targets from a file, one per line ('-' for stdin).                  |
+| `--days N`                       | Warn if the certificate expires within N days (default: 30).                   |
+| `--export PATH`                  | Save the inspected certificate as a PEM file at PATH.                          |
+| `--exporter {nagios,prometheus}` | Emit machine-readable monitoring output (ignores `--quiet`).                   |
+| `--version`                      | Print the version and exit.                                                    |
+
+## Monitoring
+
+Use `--exporter` to plug `certinspect` straight into a monitoring stack. Both
+formats report every target, including hosts that could not be reached.
+
+`nagios` emits one Nagios/Icinga plugin line per target with perfdata and exits
+with the plugin convention (`0` OK, `1` WARNING, `2` CRITICAL); an unreachable
+host is CRITICAL:
+
+```console
+$ certinspect example.com expired.example.com --exporter nagios
+OK: example.com certificate VALID (217 days to expiry) | days=217;30;0
+CRITICAL: expired.example.com certificate EXPIRED (-3 days to expiry) | days=-3;30;0
+```
+
+`prometheus` emits textfile-collector metrics (`certinspect_up`,
+`certinspect_cert_expiry_days`, `certinspect_cert_valid`), keeping the normal
+worst-status exit code:
+
+```console
+$ certinspect example.com --exporter prometheus
+# HELP certinspect_up Whether the target could be inspected (1) or not (0).
+# TYPE certinspect_up gauge
+certinspect_up{target="example.com"} 1
+# HELP certinspect_cert_expiry_days Days until the certificate expires.
+# TYPE certinspect_cert_expiry_days gauge
+certinspect_cert_expiry_days{target="example.com"} 217
+# HELP certinspect_cert_valid Whether the certificate is within its validity window (1) or not (0).
+# TYPE certinspect_cert_valid gauge
+certinspect_cert_valid{target="example.com"} 1
+```
 
 ## Exit codes
 

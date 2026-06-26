@@ -2,7 +2,16 @@
 
 import json
 
-from certinspect.formatter import format_human, format_json
+from certinspect.formatter import (
+    NAGIOS_CRITICAL,
+    NAGIOS_OK,
+    NAGIOS_UNKNOWN,
+    NAGIOS_WARNING,
+    format_human,
+    format_json,
+    format_nagios,
+    format_prometheus,
+)
 from certinspect.parser import analyze, load_certificate
 
 
@@ -100,3 +109,76 @@ def test_format_human_warning_threshold_is_configurable(make_cert):
     text = format_human(_info(make_cert(days_valid=10)), warn_days=5)
     assert "WARNING" not in text
     assert "EXPIRING" not in text
+
+
+def test_format_nagios_ok_for_valid_cert(make_cert):
+    results = [("example.com", _info(make_cert(days_valid=200)), 0)]
+    text, code = format_nagios(results)
+    assert code == NAGIOS_OK
+    assert text.startswith("OK: example.com")
+    assert "| days=" in text
+
+
+def test_format_nagios_warning_for_expiring(make_cert):
+    results = [("example.com", _info(make_cert(days_valid=10)), 3)]
+    text, code = format_nagios(results, warn_days=30)
+    assert code == NAGIOS_WARNING
+    assert "WARNING" in text
+
+
+def test_format_nagios_critical_for_problem(make_cert):
+    results = [("example.com", _info(make_cert(days_valid=-5, days_ago_start=365)), 4)]
+    text, code = format_nagios(results)
+    assert code == NAGIOS_CRITICAL
+    assert "CRITICAL" in text
+
+
+def test_format_nagios_reports_unreachable_as_critical(make_cert):
+    results = [("good.example.com", _info(make_cert(days_valid=200)), 0)]
+    errors = [("bad.example.com", "timed out")]
+    text, code = format_nagios(results, errors)
+    assert code == NAGIOS_CRITICAL
+    assert "bad.example.com unreachable (timed out)" in text
+
+
+def test_format_nagios_unknown_when_nothing_inspected():
+    text, code = format_nagios([], [])
+    assert code == NAGIOS_UNKNOWN
+    assert "UNKNOWN" in text
+
+
+def test_format_nagios_overall_is_worst_severity(make_cert):
+    results = [
+        ("a.example.com", _info(make_cert(days_valid=200)), 0),
+        ("b.example.com", _info(make_cert(days_valid=10)), 3),
+    ]
+    _, code = format_nagios(results)
+    assert code == NAGIOS_WARNING
+
+
+def test_format_prometheus_exposes_metrics(make_cert):
+    info = _info(make_cert(days_valid=42))
+    results = [("example.com", info, 0)]
+    text = format_prometheus(results)
+    assert "# TYPE certinspect_cert_expiry_days gauge" in text
+    assert 'certinspect_up{target="example.com"} 1' in text
+    assert 'certinspect_cert_valid{target="example.com"} 1' in text
+    days = info["days_to_expire"]
+    assert f'certinspect_cert_expiry_days{{target="example.com"}} {days}' in text
+
+
+def test_format_prometheus_marks_expired_as_invalid(make_cert):
+    results = [("example.com", _info(make_cert(days_valid=-5, days_ago_start=365)), 4)]
+    text = format_prometheus(results)
+    assert 'certinspect_cert_valid{target="example.com"} 0' in text
+
+
+def test_format_prometheus_marks_unreachable_target_down():
+    text = format_prometheus([], [("bad.example.com", "timed out")])
+    assert 'certinspect_up{target="bad.example.com"} 0' in text
+
+
+def test_format_prometheus_escapes_label(make_cert):
+    results = [('weird"name', _info(make_cert(days_valid=42)), 0)]
+    text = format_prometheus(results)
+    assert 'certinspect_up{target="weird\\"name"} 1' in text

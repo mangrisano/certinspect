@@ -489,3 +489,65 @@ def test_main_input_reads_targets_from_stdin(monkeypatch, capsys, make_cert):
     code = _run_main(monkeypatch, ["--input", "-"])
     assert code == 0
     assert "CN=example.com" in capsys.readouterr().out
+
+
+def test_main_exporter_nagios_ok(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], days_valid=200)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--exporter", "nagios"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.startswith("OK: example.com")
+    assert "| days=" in out
+
+
+def test_main_exporter_nagios_expiring_exits_warning(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], days_valid=10)),
+    )
+    code = _run_main(
+        monkeypatch, ["example.com", "--exporter", "nagios", "--days", "30"]
+    )
+    assert code == 1
+    assert "WARNING" in capsys.readouterr().out
+
+
+def test_main_exporter_nagios_unreachable_is_critical(monkeypatch, capsys, make_cert):
+    def _fetch(host, port, timeout):
+        if host == "down.com":
+            raise OSError("connection refused")
+        return make_cert(san=["ok.com"], days_valid=200), CONN
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    code = _run_main(monkeypatch, ["ok.com", "down.com", "--exporter", "nagios"])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "CRITICAL: down.com unreachable" in captured.out
+    # With an exporter, per-host errors are not duplicated on stderr.
+    assert captured.err == ""
+
+
+def test_main_exporter_prometheus_metrics(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], days_valid=42)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--exporter", "prometheus"])
+    out = capsys.readouterr().out
+    # Prometheus output keeps the normal worst-status exit code.
+    assert code == 0
+    assert "# TYPE certinspect_cert_expiry_days gauge" in out
+    assert 'certinspect_up{target="example.com"} 1' in out
+
+
+def test_main_exporter_rejects_json(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--exporter", "nagios", "--json"])
+    assert code == 2
+    assert "cannot be used together" in capsys.readouterr().err

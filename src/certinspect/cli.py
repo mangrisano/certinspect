@@ -23,7 +23,7 @@ from certinspect.parser import (
     pin_matches,
     to_pem,
 )
-from certinspect.formatter import format_human
+from certinspect.formatter import format_human, format_nagios, format_prometheus
 
 # Exit codes reflecting the certificate status, kept distinct from
 # argparse's usage error (2) and the generic runtime error (1).
@@ -124,6 +124,16 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Save the inspected certificate as a PEM file at PATH.",
     )
+    parser.add_argument(
+        "--exporter",
+        choices=("nagios", "prometheus"),
+        help=(
+            "Emit machine-readable monitoring output instead of the normal "
+            "report: a Nagios/Icinga plugin line per target (exit code follows "
+            "the plugin convention) or Prometheus textfile metrics. Ignores "
+            "--quiet so every target is always reported."
+        ),
+    )
 
     return parser
 
@@ -219,17 +229,30 @@ def _render(
     as_json: bool,
     days: int,
     quiet: bool,
-) -> None:
-    """Print the collected results as JSON (always a list) or human text.
+    exporter: str | None = None,
+    errors: list[tuple[str | None, str]] = (),
+) -> int | None:
+    """Print the collected results and return an optional exit-code override.
 
-    When ``quiet`` is set, only results with a non-zero exit code are shown.
+    With ``exporter`` set, render monitoring output: 'nagios' returns its
+    plugin exit code (the override), 'prometheus' returns None. Otherwise
+    print JSON (always a list) or human text; when ``quiet`` is set, only
+    results with a non-zero exit code are shown.
     """
+    if exporter == "nagios":
+        text, code = format_nagios(results, errors, warn_days=days)
+        print(text)
+        return code
+    if exporter == "prometheus":
+        print(format_prometheus(results, errors, warn_days=days))
+        return None
+
     if quiet:
         results = [r for r in results if r[2] != 0]
 
     if as_json:
         print(json.dumps([info for _, info, _ in results], indent=2, default=str))
-        return
+        return None
 
     blocks = []
     for target, info, _ in results:
@@ -237,6 +260,7 @@ def _render(
         blocks.append(f"=== {target} ===\n{text}" if target else text)
     if blocks:
         print("\n\n".join(blocks))
+    return None
 
 
 def _read_targets(path: str) -> list[str]:
@@ -263,6 +287,9 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    if args.exporter and args.json:
+        parser.error("--exporter and --json cannot be used together.")
+
     extra_targets = _read_targets(args.input) if args.input else []
     if not args.target and not extra_targets and not args.file:
         parser.error("There is no target or no file to inspect.")
@@ -274,6 +301,7 @@ def main() -> None:
         targets = [*args.target, *extra_targets]
 
     results: list[tuple[str | None, dict, int]] = []
+    errors: list[tuple[str | None, str]] = []
     codes: list[int] = []
     for raw_target in targets:
         target, port = raw_target, args.port
@@ -292,15 +320,24 @@ def main() -> None:
                 pin=args.pin,
             )
         except (OSError, ssl.SSLError, ValueError) as err:
-            label = f"{raw_target}: " if raw_target else ""
-            print(f"error: {label}{err}", file=sys.stderr)
+            if not args.exporter:
+                label = f"{raw_target}: " if raw_target else ""
+                print(f"error: {label}{err}", file=sys.stderr)
+            errors.append((raw_target, str(err)))
             codes.append(1)
             continue
         results.append((target, info, code))
         codes.append(code)
 
-    _render(results, as_json=args.json, days=args.days, quiet=args.quiet)
-    sys.exit(max(codes, default=0))
+    override = _render(
+        results,
+        as_json=args.json,
+        days=args.days,
+        quiet=args.quiet,
+        exporter=args.exporter,
+        errors=errors,
+    )
+    sys.exit(override if override is not None else max(codes, default=0))
 
 
 if __name__ == "__main__":
