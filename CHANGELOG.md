@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-06-26
+
+### Added
+
+- Project logo (`docs/logo.svg`) shown in the README header.
+
+### Changed
+
+- README: centered hero with logo, a dot-separated subtitle and a navigation
+  link bar, and a scannable "Features" table replacing the old bullet lists.
+
 ## [1.0.2] - 2026-06-26
 
 ### Changed
@@ -148,7 +159,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/mangrisano/certinspect/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/mangrisano/certinspect/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/mangrisano/certinspect/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/mangrisano/certinspect/compare/v0.11.0...v1.0.0

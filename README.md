@@ -1,9 +1,17 @@
-# certinspect
+<div align="center">
+
+<img src="https://raw.githubusercontent.com/mangrisano/certinspect/main/docs/logo.svg" alt="certinspect" width="440">
 
 [![CI](https://github.com/mangrisano/certinspect/actions/workflows/ci.yml/badge.svg)](https://github.com/mangrisano/certinspect/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/certinspect.svg)](https://pypi.org/project/certinspect/)
 [![Python](https://img.shields.io/pypi/pyversions/certinspect.svg)](https://pypi.org/project/certinspect/)
 [![License: MIT](https://img.shields.io/pypi/l/certinspect.svg)](LICENSE)
+
+**TLS inspection · Expiry alerts · OCSP/CRL revocation · Chain of trust · Batch & concurrency · STARTTLS · CI-friendly exit codes**
+
+[PyPI](https://pypi.org/project/certinspect/) · [Usage](#usage) · [Options](#options) · [Recipes](#recipes) · [Exit codes](#exit-codes) · [Changelog](#changelog) · [Issues](https://github.com/mangrisano/certinspect/issues)
+
+</div>
 
 > **Point it at a host. Learn the truth about its TLS certificate.**
 > Expiry, chain of trust, OCSP/CRL revocation, weak crypto, hostname match —
@@ -32,36 +40,20 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 0
 ```
 
-Given one or more domains (or a `.pem`/`.der` file), it reports:
+## Features
 
-- [x] Validity and days to expiry
-- [x] Total validity period
-- [x] Subject and issuer
-- [x] Subject Alternative Names (SAN)
-- [x] Signature algorithm and key size
-- [x] SHA-256 fingerprint
-- [x] CA flag and self-signed flag
-- [x] Key usage and extended key usage
-- [x] Weak-crypto warnings
-- [x] Warn about expired or soon-to-expire intermediate CA certificates in the chain
-- [x] Negotiated TLS version and cipher
-- [x] Hostname match against the certificate
-
-It can also:
-
-- [x] Verify the chain + OCSP/CRL revocation against the system trust store (`--verify`)
-- [x] Verify the chain against a private/internal CA bundle (`--cafile`/`--capath`)
-- [x] Show the chain presented by the server (`--chain`)
-- [x] Pin the certificate by SHA-256 fingerprint (`--pin`)
-- [x] Inspect many hosts at once with text or JSON output (batch mode, `--json`)
-- [x] Inspect hosts in parallel in batch mode (`--concurrency`)
-- [x] Export the results as CSV for spreadsheets (`--csv`)
-- [x] Show only certificates expiring within N days (`--max-days`)
-- [x] Sort the batch output by host or by soonest expiry (`--sort`)
-- [x] Print a one-line tally of the inspected targets (`--summary`)
-- [x] Escalate near-expiry certificates to CRITICAL with a tighter threshold (`--critical-days`)
-- [x] Inspect certificates behind STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)
-- [x] Emit monitoring output for Nagios/Icinga and Prometheus (`--exporter`)
+| Area               | What you get                                                                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN, SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage                                       |
+| Crypto health      | Signature algorithm & key size, weak-crypto warnings, negotiated TLS version & cipher                                                                                                      |
+| Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); show the server-presented chain (`--chain`) |
+| Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain                                                                                                        |
+| Identity checks    | Hostname match against the certificate, SHA-256 fingerprint pinning (`--pin`)                                                                                                              |
+| Batch & speed      | Inspect many hosts at once, in parallel (`--concurrency`), from args or a file (`--input`)                                                                                                 |
+| Output formats     | Plain text, JSON (`--json`), CSV (`--csv`), Nagios/Icinga & Prometheus (`--exporter`)                                                                                                      |
+| Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                  |
+| Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                            |
+| Automation         | Meaningful exit codes for cron/CI, no telemetry, single runtime dependency                                                                                                                 |
 
 ## Requirements
 
