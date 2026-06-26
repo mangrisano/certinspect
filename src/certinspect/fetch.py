@@ -288,11 +288,21 @@ def _check_ocsp(
     except (OSError, ValueError) as err:
         return "UNAVAILABLE", f"OCSP request failed: {err}"
 
-    response = ocsp.load_der_ocsp_response(raw)
-    if response.response_status != ocsp.OCSPResponseStatus.SUCCESSFUL:
-        return "UNAVAILABLE", f"OCSP response status: {response.response_status.name}"
+    # Parsing must soft-fail too: some responders (e.g. DigiCert/GitHub) return
+    # a BasicOCSPResponse whose signatureAlgorithm the strict ASN.1 parser
+    # rejects with a ValueError. A malformed response must not abort the whole
+    # inspection — degrade to UNAVAILABLE and let the CRL fallback take over.
+    try:
+        response = ocsp.load_der_ocsp_response(raw)
+        if response.response_status != ocsp.OCSPResponseStatus.SUCCESSFUL:
+            return (
+                "UNAVAILABLE",
+                f"OCSP response status: {response.response_status.name}",
+            )
+        status = response.certificate_status
+    except ValueError as err:
+        return "UNAVAILABLE", f"OCSP response could not be parsed: {err}"
 
-    status = response.certificate_status
     if status == ocsp.OCSPCertStatus.GOOD:
         return "GOOD", None
     if status == ocsp.OCSPCertStatus.REVOKED:

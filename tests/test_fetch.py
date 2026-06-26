@@ -304,3 +304,76 @@ def test_check_revocation_falls_back_to_crl(monkeypatch):
     status, detail = fetch.check_revocation(leaf_cert, issuer=issuer_cert)
     assert status == "REVOKED"
     assert "via CRL" in detail
+
+
+OCSP_URL = "http://ocsp.example.com"
+
+
+def _build_ocsp_pki():
+    """Build a (issuer_cert, leaf_cert) pair whose leaf advertises an OCSP
+    responder in its AIA extension, for OCSP soft-fail tests."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
+
+    now = datetime.now(timezone.utc)
+    issuer_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    issuer_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test CA")])
+    issuer_cert = (
+        x509.CertificateBuilder()
+        .subject_name(issuer_name)
+        .issuer_name(issuer_name)
+        .public_key(issuer_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(issuer_key, hashes.SHA256())
+    )
+
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf_cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "leaf")]))
+        .issuer_name(issuer_name)
+        .public_key(leaf_key.public_key())
+        .serial_number(4242)
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=90))
+        .add_extension(
+            x509.AuthorityInformationAccess(
+                [
+                    x509.AccessDescription(
+                        AuthorityInformationAccessOID.OCSP,
+                        x509.UniformResourceIdentifier(OCSP_URL),
+                    )
+                ]
+            ),
+            critical=False,
+        )
+        .sign(issuer_key, hashes.SHA256())
+    )
+    return issuer_cert, leaf_cert
+
+
+def test_check_ocsp_soft_fails_on_unparseable_response(monkeypatch):
+    """A malformed OCSP response must degrade to UNAVAILABLE, not raise.
+
+    Some responders (e.g. DigiCert/GitHub) return a BasicOCSPResponse whose
+    signatureAlgorithm the strict ASN.1 parser rejects with a ValueError. That
+    must not abort the inspection — the revocation check soft-fails instead.
+    """
+    from certinspect import fetch
+
+    issuer_cert, leaf_cert = _build_ocsp_pki()
+    # Garbage bytes that load_der_ocsp_response cannot parse.
+    monkeypatch.setattr(
+        fetch, "_http", lambda url, data=None, timeout=None: b"\x30\x03not-asn1"
+    )
+
+    status, detail = fetch._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
+    assert status == "UNAVAILABLE"
+    assert "could not be parsed" in detail

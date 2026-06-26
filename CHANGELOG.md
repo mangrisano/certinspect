@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-06-26
+
+### Fixed
+
+- Revocation: OCSP checks now soft-fail when the responder returns a
+  BasicOCSPResponse the strict ASN.1 parser rejects (seen with DigiCert/GitHub).
+  Instead of raising and aborting the whole inspection, the check degrades to
+  `UNAVAILABLE` and lets the CRL fallback take over.
+
 ## [1.0.3] - 2026-06-26
 
 ### Added
