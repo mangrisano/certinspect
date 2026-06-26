@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-06-26
+
+### Changed
+
+- README: reworked the hero with a sharper tagline and pitch, added a "Recipes"
+  section of power-user one-liners (jq, CI gating, Prometheus, cron), and fixed
+  the stale `--version` example output.
+
 ## [1.0.1] - 2026-06-26
 
 ### Added
@@ -140,7 +148,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/mangrisano/certinspect/compare/v1.0.1...v1.0.2
+[1.0.1]: https://github.com/mangrisano/certinspect/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/mangrisano/certinspect/compare/v0.11.0...v1.0.0
 [0.11.0]: https://github.com/mangrisano/certinspect/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/mangrisano/certinspect/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/mangrisano/certinspect/compare/v0.8.0...v0.9.0

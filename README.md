@@ -3,8 +3,34 @@
 [![CI](https://github.com/mangrisano/certinspect/actions/workflows/ci.yml/badge.svg)](https://github.com/mangrisano/certinspect/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/certinspect.svg)](https://pypi.org/project/certinspect/)
 [![Python](https://img.shields.io/pypi/pyversions/certinspect.svg)](https://pypi.org/project/certinspect/)
+[![License: MIT](https://img.shields.io/pypi/l/certinspect.svg)](LICENSE)
 
-Command-line TLS certificate inspector.
+> **Point it at a host. Learn the truth about its TLS certificate.**
+> Expiry, chain of trust, OCSP/CRL revocation, weak crypto, hostname match —
+> one dependency, one command, and machine-readable output when a robot is
+> watching.
+
+`certinspect` is a single-purpose, no-nonsense command-line X.509/TLS inspector
+built for humans _and_ cron jobs. It speaks plain text, JSON, CSV, Nagios and
+Prometheus, exits with meaningful status codes, runs the whole batch in
+parallel, and never phones home. No `openssl s_client | openssl x509 -noout
+-text` incantations, no browser clicking through padlock dialogs.
+
+```console
+$ certinspect example.com
+=== example.com ===
+Subject:        CN=example.com
+Status:         VALID
+Days to expiry: 64
+Signature:      ecdsa-with-SHA256
+Key size:       256 bit
+TLS version:    TLSv1.3
+Cipher:         TLS_AES_256_GCM_SHA384
+Hostname match: True
+...
+$ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
+0
+```
 
 Given one or more domains (or a `.pem`/`.der` file), it reports:
 
@@ -597,7 +623,7 @@ OK: example.com certificate VALID (64 days to expiry) | days=64;30;0
 
 ```console
 $ certinspect --version
-certinspect 0.11.0
+certinspect 1.0.1
 ```
 
 ### Fetch error (`exit 1`)
@@ -671,6 +697,30 @@ case $? in
   5) echo "Bad host" | mail -s "Urgent"  you@mail.com ;;
   *) echo "Check failed" ;;
 esac
+```
+
+## Recipes
+
+A few one-liners for the terminally curious.
+
+```bash
+# Sort a whole fleet by soonest expiry, JSON straight into jq
+certinspect --input fleet.txt --concurrency 20 --json \
+  | jq -r 'sort_by(.days_to_expire)[] | "\(.days_to_expire)d  \(.subject)"'
+
+# Fail a CI job if anything expires within 14 days (exit 3) or worse
+certinspect --input fleet.txt --days 14 --quiet || exit 1
+
+# Grab just the SHA-256 fingerprint to pin it later
+certinspect example.com --json | jq -r '.[0].fingerprint_sha256'
+
+# Daily cron: refresh Prometheus textfile metrics for node_exporter
+certinspect --input fleet.txt --concurrency 20 --exporter prometheus \
+  > /var/lib/node_exporter/textfile/certinspect.prom
+
+# Nightly email digest of everything expiring within 30 days
+certinspect --input fleet.txt --max-days 30 --sort expiry --summary \
+  | mail -s "Certs expiring soon" ops@example.com
 ```
 
 ## Changelog
