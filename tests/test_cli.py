@@ -815,3 +815,34 @@ def test_main_summary_with_csv_keeps_csv_clean(monkeypatch, capsys, make_cert):
     assert "summary:" in captured.err
     rows = list(csv.DictReader(io.StringIO(captured.out)))
     assert [r["target"] for r in rows] == ["a.com"]
+
+
+def test_main_critical_days_exit_four(monkeypatch, capsys, make_cert):
+    certs = {"soon.com": make_cert(san=["soon.com"], days_valid=3)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["soon.com", "--critical-days", "7"])
+    out = capsys.readouterr().out
+    # Inside the critical window: status CRITICAL and exit code 4.
+    assert "Status:         CRITICAL" in out
+    assert code == 4
+
+
+def test_main_critical_days_warning_stays_three(monkeypatch, capsys, make_cert):
+    certs = {"soon.com": make_cert(san=["soon.com"], days_valid=20)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["soon.com", "--critical-days", "7"])
+    # Past the critical window but within the default 30-day warning window.
+    assert code == 3
+
+
+def test_main_critical_days_must_not_exceed_days(monkeypatch, capsys, make_cert):
+    code = _run_main(monkeypatch, ["a.com", "--days", "10", "--critical-days", "20"])
+    assert code == 2
+    assert "less than or equal to --days" in capsys.readouterr().err
+
+
+def test_main_critical_days_in_summary(monkeypatch, capsys, make_cert):
+    certs = {"soon.com": make_cert(san=["soon.com"], days_valid=3)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    _run_main(monkeypatch, ["soon.com", "--critical-days", "7", "--summary"])
+    assert "1 critical" in capsys.readouterr().err

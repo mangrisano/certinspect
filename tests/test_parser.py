@@ -277,6 +277,23 @@ def test_status_threshold_is_configurable(make_cert):
     assert certificate_status(info, warn_days=5) == "VALID"
 
 
+def test_status_critical_within_critical_days(make_cert):
+    info = analyze(load_certificate(make_cert(days_valid=3)))
+    # Inside the critical window -> CRITICAL, not just EXPIRING.
+    assert certificate_status(info, warn_days=30, critical_days=7) == "CRITICAL"
+
+
+def test_status_expiring_between_critical_and_warn(make_cert):
+    info = analyze(load_certificate(make_cert(days_valid=20)))
+    # Past the critical window but inside the warning window -> EXPIRING.
+    assert certificate_status(info, warn_days=30, critical_days=7) == "EXPIRING"
+
+
+def test_status_critical_ignored_without_threshold(make_cert):
+    info = analyze(load_certificate(make_cert(days_valid=3)))
+    assert certificate_status(info, warn_days=30) == "EXPIRING"
+
+
 def test_pin_matches_exact(make_cert):
     info = analyze(load_certificate(make_cert()))
     assert pin_matches(info, info["fingerprint_sha256"]) is True

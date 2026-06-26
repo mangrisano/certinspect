@@ -306,3 +306,19 @@ def test_format_summary_hides_zero_problem_categories(make_cert):
     assert "mismatch" not in line
     assert "untrusted" not in line
     assert line == "summary: 1 valid · 0 expiring · 0 expired (1 target)"
+
+
+def test_format_summary_splits_critical_from_expired(make_cert):
+    soon = _info(make_cert(san=["soon.com"], days_valid=3))
+    expired = _info(make_cert(san=["x.com"], days_valid=-5, days_ago_start=365))
+    # Both carry exit code 4; critical_days separates them in the tally.
+    results = [("soon.com", soon, 4), ("x.com", expired, 4)]
+    line = format_summary(results, warn_days=30, critical_days=7)
+    assert "1 critical" in line
+    assert "1 expired" in line
+
+
+def test_format_summary_shows_critical_zero_when_threshold_set(make_cert):
+    info = _info(make_cert(san=["a.com"], days_valid=200))
+    line = format_summary([("a.com", info, 0)], critical_days=7)
+    assert "0 critical" in line

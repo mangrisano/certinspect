@@ -14,10 +14,12 @@ from certinspect.parser import certificate_status
 LABEL_WIDTH = 16
 
 
-def format_human(info: dict, warn_days: int = 30) -> str:
+def format_human(
+    info: dict, warn_days: int = 30, critical_days: int | None = None
+) -> str:
     """Return a human-readable text representation."""
     days = info["days_to_expire"]
-    status = certificate_status(info, warn_days)
+    status = certificate_status(info, warn_days, critical_days)
 
     def row(label: str, value: object) -> str:
         return f"{label + ':':<{LABEL_WIDTH}}{value}"
@@ -73,7 +75,10 @@ def format_human(info: dict, warn_days: int = 30) -> str:
         if not info["pin_match"]:
             lines.append("WARNING: fingerprint does not match the expected pin")
 
-    if 0 <= days < warn_days:
+    if status == "CRITICAL":
+        lines.append("")
+        lines.append(f"CRITICAL: certificate expires in {days} days")
+    elif 0 <= days < warn_days:
         lines.append("")
         lines.append(f"WARNING: certificate expires in {days} days")
 
@@ -132,6 +137,7 @@ def format_csv(
     results: list[tuple[str | None, dict, int]],
     warn_days: int = 30,
     delimiter: str = ",",
+    critical_days: int | None = None,
 ) -> str:
     """Render results as CSV with a header row, one line per target.
 
@@ -144,42 +150,63 @@ def format_csv(
     writer = csv.writer(buffer, delimiter=delimiter, lineterminator="\n")
     writer.writerow([label for label, _ in _CSV_COLUMNS])
     for target, info, _ in results:
-        info = {**info, "_status": certificate_status(info, warn_days)}
+        status = certificate_status(info, warn_days, critical_days)
+        info = {**info, "_status": status}
         writer.writerow([getter(target, info) for _, getter in _CSV_COLUMNS])
     return buffer.getvalue()
 
 
-# Summary categories keyed by per-target exit code, in display order. The
-# first three (valid/expiring/expired) are always shown; the rest only when
-# their count is non-zero, to keep the line short.
-_SUMMARY_LABELS = (
-    (0, "valid"),
-    (3, "expiring"),
-    (4, "expired"),
-    (5, "mismatch"),
-    (6, "untrusted"),
-    (7, "pin-mismatch"),
+# Summary categories in display order. valid/expiring/expired are always
+# shown; 'critical' appears when a --critical-days threshold is set; the
+# problem categories appear only when their count is non-zero.
+_SUMMARY_ORDER = (
+    "valid",
+    "expiring",
+    "critical",
+    "expired",
+    "mismatch",
+    "untrusted",
+    "pin-mismatch",
 )
+_SUMMARY_BY_CODE = {
+    0: "valid",
+    3: "expiring",
+    5: "mismatch",
+    6: "untrusted",
+    7: "pin-mismatch",
+}
 
 
 def format_summary(
     results: list[tuple[str | None, dict, int]],
     errors: list[tuple[str | None, str]] = (),
+    warn_days: int = 30,
+    critical_days: int | None = None,
 ) -> str:
     """Return a one-line tally of the inspected targets.
 
     Counts come from each target's exit code, so the line reflects the worst
-    state found per host (e.g. an expired cert counts as 'expired'). Failed
-    fetches are counted separately as errors. valid/expiring/expired are
-    always shown; the other categories appear only when non-zero.
+    state found per host (e.g. an expired cert counts as 'expired'). When
+    ``critical_days`` is set, near-expiry certificates (exit code 4) are split
+    into 'critical' vs 'expired'. Failed fetches are counted separately as
+    errors. valid/expiring/expired are always shown; the rest only when
+    non-zero (plus 'critical' whenever a critical threshold is in effect).
     """
-    counts: dict[int, int] = {}
-    for _, _, code in results:
-        counts[code] = counts.get(code, 0) + 1
+    counts: dict[str, int] = dict.fromkeys(_SUMMARY_ORDER, 0)
+    for _, info, code in results:
+        if code == 4:
+            status = certificate_status(info, warn_days, critical_days)
+            counts["critical" if status == "CRITICAL" else "expired"] += 1
+        else:
+            counts[_SUMMARY_BY_CODE[code]] += 1
+
+    always = {"valid", "expiring", "expired"}
+    if critical_days is not None:
+        always = always | {"critical"}
     parts = [
-        f"{counts.get(code, 0)} {label}"
-        for code, label in _SUMMARY_LABELS
-        if code in (0, 3, 4) or counts.get(code, 0)
+        f"{counts[name]} {name}"
+        for name in _SUMMARY_ORDER
+        if name in always or counts[name]
     ]
     n_err = len(errors)
     if n_err:
@@ -220,6 +247,7 @@ def format_nagios(
     results: list[tuple[str | None, dict, int]],
     errors: list[tuple[str | None, str]] = (),
     warn_days: int = 30,
+    critical_days: int | None = None,
 ) -> tuple[str, int]:
     """Render results as Nagios/Icinga plugin output.
 
@@ -234,9 +262,9 @@ def format_nagios(
         severity = _nagios_severity(code)
         worst = max(worst, severity)
         name = target or info["subject"]
-        status = certificate_status(info, warn_days)
+        status = certificate_status(info, warn_days, critical_days)
         days = info["days_to_expire"]
-        perfdata = f"days={days};{warn_days};0"
+        perfdata = f"days={days};{warn_days};{critical_days or 0}"
         lines.append(
             f"{_NAGIOS_LABELS[severity]}: {name} certificate {status} "
             f"({days} days to expiry) | {perfdata}"

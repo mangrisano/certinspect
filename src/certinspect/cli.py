@@ -42,6 +42,7 @@ from certinspect.formatter import (
 EXIT_BY_STATUS = {
     "VALID": 0,
     "EXPIRING": 3,
+    "CRITICAL": 4,
     "EXPIRED": 4,
     "INVALID DATES": 4,
 }
@@ -148,6 +149,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=("Warn if the certificate expires within this many days (default: 30)."),
     )
     parser.add_argument(
+        "--critical-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Escalate to CRITICAL (exit code 4) when the certificate expires "
+            "within this many days. Must be <= --days; lets monitoring "
+            "distinguish a warning window from a critical one."
+        ),
+    )
+    parser.add_argument(
         "--export",
         metavar="PATH",
         help="Save the inspected certificate as a PEM file at PATH.",
@@ -250,6 +262,7 @@ def _inspect(
     port: int,
     file: str | None,
     days: int,
+    critical_days: int | None,
     export: str | None,
     timeout: float,
     verify: bool,
@@ -275,7 +288,7 @@ def _inspect(
             f.write(to_pem(cert))
     info["hostname_match"] = hostname_matches(info, target) if target else None
 
-    code = EXIT_BY_STATUS[certificate_status(info, days)]
+    code = EXIT_BY_STATUS[certificate_status(info, days, critical_days)]
     if info["hostname_match"] is False:
         code = 5
 
@@ -315,6 +328,7 @@ def _render(
     quiet: bool,
     as_csv: bool = False,
     csv_delimiter: str = ",",
+    critical_days: int | None = None,
     max_days: int | None = None,
     sort: str | None = None,
     summary: bool = False,
@@ -332,7 +346,9 @@ def _render(
     one-line tally to stderr, counting every target before filtering.
     """
     if exporter == "nagios":
-        text, code = format_nagios(results, errors, warn_days=days)
+        text, code = format_nagios(
+            results, errors, warn_days=days, critical_days=critical_days
+        )
         print(text)
         return code
     if exporter == "prometheus":
@@ -340,7 +356,11 @@ def _render(
         return None
 
     # Computed from the full result set, before --quiet/--max-days filtering.
-    summary_line = format_summary(results, errors) if summary else None
+    summary_line = (
+        format_summary(results, errors, warn_days=days, critical_days=critical_days)
+        if summary
+        else None
+    )
 
     if quiet:
         results = [r for r in results if r[2] != 0]
@@ -352,13 +372,21 @@ def _render(
         results = sorted(results, key=lambda r: r[1]["days_to_expire"])
 
     if as_csv:
-        print(format_csv(results, warn_days=days, delimiter=csv_delimiter), end="")
+        print(
+            format_csv(
+                results,
+                warn_days=days,
+                delimiter=csv_delimiter,
+                critical_days=critical_days,
+            ),
+            end="",
+        )
     elif as_json:
         print(json.dumps([info for _, info, _ in results], indent=2, default=str))
     else:
         blocks = []
         for target, info, _ in results:
-            text = format_human(info, warn_days=days)
+            text = format_human(info, warn_days=days, critical_days=critical_days)
             blocks.append(f"=== {target} ===\n{text}" if target else text)
         if blocks:
             print("\n\n".join(blocks))
@@ -399,6 +427,8 @@ def main() -> None:
         parser.error("--csv and --exporter cannot be used together.")
     if len(args.csv_delimiter) != 1:
         parser.error("--csv-delimiter must be a single character.")
+    if args.critical_days is not None and args.critical_days > args.days:
+        parser.error("--critical-days must be less than or equal to --days.")
 
     extra_targets = _read_targets(args.input) if args.input else []
     if not args.target and not extra_targets and not args.file:
@@ -432,6 +462,7 @@ def main() -> None:
                 port=port,
                 file=args.file,
                 days=args.days,
+                critical_days=args.critical_days,
                 export=args.export,
                 timeout=args.timeout,
                 verify=args.verify,
@@ -472,6 +503,7 @@ def main() -> None:
         quiet=args.quiet,
         as_csv=args.csv,
         csv_delimiter=args.csv_delimiter,
+        critical_days=args.critical_days,
         max_days=args.max_days,
         sort=args.sort,
         summary=args.summary,

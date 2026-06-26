@@ -166,18 +166,23 @@ def analyze(cert: x509.Certificate) -> dict:
     }
 
 
-def certificate_status(info: dict, warn_days: int = 30) -> str:
+def certificate_status(
+    info: dict, warn_days: int = 30, critical_days: int | None = None
+) -> str:
     """Return the validity status derived from the analyzed data.
 
-    One of: 'INVALID DATES', 'EXPIRED', 'EXPIRING', 'VALID'.
+    One of: 'INVALID DATES', 'EXPIRED', 'CRITICAL', 'EXPIRING', 'VALID'.
     'EXPIRING' means the certificate is still valid but expires within
-    ``warn_days`` days.
+    ``warn_days`` days; when ``critical_days`` is given, a certificate that
+    expires within that tighter window is reported as 'CRITICAL' instead.
     """
     if info["not_valid_before"] > info["not_valid_after"]:
         return "INVALID DATES"
     days = info["days_to_expire"]
     if days < 0:
         return "EXPIRED"
+    if critical_days is not None and days < critical_days:
+        return "CRITICAL"
     if days < warn_days:
         return "EXPIRING"
     return "VALID"

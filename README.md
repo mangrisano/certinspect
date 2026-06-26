@@ -31,6 +31,7 @@ It can also:
 - [x] Show only certificates expiring within N days (`--max-days`)
 - [x] Sort the batch output by host or by soonest expiry (`--sort`)
 - [x] Print a one-line tally of the inspected targets (`--summary`)
+- [x] Escalate near-expiry certificates to CRITICAL with a tighter threshold (`--critical-days`)
 - [x] Inspect certificates behind STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)
 - [x] Emit monitoring output for Nagios/Icinga and Prometheus (`--exporter`)
 
@@ -88,6 +89,9 @@ certinspect --file ./certificate.pem
 
 # Custom expiry warning threshold (default: 30 days)
 certinspect example.com --days 14
+
+# Two-tier thresholds: WARNING within 30 days, CRITICAL within 7 (exit 4)
+certinspect example.com github.com --days 30 --critical-days 7
 
 # Only print certificates that have a problem
 certinspect example.com github.com --quiet
@@ -179,29 +183,30 @@ not checked via CRLs.
 
 ## Options
 
-| Option                            | Description                                                                                             |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `target...`                       | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`.                          |
-| `--file PATH`                     | Inspect a local certificate (PEM or DER) instead of a host.                                             |
-| `--port N`                        | TCP port to connect to (default: 443).                                                                  |
-| `--timeout N`                     | Connection timeout in seconds (default: 5).                                                             |
-| `--json`                          | Print the result as JSON instead of human-readable text.                                                |
-| `--csv`                           | Print the results as CSV (one row per target, with a header).                                           |
-| `--csv-delimiter SEP`             | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.         |
-| `--quiet`                         | Only print certificates that have a problem.                                                            |
-| `--verify`                        | Verify the chain + OCSP revocation, system trust store (hosts only).                                    |
-| `--chain`                         | Show the certificate chain presented by the server.                                                     |
-| `--pin SHA256`                    | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).                             |
-| `--input PATH`                    | Read extra targets from a file, one per line ('-' for stdin).                                           |
-| `--days N`                        | Warn if the certificate expires within N days (default: 30).                                            |
-| `--max-days N`                    | Only show certificates expiring within N days (expired ones always shown; filters display only).        |
-| `--sort host\|expiry`             | Sort the output by host (alphabetical) or by soonest expiry (display only; does not affect exit code).  |
-| `--summary`                       | Print a one-line tally (valid/expiring/expired/errors) to stderr; counts every target before filtering. |
-| `--export PATH`                   | Save the inspected certificate as a PEM file at PATH.                                                   |
-| `--starttls {smtp,imap,pop3,ftp}` | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given).       |
-| `--exporter {nagios,prometheus}`  | Emit machine-readable monitoring output (ignores `--quiet`).                                            |
-| `--concurrency N`                 | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved).                       |
-| `--version`                       | Print the version and exit.                                                                             |
+| Option                            | Description                                                                                                                                                     |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `target...`                       | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`.                                                                                  |
+| `--file PATH`                     | Inspect a local certificate (PEM or DER) instead of a host.                                                                                                     |
+| `--port N`                        | TCP port to connect to (default: 443).                                                                                                                          |
+| `--timeout N`                     | Connection timeout in seconds (default: 5).                                                                                                                     |
+| `--json`                          | Print the result as JSON instead of human-readable text.                                                                                                        |
+| `--csv`                           | Print the results as CSV (one row per target, with a header).                                                                                                   |
+| `--csv-delimiter SEP`             | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.                                                                 |
+| `--quiet`                         | Only print certificates that have a problem.                                                                                                                    |
+| `--verify`                        | Verify the chain + OCSP revocation, system trust store (hosts only).                                                                                            |
+| `--chain`                         | Show the certificate chain presented by the server.                                                                                                             |
+| `--pin SHA256`                    | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).                                                                                     |
+| `--input PATH`                    | Read extra targets from a file, one per line ('-' for stdin).                                                                                                   |
+| `--days N`                        | Warn if the certificate expires within N days (default: 30).                                                                                                    |
+| `--critical-days N`               | Escalate to CRITICAL (exit code 4) when the certificate expires within N days. Must be `<= --days`; feeds Nagios CRITICAL and the `--summary` `critical` count. |
+| `--max-days N`                    | Only show certificates expiring within N days (expired ones always shown; filters display only).                                                                |
+| `--sort host\|expiry`             | Sort the output by host (alphabetical) or by soonest expiry (display only; does not affect exit code).                                                          |
+| `--summary`                       | Print a one-line tally (valid/expiring/expired/errors) to stderr; counts every target before filtering.                                                         |
+| `--export PATH`                   | Save the inspected certificate as a PEM file at PATH.                                                                                                           |
+| `--starttls {smtp,imap,pop3,ftp}` | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given).                                                               |
+| `--exporter {nagios,prometheus}`  | Emit machine-readable monitoring output (ignores `--quiet`).                                                                                                    |
+| `--concurrency N`                 | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved).                                                                               |
+| `--version`                       | Print the version and exit.                                                                                                                                     |
 
 ## Monitoring
 
