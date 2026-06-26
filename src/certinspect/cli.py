@@ -13,7 +13,12 @@ import sys
 import ssl
 from urllib.parse import urlsplit
 from certinspect import __version__
-from certinspect.fetch import check_revocation, get_server_cert, verify_chain
+from certinspect.fetch import (
+    STARTTLS_PORTS,
+    check_revocation,
+    get_server_cert,
+    verify_chain,
+)
 from certinspect.parser import (
     load_certificate,
     analyze,
@@ -37,7 +42,6 @@ EXIT_BY_STATUS = {
 
 def build_parser() -> argparse.ArgumentParser:
     """Build and return the ArgumentParser."""
-
     parser = argparse.ArgumentParser(
         prog="certinspect",
         description="Inspect a TLS certificate from a host or a local file.",
@@ -125,6 +129,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Save the inspected certificate as a PEM file at PATH.",
     )
     parser.add_argument(
+        "--starttls",
+        choices=tuple(STARTTLS_PORTS),
+        help=(
+            "Upgrade a plaintext connection to TLS before inspecting (host "
+            "targets only). When --port is left at its default, the protocol's "
+            "standard port is used (smtp=587, imap=143, pop3=110, ftp=21)."
+        ),
+    )
+    parser.add_argument(
         "--exporter",
         choices=("nagios", "prometheus"),
         help=(
@@ -151,7 +164,11 @@ def _split_target(raw: str, default_port: int) -> tuple[str, int]:
 
 
 def _fetch_source(
-    target: str | None, port: int, file: str | None, timeout: float
+    target: str | None,
+    port: int,
+    file: str | None,
+    timeout: float,
+    starttls: str | None = None,
 ) -> tuple[bytes, dict | None]:
     """Return (raw certificate bytes, connection info) for one source.
 
@@ -160,7 +177,7 @@ def _fetch_source(
     if file:
         with open(file, "rb") as f:
             return f.read(), None
-    return get_server_cert(target, port, timeout)
+    return get_server_cert(target, port, timeout, starttls=starttls)
 
 
 def _inspect(
@@ -174,6 +191,7 @@ def _inspect(
     verify: bool,
     chain: bool,
     pin: str | None,
+    starttls: str | None = None,
 ) -> tuple[dict, int]:
     """Inspect one source and return its (info, exit_code).
 
@@ -182,7 +200,7 @@ def _inspect(
     performed for host targets when ``verify`` is set. A failed ``pin`` check
     yields exit code 7.
     """
-    der, conn = _fetch_source(target, port, file, timeout)
+    der, conn = _fetch_source(target, port, file, timeout, starttls=starttls)
     cert = load_certificate(der)
     info = analyze(cert)
     if conn:
@@ -198,7 +216,9 @@ def _inspect(
         code = 5
 
     if verify and target:
-        trusted, reason, verified = verify_chain(target, port, timeout)
+        trusted, reason, verified = verify_chain(
+            target, port, timeout, starttls=starttls
+        )
         info["chain_trusted"] = trusted
         info["chain_error"] = reason
         if not trusted:
@@ -283,7 +303,6 @@ def _read_targets(path: str) -> list[str]:
 
 def main() -> None:
     """CLI entry point."""
-
     parser = build_parser()
     args = parser.parse_args()
 
@@ -300,14 +319,20 @@ def main() -> None:
     else:
         targets = [*args.target, *extra_targets]
 
+    # With STARTTLS, fall back to the protocol's standard port unless the user
+    # passed --port explicitly (i.e. it differs from the 443 default).
+    default_port = args.port
+    if args.starttls and default_port == 443:
+        default_port = STARTTLS_PORTS[args.starttls]
+
     results: list[tuple[str | None, dict, int]] = []
     errors: list[tuple[str | None, str]] = []
     codes: list[int] = []
     for raw_target in targets:
-        target, port = raw_target, args.port
+        target, port = raw_target, default_port
         try:
             if raw_target is not None:
-                target, port = _split_target(raw_target, args.port)
+                target, port = _split_target(raw_target, default_port)
             info, code = _inspect(
                 target,
                 port=port,
@@ -318,6 +343,7 @@ def main() -> None:
                 verify=args.verify,
                 chain=args.chain,
                 pin=args.pin,
+                starttls=args.starttls,
             )
         except (OSError, ssl.SSLError, ValueError) as err:
             if not args.exporter:

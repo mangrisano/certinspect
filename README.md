@@ -85,6 +85,11 @@ cat hosts.txt | certinspect --input -
 # Save the fetched certificate as PEM
 certinspect example.com --export ./fetched.pem
 
+# Inspect a certificate behind STARTTLS (smtp, imap, pop3, ftp)
+# The protocol's standard port is used unless --port is given
+certinspect mail.example.com --starttls smtp
+certinspect mail.example.com --starttls imap --port 143
+
 # Monitoring output: a Nagios/Icinga plugin line per target
 # (exit code follows the plugin convention: 0=OK, 1=WARNING, 2=CRITICAL)
 certinspect example.com --exporter nagios
@@ -140,22 +145,23 @@ not checked via CRLs.
 
 ## Options
 
-| Option                           | Description                                                                    |
-| -------------------------------- | ------------------------------------------------------------------------------ |
-| `target...`                      | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`. |
-| `--file PATH`                    | Inspect a local certificate (PEM or DER) instead of a host.                    |
-| `--port N`                       | TCP port to connect to (default: 443).                                         |
-| `--timeout N`                    | Connection timeout in seconds (default: 5).                                    |
-| `--json`                         | Print the result as JSON instead of human-readable text.                       |
-| `--quiet`                        | Only print certificates that have a problem.                                   |
-| `--verify`                       | Verify the chain + OCSP revocation, system trust store (hosts only).           |
-| `--chain`                        | Show the certificate chain presented by the server.                            |
-| `--pin SHA256`                   | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).    |
-| `--input PATH`                   | Read extra targets from a file, one per line ('-' for stdin).                  |
-| `--days N`                       | Warn if the certificate expires within N days (default: 30).                   |
-| `--export PATH`                  | Save the inspected certificate as a PEM file at PATH.                          |
-| `--exporter {nagios,prometheus}` | Emit machine-readable monitoring output (ignores `--quiet`).                   |
-| `--version`                      | Print the version and exit.                                                    |
+| Option                            | Description                                                                                       |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `target...`                       | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`.                    |
+| `--file PATH`                     | Inspect a local certificate (PEM or DER) instead of a host.                                       |
+| `--port N`                        | TCP port to connect to (default: 443).                                                            |
+| `--timeout N`                     | Connection timeout in seconds (default: 5).                                                       |
+| `--json`                          | Print the result as JSON instead of human-readable text.                                          |
+| `--quiet`                         | Only print certificates that have a problem.                                                      |
+| `--verify`                        | Verify the chain + OCSP revocation, system trust store (hosts only).                              |
+| `--chain`                         | Show the certificate chain presented by the server.                                               |
+| `--pin SHA256`                    | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).                       |
+| `--input PATH`                    | Read extra targets from a file, one per line ('-' for stdin).                                     |
+| `--days N`                        | Warn if the certificate expires within N days (default: 30).                                      |
+| `--export PATH`                   | Save the inspected certificate as a PEM file at PATH.                                             |
+| `--starttls {smtp,imap,pop3,ftp}` | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given). |
+| `--exporter {nagios,prometheus}`  | Emit machine-readable monitoring output (ignores `--quiet`).                                      |
+| `--version`                       | Print the version and exit.                                                                       |
 
 ## Monitoring
 

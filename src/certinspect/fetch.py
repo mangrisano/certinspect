@@ -19,19 +19,98 @@ from cryptography.x509 import ocsp
 from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
 
 
+# Standard plaintext ports for the STARTTLS-capable protocols, used as the
+# default port when --port is left unset.
+STARTTLS_PORTS = {"smtp": 587, "imap": 143, "pop3": 110, "ftp": 21}
+
+
+def _readline(sock: socket.socket) -> bytes:
+    """Read one line (up to and including ``\\n``) from a plaintext socket.
+
+    Reads a byte at a time so we never consume data past the STARTTLS
+    negotiation: the server stays silent until we begin the TLS handshake.
+    """
+    buf = bytearray()
+    while not buf.endswith(b"\n"):
+        chunk = sock.recv(1)
+        if not chunk:
+            break
+        buf += chunk
+    return bytes(buf)
+
+
+def _read_reply(sock: socket.socket) -> bytes:
+    """Read a possibly multiline SMTP/FTP reply and return its final line.
+
+    Continuation lines use ``-`` as the fourth character (e.g. ``250-``); the
+    last line uses a space (``250 ``).
+    """
+    while True:
+        line = _readline(sock)
+        if len(line) < 4 or line[3:4] != b"-":
+            return line
+
+
+def _expect(line: bytes, prefix: bytes) -> None:
+    """Raise when a STARTTLS reply does not start with the expected code."""
+    if not line.startswith(prefix):
+        raise ValueError(f"unexpected STARTTLS reply: {line!r}")
+
+
+def _negotiate_starttls(sock: socket.socket, protocol: str) -> None:
+    """Run the plaintext STARTTLS handshake for ``protocol`` on ``sock``.
+
+    Supports the line-based protocols smtp, imap, pop3 and ftp. On return the
+    socket is ready to be wrapped in TLS. Raises ValueError if the server does
+    not agree to upgrade.
+    """
+    proto = protocol.lower()
+    if proto == "smtp":
+        _expect(_read_reply(sock), b"220")
+        sock.sendall(b"EHLO certinspect\r\n")
+        _expect(_read_reply(sock), b"250")
+        sock.sendall(b"STARTTLS\r\n")
+        _expect(_read_reply(sock), b"220")
+    elif proto == "ftp":
+        _expect(_read_reply(sock), b"220")
+        sock.sendall(b"AUTH TLS\r\n")
+        _expect(_read_reply(sock), b"234")
+    elif proto == "pop3":
+        _expect(_readline(sock), b"+OK")
+        sock.sendall(b"STLS\r\n")
+        _expect(_readline(sock), b"+OK")
+    elif proto == "imap":
+        _expect(_readline(sock), b"* OK")
+        sock.sendall(b"a001 STARTTLS\r\n")
+        while True:
+            line = _readline(sock)
+            if not line:
+                raise ValueError("connection closed during STARTTLS")
+            if line.startswith(b"a001 "):
+                _expect(line, b"a001 OK")
+                break
+    else:
+        raise ValueError(f"unsupported STARTTLS protocol: {protocol}")
+
+
 def get_server_cert(
-    host: str, port: int = 443, timeout: float = 5.0
+    host: str, port: int = 443, timeout: float = 5.0, starttls: str | None = None
 ) -> tuple[bytes, dict]:
     """Return the server certificate (DER bytes) and connection info.
 
     The connection info is a dict with the negotiated ``tls_version``, the
     ``cipher`` suite name, and the ``chain`` presented by the server (leaf
     first) when the interpreter exposes it (Python 3.13+), otherwise [].
+
+    When ``starttls`` is set (smtp, imap, pop3 or ftp) the plaintext protocol
+    is upgraded to TLS before the certificate is read.
     """
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     with socket.create_connection((host, port), timeout=timeout) as sock:
+        if starttls:
+            _negotiate_starttls(sock, starttls)
         with context.wrap_socket(sock, server_hostname=host) as ssock:
             der = ssock.getpeercert(binary_form=True)
             cipher = ssock.cipher()
@@ -60,7 +139,7 @@ def _presented_chain(ssock: ssl.SSLSocket) -> list[x509.Certificate]:
 
 
 def verify_chain(
-    host: str, port: int = 443, timeout: float = 5.0
+    host: str, port: int = 443, timeout: float = 5.0, starttls: str | None = None
 ) -> tuple[bool, str | None, list[x509.Certificate]]:
     """Check whether the server's certificate chain is trusted.
 
@@ -69,11 +148,14 @@ def verify_chain(
     the verified certificate chain (leaf first) when the interpreter exposes
     it (Python 3.13+) and verification succeeds, otherwise an empty list.
     ``reason`` is None on success or the verification message on failure.
-    Network-level failures are left to propagate.
+    Network-level failures are left to propagate. When ``starttls`` is set the
+    plaintext protocol is upgraded to TLS before the handshake.
     """
     context = ssl.create_default_context()
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
+            if starttls:
+                _negotiate_starttls(sock, starttls)
             with context.wrap_socket(sock, server_hostname=host) as ssock:
                 return True, None, _verified_chain(ssock)
     except ssl.SSLCertVerificationError as err:

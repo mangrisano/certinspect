@@ -12,7 +12,7 @@ CONN = {"tls_version": "TLSv1.3", "cipher": "TLS_AES_256_GCM_SHA384"}
 
 def _const_fetch(cert_bytes):
     """Return a get_server_cert replacement yielding a fixed certificate."""
-    return lambda host, port, timeout: (cert_bytes, CONN)
+    return lambda host, port, timeout, starttls=None: (cert_bytes, CONN)
 
 
 def test_build_parser_defaults():
@@ -146,7 +146,7 @@ def test_main_hostname_mismatch_exit_five(monkeypatch, capsys, make_cert):
 def test_main_url_target_is_normalized(monkeypatch, capsys, make_cert):
     seen = {}
 
-    def _fetch(host, port, timeout):
+    def _fetch(host, port, timeout, starttls=None):
         seen["host"], seen["port"] = host, port
         return make_cert(san=["example.com"]), CONN
 
@@ -188,7 +188,7 @@ def test_main_export_writes_pem(monkeypatch, capsys, tmp_path, make_cert):
 def _fake_fetch(mapping):
     """Return a get_server_cert replacement backed by host->bytes mapping."""
 
-    def _fetch(host, port, timeout):
+    def _fetch(host, port, timeout, starttls=None):
         return mapping[host], CONN
 
     return _fetch
@@ -233,7 +233,7 @@ def test_main_batch_worst_exit_code(monkeypatch, capsys, make_cert):
 def test_main_batch_continues_on_error(monkeypatch, capsys, make_cert):
     certs = {"ok.com": make_cert(san=["ok.com"], days_valid=200)}
 
-    def _fetch(host, port, timeout):
+    def _fetch(host, port, timeout, starttls=None):
         if host == "down.com":
             raise OSError("connection refused")
         return certs[host], CONN
@@ -308,7 +308,7 @@ def test_main_verify_trusted_exit_zero(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (True, None, []),
+        lambda host, port, timeout, starttls=None: (True, None, []),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
@@ -328,7 +328,11 @@ def test_main_verify_untrusted_exit_six(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (False, "self signed certificate", []),
+        lambda host, port, timeout, starttls=None: (
+            False,
+            "self signed certificate",
+            [],
+        ),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
@@ -351,7 +355,7 @@ def test_main_verify_in_json(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (True, None, []),
+        lambda host, port, timeout, starttls=None: (True, None, []),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
@@ -370,7 +374,7 @@ def test_main_verify_revoked_exit_six(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (True, None, []),
+        lambda host, port, timeout, starttls=None: (True, None, []),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
@@ -395,7 +399,7 @@ def test_main_verify_revocation_unavailable_is_soft_fail(
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout: (True, None, []),
+        lambda host, port, timeout, starttls=None: (True, None, []),
     )
     monkeypatch.setattr(
         "certinspect.cli.check_revocation",
@@ -516,7 +520,7 @@ def test_main_exporter_nagios_expiring_exits_warning(monkeypatch, capsys, make_c
 
 
 def test_main_exporter_nagios_unreachable_is_critical(monkeypatch, capsys, make_cert):
-    def _fetch(host, port, timeout):
+    def _fetch(host, port, timeout, starttls=None):
         if host == "down.com":
             raise OSError("connection refused")
         return make_cert(san=["ok.com"], days_valid=200), CONN
@@ -551,3 +555,51 @@ def test_main_exporter_rejects_json(monkeypatch, capsys, make_cert):
     code = _run_main(monkeypatch, ["example.com", "--exporter", "nagios", "--json"])
     assert code == 2
     assert "cannot be used together" in capsys.readouterr().err
+
+
+def _capturing_fetch(seen, cert_bytes):
+    """A get_server_cert replacement that records port and starttls."""
+
+    def _fetch(host, port, timeout, starttls=None):
+        seen["port"], seen["starttls"] = port, starttls
+        return cert_bytes, CONN
+
+    return _fetch
+
+
+def test_main_starttls_uses_protocol_default_port(monkeypatch, capsys, make_cert):
+    seen = {}
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _capturing_fetch(seen, make_cert(san=["mail.example.com"])),
+    )
+    _run_main(monkeypatch, ["mail.example.com", "--starttls", "smtp"])
+    assert seen == {"port": 587, "starttls": "smtp"}
+
+
+def test_main_starttls_explicit_port_overrides_default(monkeypatch, capsys, make_cert):
+    seen = {}
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _capturing_fetch(seen, make_cert(san=["mail.example.com"])),
+    )
+    _run_main(monkeypatch, ["mail.example.com", "--starttls", "imap", "--port", "1143"])
+    assert seen == {"port": 1143, "starttls": "imap"}
+
+
+def test_main_starttls_port_from_target_overrides_default(
+    monkeypatch, capsys, make_cert
+):
+    seen = {}
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _capturing_fetch(seen, make_cert(san=["mail.example.com"])),
+    )
+    _run_main(monkeypatch, ["mail.example.com:25", "--starttls", "smtp"])
+    assert seen == {"port": 25, "starttls": "smtp"}
+
+
+def test_main_starttls_rejects_invalid_protocol(monkeypatch, capsys):
+    code = _run_main(monkeypatch, ["example.com", "--starttls", "xmpp"])
+    assert code == 2
+    assert "invalid choice" in capsys.readouterr().err
