@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from certinspect.formatter import (
     NAGIOS_CRITICAL,
     NAGIOS_OK,
@@ -182,3 +184,29 @@ def test_format_prometheus_escapes_label(make_cert):
     results = [('weird"name', _info(make_cert(days_valid=42)), 0)]
     text = format_prometheus(results)
     assert 'certinspect_up{target="weird\\"name"} 1' in text
+
+
+def test_format_prometheus_output_parses_with_prometheus_client(make_cert):
+    """The output is valid exposition format per the official parser."""
+    parser = pytest.importorskip("prometheus_client.parser")
+
+    info = _info(make_cert(san=["example.com"], days_valid=42))
+    text = format_prometheus(
+        [("example.com", info, 0)],
+        [("down.example.com", "timed out")],
+    )
+
+    families = {f.name: f for f in parser.text_string_to_metric_families(text)}
+    assert set(families) == {
+        "certinspect_up",
+        "certinspect_cert_expiry_days",
+        "certinspect_cert_valid",
+    }
+
+    up = {s.labels["target"]: s.value for s in families["certinspect_up"].samples}
+    assert up == {"example.com": 1.0, "down.example.com": 0.0}
+
+    expiry = families["certinspect_cert_expiry_days"].samples
+    assert len(expiry) == 1
+    assert expiry[0].labels == {"target": "example.com"}
+    assert expiry[0].value == float(info["days_to_expire"])
