@@ -8,6 +8,7 @@ from certinspect.parser import (
     CertificateLoadError,
     analyze,
     certificate_status,
+    chain_expiry_warnings,
     chain_summary,
     hostname_matches,
     load_certificate,
@@ -316,3 +317,43 @@ def test_chain_summary_fields(make_cert):
     assert summary["is_ca"] is True
     assert "not_valid_after" in summary
     assert "serial_number" in summary
+
+
+def test_chain_expiry_warnings_empty_for_healthy_chain(make_cert):
+    leaf = load_certificate(make_cert())
+    inter = load_certificate(make_cert(common_name="Intermediate CA", ca=True))
+    assert chain_expiry_warnings([leaf, inter]) == []
+
+
+def test_chain_expiry_warnings_flags_expired_intermediate(make_cert):
+    leaf = load_certificate(make_cert())
+    inter = load_certificate(
+        make_cert(common_name="Old CA", ca=True, days_valid=-5, days_ago_start=400)
+    )
+    warnings = chain_expiry_warnings([leaf, inter])
+    assert len(warnings) == 1
+    assert "Old CA" in warnings[0]
+    assert "expired" in warnings[0]
+
+
+def test_chain_expiry_warnings_flags_soon_to_expire_intermediate(make_cert):
+    leaf = load_certificate(make_cert())
+    inter = load_certificate(
+        make_cert(common_name="Expiring CA", ca=True, days_valid=10)
+    )
+    warnings = chain_expiry_warnings([leaf, inter], warn_days=30)
+    assert len(warnings) == 1
+    assert "Expiring CA" in warnings[0]
+    assert "expires in" in warnings[0]
+
+
+def test_chain_expiry_warnings_ignores_leaf(make_cert):
+    # An expired leaf at index 0 must not produce a chain warning; only the
+    # intermediates/roots beyond it are inspected.
+    leaf = load_certificate(make_cert(days_valid=-5, days_ago_start=400))
+    inter = load_certificate(make_cert(common_name="Good CA", ca=True))
+    assert chain_expiry_warnings([leaf, inter]) == []
+
+
+def test_chain_expiry_warnings_empty_for_leaf_only(make_cert):
+    assert chain_expiry_warnings([load_certificate(make_cert())]) == []

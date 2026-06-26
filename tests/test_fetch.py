@@ -157,3 +157,150 @@ def test_verify_chain_default_uses_system_store(monkeypatch):
     fetch.verify_chain("example.com")
 
     assert recorded["kwargs"] == {}
+
+
+# --- CRL fallback -----------------------------------------------------------
+
+CRL_URL = "http://crl.example.com/ca.crl"
+
+
+def _build_crl_pki(revoked_serials=()):
+    """Build a (issuer_cert, leaf_cert, crl) triple for CRL tests.
+
+    The issuer is a self-signed CA; the leaf carries a CRLDistributionPoints
+    extension pointing at ``CRL_URL`` and is signed by the issuer. The CRL is
+    signed by the issuer and revokes every serial in ``revoked_serials``.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    now = datetime.now(timezone.utc)
+    issuer_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    issuer_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test CA")])
+    issuer_cert = (
+        x509.CertificateBuilder()
+        .subject_name(issuer_name)
+        .issuer_name(issuer_name)
+        .public_key(issuer_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(issuer_key, hashes.SHA256())
+    )
+
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf_cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "leaf")]))
+        .issuer_name(issuer_name)
+        .public_key(leaf_key.public_key())
+        .serial_number(4242)
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=90))
+        .add_extension(
+            x509.CRLDistributionPoints(
+                [
+                    x509.DistributionPoint(
+                        full_name=[x509.UniformResourceIdentifier(CRL_URL)],
+                        relative_name=None,
+                        reasons=None,
+                        crl_issuer=None,
+                    )
+                ]
+            ),
+            critical=False,
+        )
+        .sign(issuer_key, hashes.SHA256())
+    )
+
+    crl_builder = (
+        x509.CertificateRevocationListBuilder()
+        .issuer_name(issuer_name)
+        .last_update(now - timedelta(hours=1))
+        .next_update(now + timedelta(days=1))
+    )
+    for serial in revoked_serials:
+        crl_builder = crl_builder.add_revoked_certificate(
+            x509.RevokedCertificateBuilder()
+            .serial_number(serial)
+            .revocation_date(now - timedelta(hours=2))
+            .build()
+        )
+    crl = crl_builder.sign(issuer_key, hashes.SHA256())
+    return issuer_cert, leaf_cert, crl
+
+
+def test_crl_urls_extracts_http_distribution_points():
+    from cryptography.hazmat.primitives import serialization
+
+    from certinspect.fetch import _crl_urls
+
+    _, leaf_cert, _ = _build_crl_pki()
+    leaf = load_certificate(leaf_cert.public_bytes(serialization.Encoding.DER))
+    assert _crl_urls(leaf) == [CRL_URL]
+
+
+def test_check_crl_reports_good_when_serial_absent(monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+
+    from certinspect import fetch
+
+    issuer_cert, leaf_cert, crl = _build_crl_pki(revoked_serials=())
+    der_crl = crl.public_bytes(serialization.Encoding.DER)
+    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+
+    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    assert status == "GOOD"
+    assert detail == "via CRL"
+
+
+def test_check_crl_reports_revoked_when_serial_listed(monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+
+    from certinspect import fetch
+
+    issuer_cert, leaf_cert, crl = _build_crl_pki(revoked_serials=(4242,))
+    der_crl = crl.public_bytes(serialization.Encoding.DER)
+    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+
+    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    assert status == "REVOKED"
+    assert "via CRL" in detail
+
+
+def test_check_crl_skips_crl_with_bad_signature(monkeypatch):
+    """A CRL not signed by the issuer is ignored (soft-fail)."""
+    from cryptography.hazmat.primitives import serialization
+
+    from certinspect import fetch
+
+    _, leaf_cert, _ = _build_crl_pki(revoked_serials=(4242,))
+    # CRL signed by an unrelated CA must not be trusted against this issuer.
+    other_issuer, _, other_crl = _build_crl_pki(revoked_serials=(4242,))
+    der_crl = other_crl.public_bytes(serialization.Encoding.DER)
+    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+
+    # Use the first PKI's issuer, whose key did not sign ``other_crl``.
+    wrong_issuer, _, _ = _build_crl_pki()
+    status, _ = fetch._check_crl(leaf_cert, wrong_issuer, timeout=1.0)
+    assert status == "UNAVAILABLE"
+
+
+def test_check_revocation_falls_back_to_crl(monkeypatch):
+    """With no OCSP responder, check_revocation consults the CRL."""
+    from cryptography.hazmat.primitives import serialization
+
+    from certinspect import fetch
+
+    issuer_cert, leaf_cert, crl = _build_crl_pki(revoked_serials=(4242,))
+    der_crl = crl.public_bytes(serialization.Encoding.DER)
+    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+
+    status, detail = fetch.check_revocation(leaf_cert, issuer=issuer_cert)
+    assert status == "REVOKED"
+    assert "via CRL" in detail
