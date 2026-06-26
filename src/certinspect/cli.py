@@ -98,6 +98,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--csv-delimiter",
+        default=",",
+        metavar="SEP",
+        help=(
+            "Field separator for --csv (default: ','). Use ';' for Numbers or "
+            "Excel in locales that expect it (e.g. Italian)."
+        ),
+    )
+    parser.add_argument(
         "--quiet",
         action="store_true",
         help="Only print certificates that have a problem.",
@@ -285,6 +294,7 @@ def _render(
     days: int,
     quiet: bool,
     as_csv: bool = False,
+    csv_delimiter: str = ",",
     max_days: int | None = None,
     exporter: str | None = None,
     errors: list[tuple[str | None, str]] = (),
@@ -311,7 +321,7 @@ def _render(
         results = [r for r in results if r[1]["days_to_expire"] <= max_days]
 
     if as_csv:
-        print(format_csv(results, warn_days=days), end="")
+        print(format_csv(results, warn_days=days, delimiter=csv_delimiter), end="")
         return None
 
     if as_json:
@@ -356,6 +366,8 @@ def main() -> None:
         parser.error("--csv and --json cannot be used together.")
     if args.csv and args.exporter:
         parser.error("--csv and --exporter cannot be used together.")
+    if len(args.csv_delimiter) != 1:
+        parser.error("--csv-delimiter must be a single character.")
 
     extra_targets = _read_targets(args.input) if args.input else []
     if not args.target and not extra_targets and not args.file:
@@ -428,6 +440,7 @@ def main() -> None:
         days=args.days,
         quiet=args.quiet,
         as_csv=args.csv,
+        csv_delimiter=args.csv_delimiter,
         max_days=args.max_days,
         exporter=args.exporter,
         errors=errors,

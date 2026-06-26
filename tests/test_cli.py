@@ -663,6 +663,25 @@ def test_main_csv_output(monkeypatch, capsys, make_cert):
     assert rows[0]["status"] == "VALID"
 
 
+def test_main_csv_custom_delimiter(monkeypatch, capsys, make_cert):
+    import csv
+    import io
+
+    certs = {"a.com": make_cert(san=["a.com"])}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["a.com", "--csv", "--csv-delimiter", ";"])
+    out = capsys.readouterr().out
+    assert code == 0
+    rows = list(csv.DictReader(io.StringIO(out), delimiter=";"))
+    assert rows[0]["target"] == "a.com"
+
+
+def test_main_csv_delimiter_rejects_multichar(monkeypatch, capsys, make_cert):
+    code = _run_main(monkeypatch, ["a.com", "--csv", "--csv-delimiter", ";;"])
+    assert code == 2
+    assert "single character" in capsys.readouterr().err
+
+
 def test_main_csv_rejects_json(monkeypatch, capsys, make_cert):
     code = _run_main(monkeypatch, ["a.com", "--csv", "--json"])
     assert code == 2

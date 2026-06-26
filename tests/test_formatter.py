@@ -234,8 +234,30 @@ def test_format_csv_includes_expected_columns(make_cert):
     row = rows[0]
     assert row["status"] == "VALID"
     assert row["days_to_expire"] == str(info["days_to_expire"])
-    assert row["subject"] == info["subject"]
-    assert row["fingerprint_sha256"] == info["fingerprint_sha256"]
+    assert row["common_name"] == "example.com"
+    assert row["valid_until"] == str(info["not_valid_after"])
+
+
+def test_format_csv_columns_have_no_embedded_commas(make_cert):
+    # The lean columns must be comma-free so the file opens cleanly in a
+    # spreadsheet without any quoting.
+    info = _info(make_cert(san=["example.com"], days_valid=200))
+    text = format_csv([("example.com", info, 0)])
+    assert '"' not in text
+
+
+def test_format_csv_issuer_is_common_name_only(make_cert):
+    info = _info(make_cert(san=["example.com"], issuer_name="Example Root CA"))
+    rows = _parse_csv(format_csv([("example.com", info, 0)]))
+    assert rows[0]["issuer"] == "Example Root CA"
+
+
+def test_format_csv_custom_delimiter(make_cert):
+    info = _info(make_cert(san=["example.com"], days_valid=200))
+    text = format_csv([("example.com", info, 0)], delimiter=";")
+    rows = list(csv.DictReader(io.StringIO(text), delimiter=";"))
+    assert rows[0]["target"] == "example.com"
+    assert rows[0]["status"] == "VALID"
 
 
 def test_format_csv_status_reflects_expiry(make_cert):

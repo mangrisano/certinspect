@@ -103,32 +103,45 @@ def format_json(info: dict) -> str:
 
 
 # Columns emitted by format_csv, in order. The first element is the header
-# label; the second pulls the value out of a (target, info) pair.
+# label; the second pulls the value out of a (target, info) pair. The columns
+# are deliberately lean and free of embedded commas (CN only, no full DN,
+# serial or fingerprint) so the file opens cleanly in a spreadsheet; the
+# dropped fields remain available via --json.
 _CSV_COLUMNS = (
     ("target", lambda target, info: target or ""),
-    ("subject", lambda target, info: info["subject"]),
-    ("issuer", lambda target, info: info["issuer"]),
+    ("common_name", lambda target, info: _common_name(info["subject"])),
     ("status", lambda target, info: info["_status"]),
     ("days_to_expire", lambda target, info: info["days_to_expire"]),
-    ("not_valid_before", lambda target, info: info["not_valid_before"]),
-    ("not_valid_after", lambda target, info: info["not_valid_after"]),
-    ("serial_number", lambda target, info: info["serial_number"]),
-    ("fingerprint_sha256", lambda target, info: info["fingerprint_sha256"]),
+    ("valid_from", lambda target, info: info["not_valid_before"]),
+    ("valid_until", lambda target, info: info["not_valid_after"]),
+    ("issuer", lambda target, info: _common_name(info["issuer"])),
     ("hostname_match", lambda target, info: info.get("hostname_match")),
 )
+
+
+def _common_name(dn: str) -> str:
+    """Return the CN from an RFC 4514 distinguished name, or the whole DN."""
+    for field in dn.split(","):
+        field = field.strip()
+        if field.startswith("CN="):
+            return field[3:]
+    return dn
 
 
 def format_csv(
     results: list[tuple[str | None, dict, int]],
     warn_days: int = 30,
+    delimiter: str = ",",
 ) -> str:
     """Render results as CSV with a header row, one line per target.
 
     Returns the whole CSV document (trailing newline included). The status
     column reuses certificate_status() so it matches the other output modes.
+    ``delimiter`` selects the field separator (use ';' for spreadsheets in
+    locales that expect it, e.g. Numbers/Excel in Italian).
     """
     buffer = io.StringIO()
-    writer = csv.writer(buffer, lineterminator="\n")
+    writer = csv.writer(buffer, delimiter=delimiter, lineterminator="\n")
     writer.writerow([label for label, _ in _CSV_COLUMNS])
     for target, info, _ in results:
         info = {**info, "_status": certificate_status(info, warn_days)}

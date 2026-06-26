@@ -78,6 +78,9 @@ certinspect example.com --json
 # CSV output (one row per target, with a header) for spreadsheets
 certinspect example.com github.com --csv
 
+# CSV with a ';' separator (Numbers/Excel in some locales, e.g. Italian)
+certinspect example.com github.com --csv --csv-delimiter ';'
+
 # Inspect a local certificate
 certinspect --file ./certificate.pem
 
@@ -174,6 +177,7 @@ not checked via CRLs.
 | `--timeout N`                     | Connection timeout in seconds (default: 5).                                                       |
 | `--json`                          | Print the result as JSON instead of human-readable text.                                          |
 | `--csv`                           | Print the results as CSV (one row per target, with a header).                                     |
+| `--csv-delimiter SEP`             | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.   |
 | `--quiet`                         | Only print certificates that have a problem.                                                      |
 | `--verify`                        | Verify the chain + OCSP revocation, system trust store (hosts only).                              |
 | `--chain`                         | Show the certificate chain presented by the server.                                               |
