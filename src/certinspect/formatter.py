@@ -65,6 +65,9 @@ def format_human(
         if not info["chain_trusted"] and info.get("chain_error"):
             lines.append(f"WARNING: chain not trusted ({info['chain_error']})")
 
+    for warning in info.get("chain_warnings", ()):
+        lines.append(f"WARNING: {warning}")
+
     if info.get("revocation_status"):
         lines.append(row("Revocation", info["revocation_status"]))
         if info["revocation_status"] == "REVOKED" and info.get("revocation_detail"):

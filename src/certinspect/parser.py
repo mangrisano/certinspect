@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import dsa, ec, rsa
+from cryptography.x509.oid import NameOID
 
 
 class CertificateLoadError(ValueError): ...
@@ -55,6 +56,35 @@ def chain_summary(cert: x509.Certificate) -> dict:
         "serial_number": cert.serial_number,
         "is_ca": _is_ca(cert),
     }
+
+
+def _short_name(cert: x509.Certificate) -> str:
+    """Return the certificate's Common Name, or its full subject DN."""
+    attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+    return attrs[0].value if attrs else cert.subject.rfc4514_string()
+
+
+def chain_expiry_warnings(
+    chain: list[x509.Certificate], warn_days: int = 30
+) -> list[str]:
+    """Return warnings for non-leaf chain certs that are expired or near expiry.
+
+    The leaf (index 0) is skipped — its own expiry is already reported as the
+    certificate status. Each intermediate or root certificate that has already
+    expired, or expires within ``warn_days`` days, yields one warning string.
+    An expired intermediate silently breaks the chain, so surfacing it early is
+    valuable even when ``--verify`` is not used.
+    """
+    now = datetime.now(timezone.utc)
+    warnings: list[str] = []
+    for cert in chain[1:]:
+        days = (cert.not_valid_after_utc - now).days
+        name = _short_name(cert)
+        if days < 0:
+            warnings.append(f"chain certificate '{name}' expired {-days} days ago")
+        elif days < warn_days:
+            warnings.append(f"chain certificate '{name}' expires in {days} days")
+    return warnings
 
 
 def _is_ca(cert: x509.Certificate) -> bool:

@@ -241,32 +241,40 @@ def _fetch_issuer(cert: x509.Certificate, timeout: float) -> x509.Certificate | 
     return None
 
 
-def check_revocation(
-    cert: x509.Certificate,
-    timeout: float = 5.0,
-    issuer: x509.Certificate | None = None,
-) -> tuple[str, str | None]:
-    """Check the certificate's revocation status via OCSP.
+def _crl_urls(cert: x509.Certificate) -> list[str]:
+    """Return the HTTP(S) CRL distribution-point URLs from the certificate.
 
-    Return ``(status, detail)`` where status is one of:
-
-    * ``"GOOD"`` — the responder confirms the certificate is valid.
-    * ``"REVOKED"`` — the responder confirms the certificate is revoked.
-    * ``"UNKNOWN"`` — the responder does not know this certificate.
-    * ``"UNAVAILABLE"`` — no OCSP URL, issuer unavailable, or a responder
-      error (soft-fail, like a browser).
-
-    When ``issuer`` is provided (e.g. from the verified TLS chain) it is used
-    directly; otherwise the issuer is downloaded via the AIA "CA Issuers" URL.
-    ``detail`` carries extra context (e.g. the revocation time) when useful.
-    No CRL fallback is performed.
+    Only ``http``/``https`` distribution points are returned (LDAP and other
+    schemes are skipped). The list is empty when the CRLDistributionPoints
+    extension is absent or carries no usable URL.
     """
+    try:
+        dps = cert.extensions.get_extension_for_oid(
+            ExtensionOID.CRL_DISTRIBUTION_POINTS
+        ).value
+    except x509.ExtensionNotFound:
+        return []
+
+    urls: list[str] = []
+    for dp in dps:
+        for name in dp.full_name or []:
+            value = getattr(name, "value", None)
+            if isinstance(value, str) and value.lower().startswith(
+                ("http://", "https://")
+            ):
+                urls.append(value)
+    return urls
+
+
+def _check_ocsp(
+    cert: x509.Certificate,
+    issuer: x509.Certificate | None,
+    timeout: float,
+) -> tuple[str, str | None]:
+    """Check revocation via OCSP. See ``check_revocation`` for the status set."""
     ocsp_urls, _ = _aia_urls(cert)
     if not ocsp_urls:
         return "UNAVAILABLE", "no OCSP responder in AIA extension"
-
-    if issuer is None:
-        issuer = _fetch_issuer(cert, timeout)
     if issuer is None:
         return "UNAVAILABLE", "issuer certificate could not be retrieved"
 
@@ -291,3 +299,90 @@ def check_revocation(
         when = getattr(response, "revocation_time_utc", None)
         return "REVOKED", f"revoked at {when}" if when else "revoked"
     return "UNKNOWN", "responder does not know this certificate"
+
+
+def _load_crl(raw: bytes) -> x509.CertificateRevocationList | None:
+    """Parse a CRL from DER or PEM bytes, or return None when neither works."""
+    try:
+        return x509.load_der_x509_crl(raw)
+    except ValueError:
+        try:
+            return x509.load_pem_x509_crl(raw)
+        except ValueError:
+            return None
+
+
+def _check_crl(
+    cert: x509.Certificate,
+    issuer: x509.Certificate | None,
+    timeout: float,
+) -> tuple[str, str | None]:
+    """Check revocation via the certificate's CRL distribution points.
+
+    Download each CRL in turn and look up the certificate's serial number.
+    When ``issuer`` is known the CRL signature is verified and a CRL that
+    fails the check is skipped. The first CRL that yields a verdict wins;
+    otherwise the status is ``"UNAVAILABLE"`` (soft-fail).
+    """
+    urls = _crl_urls(cert)
+    if not urls:
+        return "UNAVAILABLE", "no CRL distribution point in extension"
+
+    for url in urls:
+        try:
+            raw = _http(url, timeout=timeout)
+        except (OSError, ValueError):
+            continue
+        crl = _load_crl(raw)
+        if crl is None:
+            continue
+        if issuer is not None and not crl.is_signature_valid(issuer.public_key()):
+            continue
+
+        revoked = crl.get_revoked_certificate_by_serial_number(cert.serial_number)
+        if revoked is not None:
+            when = getattr(revoked, "revocation_date_utc", None)
+            detail = f"revoked at {when}" if when else "revoked"
+            return "REVOKED", f"{detail} (via CRL)"
+        return "GOOD", "via CRL"
+
+    return "UNAVAILABLE", "CRL could not be retrieved"
+
+
+def check_revocation(
+    cert: x509.Certificate,
+    timeout: float = 5.0,
+    issuer: x509.Certificate | None = None,
+) -> tuple[str, str | None]:
+    """Check the certificate's revocation status via OCSP, then CRL.
+
+    Return ``(status, detail)`` where status is one of:
+
+    * ``"GOOD"`` — the certificate is confirmed valid.
+    * ``"REVOKED"`` — the certificate is confirmed revoked.
+    * ``"UNKNOWN"`` — the OCSP responder does not know this certificate.
+    * ``"UNAVAILABLE"`` — neither OCSP nor CRL gave an answer (soft-fail,
+      like a browser).
+
+    OCSP is tried first. When it soft-fails (no responder, issuer unavailable,
+    network or responder error) the certificate's CRL distribution points are
+    queried as a fallback. ``detail`` carries extra context (e.g. the
+    revocation time, or which source answered) when useful.
+
+    When ``issuer`` is provided (e.g. from the verified TLS chain) it is used
+    directly; otherwise the issuer is downloaded via the AIA "CA Issuers" URL.
+    """
+    if issuer is None:
+        issuer = _fetch_issuer(cert, timeout)
+
+    status, detail = _check_ocsp(cert, issuer, timeout)
+    if status != "UNAVAILABLE":
+        return status, detail
+
+    crl_status, crl_detail = _check_crl(cert, issuer, timeout)
+    if crl_status != "UNAVAILABLE":
+        return crl_status, crl_detail
+
+    # Both soft-failed: report the OCSP reason, which is usually the more
+    # informative of the two.
+    return status, detail

@@ -24,6 +24,7 @@ from certinspect.parser import (
     load_certificate,
     analyze,
     certificate_status,
+    chain_expiry_warnings,
     hostname_matches,
     chain_summary,
     pin_matches,
@@ -312,6 +313,11 @@ def _inspect(
     if info["hostname_match"] is False:
         code = 5
 
+    # The verified chain (when available) is the most accurate source for the
+    # intermediates actually used; fall back to the chain presented by the
+    # server. Either way the leaf is skipped by chain_expiry_warnings.
+    chain_certs: list = []
+
     if verify and target:
         trusted, reason, verified = verify_chain(
             target, port, timeout, starttls=starttls, cafile=cafile, capath=capath
@@ -328,6 +334,14 @@ def _inspect(
         info["revocation_detail"] = detail
         if revocation == "REVOKED":
             code = 6
+        chain_certs = verified
+
+    if not chain_certs and conn:
+        chain_certs = conn.get("chain") or []
+
+    chain_warnings = chain_expiry_warnings(chain_certs, days)
+    if chain_warnings:
+        info["chain_warnings"] = chain_warnings
 
     if chain:
         presented = (conn.get("chain") if conn else None) or [cert]
