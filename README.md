@@ -5,6 +5,7 @@
 [![CI](https://github.com/mangrisano/certinspect/actions/workflows/ci.yml/badge.svg)](https://github.com/mangrisano/certinspect/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/certinspect.svg)](https://pypi.org/project/certinspect/)
 [![Python](https://img.shields.io/pypi/pyversions/certinspect.svg)](https://pypi.org/project/certinspect/)
+[![Downloads](https://static.pepy.tech/badge/certinspect)](https://pepy.tech/project/certinspect)
 [![License: MIT](https://img.shields.io/pypi/l/certinspect.svg)](LICENSE)
 
 **TLS inspection · Expiry alerts · OCSP/CRL revocation · Chain of trust · Batch & concurrency · STARTTLS · CI-friendly exit codes**
