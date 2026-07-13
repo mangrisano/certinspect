@@ -10,7 +10,7 @@
 
 **TLS inspection · Expiry alerts · OCSP/CRL revocation · Chain of trust · Batch & concurrency · STARTTLS · CI-friendly exit codes**
 
-[PyPI](https://pypi.org/project/certinspect/) · [Usage](#usage) · [Options](#options) · [Recipes](#recipes) · [Exit codes](#exit-codes) · [Changelog](#changelog) · [Issues](https://github.com/mangrisano/certinspect/issues)
+[PyPI](https://pypi.org/project/certinspect/) · [Usage](#usage) · [Use cases](#use-cases) · [Options](#options) · [Recipes](#recipes) · [Exit codes](#exit-codes) · [Changelog](#changelog) · [Issues](https://github.com/mangrisano/certinspect/issues)
 
 </div>
 
@@ -249,6 +249,177 @@ Chain trusted:  True
 WARNING: chain certificate 'Example Intermediate CA' expires in 12 days
 WARNING: chain certificate 'Example Legacy Root CA' expired 3 days ago
 Revocation:     GOOD
+```
+
+## Use cases
+
+Real-world scenarios and the command that covers each. Every check is
+exit-code driven, so it drops straight into cron, CI or a monitoring stack.
+
+### Keep a whole fleet from expiring
+
+Inspect every host in parallel, show only what expires within 30 days, soonest
+first:
+
+```bash
+certinspect --input fleet.txt --concurrency 20 --max-days 30 --sort expiry
+```
+
+### Fail a CI build before a cert bites you
+
+Non-zero exit (`3` expiring, `4` expired, ...) stops the pipeline:
+
+```bash
+certinspect --input fleet.txt --days 14 --quiet || exit 1
+```
+
+### Validate a freshly issued cert before deploying it
+
+No network needed — assert the file covers every hostname you serve (exit `8`
+if any SAN is missing). Catches an ACME renewal that silently dropped a name:
+
+```bash
+certinspect --file ./new-cert.pem \
+  --expect-san example.com --expect-san www.example.com --expect-san api.example.com \
+  || { echo "cert incomplete, blocking deploy"; exit 1; }
+```
+
+### Check one node behind a load balancer / anycast IP
+
+Connect to a specific backend by IP but present the virtual host via SNI; the
+hostname match is checked against the name you expect:
+
+```bash
+certinspect 10.0.0.5 --servername api.example.com --verify
+```
+
+### Inspect services behind an internal / private PKI
+
+Verify the chain against your own CA bundle instead of the system trust store:
+
+```bash
+certinspect internal.example.lan --verify --cafile ./internal-ca.pem
+```
+
+### Catch a revoked certificate
+
+`--verify` queries OCSP and falls back to the CRL; a revoked leaf fails with
+exit `6`:
+
+```bash
+certinspect example.com --verify
+```
+
+### Spot an expired intermediate before it breaks the chain
+
+An expired intermediate silently breaks trust even when the leaf is still
+valid; certinspect warns about it:
+
+```bash
+certinspect example.com --verify --days 30
+```
+
+### Inspect mail / FTP servers (STARTTLS)
+
+Upgrade a plaintext protocol to TLS before reading the certificate:
+
+```bash
+certinspect smtp.example.com --starttls smtp
+certinspect imap.example.com --starttls imap
+```
+
+### Pin a certificate and alert on unexpected changes
+
+Fail with exit `7` if the fingerprint ever differs from the expected pin:
+
+```bash
+certinspect example.com --pin BE:AB:14:CF:39:...
+```
+
+### Feed a monitoring stack
+
+Nagios/Icinga plugin lines or Prometheus textfile metrics (see
+[Monitoring](#monitoring)):
+
+```bash
+certinspect --input fleet.txt --exporter prometheus \
+  > /var/lib/node_exporter/textfile/certinspect.prom
+```
+
+### Audit a fleet into a spreadsheet
+
+CSV with a locale-friendly separator, one row per host:
+
+```bash
+certinspect --input fleet.txt --csv --csv-delimiter ';' > certs.csv
+```
+
+### Separate a warning window from a critical one
+
+Two-tier thresholds let alerting distinguish "renew soon" (exit `3`) from
+"renew now" (exit `4`) — e.g. page on-call only for the critical window:
+
+```bash
+certinspect --input fleet.txt --days 30 --critical-days 7
+```
+
+### Send a nightly expiry digest
+
+Only what expires within 30 days, soonest first, with a one-line tally on
+stderr, piped to mail:
+
+```bash
+certinspect --input fleet.txt --max-days 30 --sort expiry --summary \
+  | mail -s "Certs expiring soon" ops@example.com
+```
+
+### Pipe results into other tooling
+
+JSON is always a list of objects — feed it to `jq`, a dashboard or a script:
+
+```bash
+# Every host sorted by days left
+certinspect --input fleet.txt --concurrency 20 --json \
+  | jq -r 'sort_by(.days_to_expire)[] | "\(.days_to_expire)d  \(.subject)"'
+
+# Grab just the SHA-256 fingerprint (e.g. to pin it later)
+certinspect example.com --json | jq -r '.[0].fingerprint_sha256'
+```
+
+### Inspect a service on a non-standard TLS port
+
+Databases, message brokers, admin panels and custom services rarely live on
+443:
+
+```bash
+certinspect db.example.com --port 5432        # Postgres over TLS
+certinspect broker.example.com --port 8883     # MQTT over TLS
+```
+
+### Probe slow or high-latency endpoints
+
+Raise the connection timeout for far-away regions or throttled links (default
+5s):
+
+```bash
+certinspect edge.ap-southeast-2.example.com --timeout 15
+```
+
+### Debug the exact chain a server presents
+
+See every certificate the server sends (leaf → intermediates), to diagnose a
+missing or mis-ordered intermediate:
+
+```bash
+certinspect example.com --chain
+```
+
+### Archive the served certificate
+
+Save the fetched leaf as PEM for auditing, diffing or extracting a pin:
+
+```bash
+certinspect example.com --export ./example.com.pem
 ```
 
 ## Options
