@@ -961,6 +961,15 @@ ruff check src tests
 ruff format src tests
 ```
 
+## Support
+
+If certinspect is useful to you, the best ways to support it are:
+
+- Star the repo to help others discover it
+- [Open an issue](https://github.com/mangrisano/certinspect/issues) for bugs or ideas
+- Send a pull request
+- Share it with others who manage TLS certificates
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
