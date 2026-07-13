@@ -26,6 +26,7 @@ from certinspect.parser import (
     certificate_status,
     chain_expiry_warnings,
     hostname_matches,
+    missing_san_names,
     chain_summary,
     pin_matches,
     to_pem,
@@ -154,6 +155,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--servername",
+        metavar="NAME",
+        help=(
+            "Override the SNI hostname sent in the TLS handshake (host targets "
+            "only). Lets you reach a specific backend by IP or DNS name while "
+            "presenting the virtual host a load balancer routes on; the "
+            "hostname match is checked against this name instead of the target."
+        ),
+    )
+    parser.add_argument(
+        "--expect-san",
+        metavar="NAME",
+        action="append",
+        dest="expect_san",
+        help=(
+            "Assert that the certificate's SAN covers NAME (wildcards honored); "
+            "exit with code 8 if any expected name is missing. Repeat the flag "
+            "to require several names. Works for host and --file targets."
+        ),
+    )
+    parser.add_argument(
         "--input",
         metavar="PATH",
         help=(
@@ -264,6 +286,7 @@ def _fetch_source(
     file: str | None,
     timeout: float,
     starttls: str | None = None,
+    servername: str | None = None,
 ) -> tuple[bytes, dict | None]:
     """Return (raw certificate bytes, connection info) for one source.
 
@@ -272,7 +295,9 @@ def _fetch_source(
     if file:
         with open(file, "rb") as f:
             return f.read(), None
-    return get_server_cert(target, port, timeout, starttls=starttls)
+    return get_server_cert(
+        target, port, timeout, starttls=starttls, servername=servername
+    )
 
 
 def _inspect(
@@ -290,15 +315,22 @@ def _inspect(
     starttls: str | None = None,
     cafile: str | None = None,
     capath: str | None = None,
+    servername: str | None = None,
+    expect_san: list[str] | None = None,
 ) -> tuple[dict, int]:
     """Inspect one source and return its (info, exit_code).
 
     The hostname match (and its exit code 5) only applies to host targets;
-    with --file it is left as None. Chain verification (exit code 6) is only
-    performed for host targets when ``verify`` is set. A failed ``pin`` check
-    yields exit code 7.
+    with --file it is left as None. When ``servername`` is set it overrides
+    both the SNI hostname and the name the hostname match is checked against.
+    Chain verification (exit code 6) is only performed for host targets when
+    ``verify`` is set. A failed ``pin`` check yields exit code 7. When
+    ``expect_san`` names are not all covered by the certificate's SAN the exit
+    code is 8.
     """
-    der, conn = _fetch_source(target, port, file, timeout, starttls=starttls)
+    der, conn = _fetch_source(
+        target, port, file, timeout, starttls=starttls, servername=servername
+    )
     cert = load_certificate(der)
     info = analyze(cert)
     if conn:
@@ -307,7 +339,8 @@ def _inspect(
     if export:
         with open(export, "wb") as f:
             f.write(to_pem(cert))
-    info["hostname_match"] = hostname_matches(info, target) if target else None
+    check_name = servername or target
+    info["hostname_match"] = hostname_matches(info, check_name) if check_name else None
 
     code = EXIT_BY_STATUS[certificate_status(info, days, critical_days)]
     if info["hostname_match"] is False:
@@ -320,7 +353,13 @@ def _inspect(
 
     if verify and target:
         trusted, reason, verified = verify_chain(
-            target, port, timeout, starttls=starttls, cafile=cafile, capath=capath
+            target,
+            port,
+            timeout,
+            starttls=starttls,
+            cafile=cafile,
+            capath=capath,
+            servername=servername,
         )
         info["chain_trusted"] = trusted
         info["chain_error"] = reason
@@ -351,6 +390,12 @@ def _inspect(
         info["pin_match"] = pin_matches(info, pin)
         if not info["pin_match"]:
             code = 7
+
+    if expect_san:
+        missing = missing_san_names(info, expect_san)
+        info["expected_san_missing"] = missing
+        if missing:
+            code = 8
     return info, code
 
 
@@ -465,6 +510,8 @@ def main() -> None:
         parser.error("--critical-days must be less than or equal to --days.")
     if (args.cafile or args.capath) and not args.verify:
         parser.error("--cafile/--capath require --verify.")
+    if args.servername and args.file:
+        parser.error("--servername applies to host targets, not --file.")
 
     extra_targets = _read_targets(args.input) if args.input else []
     if not args.target and not extra_targets and not args.file:
@@ -507,6 +554,8 @@ def main() -> None:
                 starttls=args.starttls,
                 cafile=args.cafile,
                 capath=args.capath,
+                servername=args.servername,
+                expect_san=args.expect_san,
             )
         except (OSError, ssl.SSLError, ValueError) as err:
             return raw_target, None, str(err)

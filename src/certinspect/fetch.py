@@ -94,7 +94,11 @@ def _negotiate_starttls(sock: socket.socket, protocol: str) -> None:
 
 
 def get_server_cert(
-    host: str, port: int = 443, timeout: float = 5.0, starttls: str | None = None
+    host: str,
+    port: int = 443,
+    timeout: float = 5.0,
+    starttls: str | None = None,
+    servername: str | None = None,
 ) -> tuple[bytes, dict]:
     """Return the server certificate (DER bytes) and connection info.
 
@@ -104,6 +108,10 @@ def get_server_cert(
 
     When ``starttls`` is set (smtp, imap, pop3 or ftp) the plaintext protocol
     is upgraded to TLS before the certificate is read.
+
+    ``servername`` overrides the SNI hostname sent in the TLS handshake; it
+    defaults to ``host``. Use it to reach a specific backend by IP while still
+    presenting the virtual hostname a load balancer routes on.
     """
     context = ssl.create_default_context()
     context.check_hostname = False
@@ -111,7 +119,7 @@ def get_server_cert(
     with socket.create_connection((host, port), timeout=timeout) as sock:
         if starttls:
             _negotiate_starttls(sock, starttls)
-        with context.wrap_socket(sock, server_hostname=host) as ssock:
+        with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
             der = ssock.getpeercert(binary_form=True)
             cipher = ssock.cipher()
             conn = {
@@ -145,6 +153,7 @@ def verify_chain(
     starttls: str | None = None,
     cafile: str | None = None,
     capath: str | None = None,
+    servername: str | None = None,
 ) -> tuple[bool, str | None, list[x509.Certificate]]:
     """Check whether the server's certificate chain is trusted.
 
@@ -159,6 +168,9 @@ def verify_chain(
     When ``cafile`` and/or ``capath`` are given, the chain is verified against
     that CA bundle/directory instead of the system trust store, which is what
     you want behind an internal/private PKI.
+
+    ``servername`` overrides the SNI hostname sent in the handshake (and thus
+    the name the certificate is validated against); it defaults to ``host``.
     """
     if cafile or capath:
         context = ssl.create_default_context(cafile=cafile, capath=capath)
@@ -168,7 +180,7 @@ def verify_chain(
         with socket.create_connection((host, port), timeout=timeout) as sock:
             if starttls:
                 _negotiate_starttls(sock, starttls)
-            with context.wrap_socket(sock, server_hostname=host) as ssock:
+            with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
                 return True, None, _verified_chain(ssock)
     except ssl.SSLCertVerificationError as err:
         return False, err.verify_message or str(err), []

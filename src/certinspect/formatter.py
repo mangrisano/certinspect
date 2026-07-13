@@ -60,6 +60,12 @@ def format_human(
     if info.get("hostname_match") is not None:
         lines.append(row("Hostname match", info["hostname_match"]))
 
+    if "expected_san_missing" in info:
+        missing = info["expected_san_missing"]
+        lines.append(row("Expected SAN", "ok" if not missing else "MISSING"))
+        for name in missing:
+            lines.append(f"WARNING: SAN does not cover '{name}'")
+
     if "chain_trusted" in info:
         lines.append(row("Chain trusted", info["chain_trusted"]))
         if not info["chain_trusted"] and info.get("chain_error"):

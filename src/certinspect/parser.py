@@ -33,6 +33,16 @@ def hostname_matches(info: dict, hostname: str) -> bool:
     return any(_name_matches(name, hostname) for name in info["san"])
 
 
+def missing_san_names(info: dict, expected: list[str]) -> list[str]:
+    """Return the expected names not covered by the certificate's SAN.
+
+    Each name is matched with the same wildcard rules as ``hostname_matches``
+    (a leading ``*.`` covers exactly one label). The returned list preserves
+    the input order and is empty when every name is covered.
+    """
+    return [name for name in expected if not hostname_matches(info, name)]
+
+
 def format_fingerprint(cert: x509.Certificate) -> str:
     return ":".join(f"{b:02X}" for b in cert.fingerprint(hashes.SHA256()))
 
