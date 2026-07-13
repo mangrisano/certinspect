@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-13
+
+### Added
+
+- `--servername NAME`: override the SNI hostname sent in the TLS handshake
+  (host targets only). Lets you reach a specific backend by IP or DNS name
+  while presenting the virtual host a load balancer routes on; the hostname
+  match is then checked against `NAME` instead of the connection target.
+- `--expect-san NAME`: assert that the certificate's SAN covers `NAME`
+  (wildcards honored) and exit with code 8 when any expected name is missing.
+  Repeat the flag to require several names; works for both host and `--file`
+  targets. The report shows an `Expected SAN` line and a per-name warning.
+
 ## [1.0.4] - 2026-06-26
 
 ### Fixed
