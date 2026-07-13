@@ -66,6 +66,24 @@ def test_format_human_no_warning_when_far_from_expiry(make_cert):
     assert "WARNING" not in text
 
 
+def test_format_human_expected_san_ok(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    info["expected_san_missing"] = []
+    text = format_human(info)
+    assert "Expected SAN:" in text
+    assert "ok" in text
+    assert "does not cover" not in text
+
+
+def test_format_human_expected_san_missing_warns(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    info["expected_san_missing"] = ["api.example.com"]
+    text = format_human(info)
+    assert "Expected SAN:" in text
+    assert "MISSING" in text
+    assert "WARNING: SAN does not cover 'api.example.com'" in text
+
+
 def test_format_human_lists_san(make_cert):
     text = format_human(_info(make_cert(san=["a.example.com", "b.example.com"])))
     assert "a.example.com" in text

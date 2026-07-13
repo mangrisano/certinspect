@@ -12,7 +12,10 @@ CONN = {"tls_version": "TLSv1.3", "cipher": "TLS_AES_256_GCM_SHA384"}
 
 def _const_fetch(cert_bytes):
     """Return a get_server_cert replacement yielding a fixed certificate."""
-    return lambda host, port, timeout, starttls=None: (cert_bytes, CONN)
+    return lambda host, port, timeout, starttls=None, servername=None: (
+        cert_bytes,
+        CONN,
+    )
 
 
 def test_build_parser_defaults():
@@ -143,10 +146,112 @@ def test_main_hostname_mismatch_exit_five(monkeypatch, capsys, make_cert):
     assert code == 5
 
 
+def test_main_servername_overrides_sni(monkeypatch, capsys, make_cert):
+    seen = {}
+
+    def _fetch(host, port, timeout, starttls=None, servername=None):
+        seen["host"], seen["servername"] = host, servername
+        return make_cert(san=["backend.internal"]), CONN
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    code = _run_main(monkeypatch, ["10.0.0.5", "--servername", "backend.internal"])
+    # The connection still targets the IP, but SNI carries the servername and
+    # the hostname match is checked against it, so the cert matches.
+    assert seen == {"host": "10.0.0.5", "servername": "backend.internal"}
+    assert code == 0
+    assert "Hostname match: True" in capsys.readouterr().out
+
+
+def test_main_servername_mismatch_exit_five(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["backend.internal"])),
+    )
+    code = _run_main(monkeypatch, ["10.0.0.5", "--servername", "other.internal"])
+    assert code == 5
+
+
+def test_main_servername_with_file_errors(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert())
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--servername", "x.com"])
+    assert code == 2
+    assert "servername" in capsys.readouterr().err.lower()
+
+
+def test_main_expect_san_covered_exit_zero(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com", "www.example.com"])),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--expect-san", "www.example.com"])
+    assert code == 0
+    assert "Expected SAN:" in capsys.readouterr().out
+
+
+def test_main_expect_san_missing_exit_eight(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--expect-san", "api.example.com"])
+    out = capsys.readouterr().out
+    assert code == 8
+    assert "SAN does not cover 'api.example.com'" in out
+
+
+def test_main_expect_san_multiple_one_missing(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com", "www.example.com"])),
+    )
+    code = _run_main(
+        monkeypatch,
+        [
+            "example.com",
+            "--expect-san",
+            "www.example.com",
+            "--expect-san",
+            "api.example.com",
+        ],
+    )
+    assert code == 8
+
+
+def test_main_expect_san_wildcard(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["*.example.com"])),
+    )
+    code = _run_main(
+        monkeypatch, ["api.example.com", "--expect-san", "web.example.com"]
+    )
+    assert code == 0
+
+
+def test_main_expect_san_with_file(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert(san=["example.com"]))
+    code = _run_main(
+        monkeypatch, ["--file", str(cert_path), "--expect-san", "other.com"]
+    )
+    assert code == 8
+
+
+def test_main_expect_san_in_json(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    _run_main(monkeypatch, ["example.com", "--expect-san", "api.example.com", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["expected_san_missing"] == ["api.example.com"]
+
+
 def test_main_url_target_is_normalized(monkeypatch, capsys, make_cert):
     seen = {}
 
-    def _fetch(host, port, timeout, starttls=None):
+    def _fetch(host, port, timeout, starttls=None, servername=None):
         seen["host"], seen["port"] = host, port
         return make_cert(san=["example.com"]), CONN
 
@@ -188,7 +293,7 @@ def test_main_export_writes_pem(monkeypatch, capsys, tmp_path, make_cert):
 def _fake_fetch(mapping):
     """Return a get_server_cert replacement backed by host->bytes mapping."""
 
-    def _fetch(host, port, timeout, starttls=None):
+    def _fetch(host, port, timeout, starttls=None, servername=None):
         return mapping[host], CONN
 
     return _fetch
@@ -233,7 +338,7 @@ def test_main_batch_worst_exit_code(monkeypatch, capsys, make_cert):
 def test_main_batch_continues_on_error(monkeypatch, capsys, make_cert):
     certs = {"ok.com": make_cert(san=["ok.com"], days_valid=200)}
 
-    def _fetch(host, port, timeout, starttls=None):
+    def _fetch(host, port, timeout, starttls=None, servername=None):
         if host == "down.com":
             raise OSError("connection refused")
         return certs[host], CONN
@@ -308,7 +413,7 @@ def test_main_verify_trusted_exit_zero(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None, servername=None: (
             True,
             None,
             [],
@@ -332,7 +437,7 @@ def test_main_verify_untrusted_exit_six(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None, servername=None: (
             False,
             "self signed certificate",
             [],
@@ -359,7 +464,7 @@ def test_main_verify_in_json(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None, servername=None: (
             True,
             None,
             [],
@@ -382,7 +487,7 @@ def test_main_verify_revoked_exit_six(monkeypatch, capsys, make_cert):
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None, servername=None: (
             True,
             None,
             [],
@@ -411,7 +516,7 @@ def test_main_verify_revocation_unavailable_is_soft_fail(
     )
     monkeypatch.setattr(
         "certinspect.cli.verify_chain",
-        lambda host, port, timeout, starttls=None, cafile=None, capath=None: (
+        lambda host, port, timeout, starttls=None, cafile=None, capath=None, servername=None: (
             True,
             None,
             [],
@@ -536,7 +641,7 @@ def test_main_exporter_nagios_expiring_exits_warning(monkeypatch, capsys, make_c
 
 
 def test_main_exporter_nagios_unreachable_is_critical(monkeypatch, capsys, make_cert):
-    def _fetch(host, port, timeout, starttls=None):
+    def _fetch(host, port, timeout, starttls=None, servername=None):
         if host == "down.com":
             raise OSError("connection refused")
         return make_cert(san=["ok.com"], days_valid=200), CONN
@@ -576,7 +681,7 @@ def test_main_exporter_rejects_json(monkeypatch, capsys, make_cert):
 def _capturing_fetch(seen, cert_bytes):
     """A get_server_cert replacement that records port and starttls."""
 
-    def _fetch(host, port, timeout, starttls=None):
+    def _fetch(host, port, timeout, starttls=None, servername=None):
         seen["port"], seen["starttls"] = port, starttls
         return cert_bytes, CONN
 
@@ -645,7 +750,7 @@ def test_main_concurrency_runs_in_parallel(monkeypatch, capsys, make_cert):
     barrier = threading.Barrier(2, timeout=5)
     certs = {"a.com": make_cert(san=["a.com"]), "b.com": make_cert(san=["b.com"])}
 
-    def _fetch(host, port, timeout, starttls=None):
+    def _fetch(host, port, timeout, starttls=None, servername=None):
         barrier.wait()
         return certs[host], CONN
 
@@ -729,7 +834,9 @@ def test_main_cafile_forwarded_to_verify_chain(monkeypatch, capsys, make_cert):
     )
     recorded = {}
 
-    def _fake_verify(host, port, timeout, starttls=None, cafile=None, capath=None):
+    def _fake_verify(
+        host, port, timeout, starttls=None, cafile=None, capath=None, servername=None
+    ):
         recorded["cafile"] = cafile
         recorded["capath"] = capath
         return True, None, []

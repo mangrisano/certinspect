@@ -12,6 +12,7 @@ from certinspect.parser import (
     chain_summary,
     hostname_matches,
     load_certificate,
+    missing_san_names,
     pin_matches,
     to_pem,
 )
@@ -238,6 +239,33 @@ def test_hostname_no_match(make_cert):
 def test_hostname_matches_empty_san(make_cert):
     info = _info_with_san(make_cert, None)
     assert hostname_matches(info, "example.com") is False
+
+
+def test_missing_san_names_all_covered_returns_empty(make_cert):
+    info = _info_with_san(make_cert, ["example.com", "www.example.com"])
+    assert missing_san_names(info, ["example.com", "www.example.com"]) == []
+
+
+def test_missing_san_names_reports_uncovered(make_cert):
+    info = _info_with_san(make_cert, ["example.com"])
+    assert missing_san_names(info, ["example.com", "api.example.com"]) == [
+        "api.example.com"
+    ]
+
+
+def test_missing_san_names_honors_wildcards(make_cert):
+    info = _info_with_san(make_cert, ["*.example.com"])
+    assert missing_san_names(info, ["api.example.com", "web.example.com"]) == []
+
+
+def test_missing_san_names_preserves_input_order(make_cert):
+    info = _info_with_san(make_cert, ["b.example.com"])
+    assert missing_san_names(
+        info, ["a.example.com", "b.example.com", "c.example.com"]
+    ) == [
+        "a.example.com",
+        "c.example.com",
+    ]
 
 
 def test_to_pem_round_trips(der_cert):
