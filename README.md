@@ -885,6 +885,27 @@ certinspect_cert_expiry_days{target="example.com"} 217
 certinspect_cert_valid{target="example.com"} 1
 ```
 
+Three further gauges appear only for the targets whose check actually ran, so a
+scrape never carries a misleading `0` for a check that was not requested:
+`certinspect_hostname_match` (host targets), and — with `--verify` —
+`certinspect_chain_trusted` and `certinspect_cert_revoked` (the latter only when
+OCSP/CRL returns a definitive answer). This lets you alert directly on chain,
+hostname and revocation problems without parsing text:
+
+```console
+$ certinspect example.com --verify --exporter prometheus
+# ... certinspect_up / cert_expiry_days / cert_valid as above ...
+# HELP certinspect_hostname_match Whether the hostname is covered by the certificate SAN (1) or not (0).
+# TYPE certinspect_hostname_match gauge
+certinspect_hostname_match{target="example.com"} 1
+# HELP certinspect_chain_trusted Whether the certificate chain is trusted (1) or not (0).
+# TYPE certinspect_chain_trusted gauge
+certinspect_chain_trusted{target="example.com"} 1
+# HELP certinspect_cert_revoked Whether the certificate is revoked (1) or not (0).
+# TYPE certinspect_cert_revoked gauge
+certinspect_cert_revoked{target="example.com"} 0
+```
+
 ## Exit codes
 
 Designed for automation (cron, CI, monitoring scripts). In batch mode the

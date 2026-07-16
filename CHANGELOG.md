@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Prometheus exporter: three further gauges emitted only for the targets whose
+  check actually ran — `certinspect_hostname_match` (host targets) and, with
+  `--verify`, `certinspect_chain_trusted` and `certinspect_cert_revoked` (the
+  latter only when OCSP/CRL gives a definitive answer). Lets alerting rules
+  target chain, hostname and revocation problems directly instead of parsing
+  the report text.
+
 ### Fixed
 
 - `--summary` no longer raises a `KeyError` when a target fails an

@@ -308,8 +308,16 @@ def format_prometheus(
     Exposes one ``certinspect_up`` series per target (1 when inspected, 0
     when unreachable) plus ``certinspect_cert_expiry_days`` and
     ``certinspect_cert_valid`` for the targets that could be inspected.
+
+    Three further gauges are emitted only for the targets whose check actually
+    ran, so a scrape never carries a misleading 0 for a check that was not
+    requested: ``certinspect_hostname_match`` (host targets), and — when
+    ``--verify`` is used — ``certinspect_chain_trusted`` and
+    ``certinspect_cert_revoked`` (the latter only when OCSP/CRL gave a
+    definitive GOOD/REVOKED answer).
     """
     up, expiry, valid = [], [], []
+    hostname_match, chain_trusted, revoked = [], [], []
 
     for target, info, _ in results:
         label = _prometheus_label(target or info["subject"])
@@ -322,6 +330,18 @@ def format_prometheus(
         up.append(f'certinspect_up{{target="{label}"}} 1')
         expiry.append(f'certinspect_cert_expiry_days{{target="{label}"}} {days}')
         valid.append(f'certinspect_cert_valid{{target="{label}"}} {is_valid}')
+
+        if info.get("hostname_match") is not None:
+            hit = 1 if info["hostname_match"] else 0
+            hostname_match.append(
+                f'certinspect_hostname_match{{target="{label}"}} {hit}'
+            )
+        if "chain_trusted" in info:
+            hit = 1 if info["chain_trusted"] else 0
+            chain_trusted.append(f'certinspect_chain_trusted{{target="{label}"}} {hit}')
+        if info.get("revocation_status") in ("GOOD", "REVOKED"):
+            hit = 1 if info["revocation_status"] == "REVOKED" else 0
+            revoked.append(f'certinspect_cert_revoked{{target="{label}"}} {hit}')
 
     for target, _ in errors:
         label = _prometheus_label(target or "")
@@ -338,4 +358,25 @@ def format_prometheus(
         "# TYPE certinspect_cert_valid gauge",
         *valid,
     ]
+    # The conditional gauges are appended only when at least one target
+    # produced a value, so scrapes stay free of metrics for checks that were
+    # never requested.
+    if hostname_match:
+        lines += [
+            "# HELP certinspect_hostname_match Whether the hostname is covered by the certificate SAN (1) or not (0).",
+            "# TYPE certinspect_hostname_match gauge",
+            *hostname_match,
+        ]
+    if chain_trusted:
+        lines += [
+            "# HELP certinspect_chain_trusted Whether the certificate chain is trusted (1) or not (0).",
+            "# TYPE certinspect_chain_trusted gauge",
+            *chain_trusted,
+        ]
+    if revoked:
+        lines += [
+            "# HELP certinspect_cert_revoked Whether the certificate is revoked (1) or not (0).",
+            "# TYPE certinspect_cert_revoked gauge",
+            *revoked,
+        ]
     return "\n".join(lines)

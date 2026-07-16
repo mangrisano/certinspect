@@ -208,6 +208,52 @@ def test_format_prometheus_escapes_label(make_cert):
     assert 'certinspect_up{target="weird\\"name"} 1' in text
 
 
+def test_format_prometheus_omits_conditional_gauges_by_default(make_cert):
+    text = format_prometheus([("example.com", _info(make_cert(days_valid=42)), 0)])
+    assert "certinspect_hostname_match" not in text
+    assert "certinspect_chain_trusted" not in text
+    assert "certinspect_cert_revoked" not in text
+
+
+def test_format_prometheus_exposes_hostname_match(make_cert):
+    ok = _info(make_cert(san=["example.com"], days_valid=42))
+    ok["hostname_match"] = True
+    bad = _info(make_cert(san=["other.com"], days_valid=42))
+    bad["hostname_match"] = False
+    text = format_prometheus([("example.com", ok, 0), ("mismatch.com", bad, 5)])
+    assert "# TYPE certinspect_hostname_match gauge" in text
+    assert 'certinspect_hostname_match{target="example.com"} 1' in text
+    assert 'certinspect_hostname_match{target="mismatch.com"} 0' in text
+
+
+def test_format_prometheus_exposes_chain_trusted(make_cert):
+    trusted = _info(make_cert(days_valid=42))
+    trusted["chain_trusted"] = True
+    untrusted = _info(make_cert(days_valid=42))
+    untrusted["chain_trusted"] = False
+    text = format_prometheus([("a.com", trusted, 0), ("b.com", untrusted, 6)])
+    assert "# TYPE certinspect_chain_trusted gauge" in text
+    assert 'certinspect_chain_trusted{target="a.com"} 1' in text
+    assert 'certinspect_chain_trusted{target="b.com"} 0' in text
+
+
+def test_format_prometheus_exposes_revoked_only_when_definitive(make_cert):
+    good = _info(make_cert(days_valid=42))
+    good["revocation_status"] = "GOOD"
+    revoked = _info(make_cert(days_valid=42))
+    revoked["revocation_status"] = "REVOKED"
+    unknown = _info(make_cert(days_valid=42))
+    unknown["revocation_status"] = "UNAVAILABLE"
+    text = format_prometheus(
+        [("a.com", good, 0), ("b.com", revoked, 6), ("c.com", unknown, 0)]
+    )
+    assert "# TYPE certinspect_cert_revoked gauge" in text
+    assert 'certinspect_cert_revoked{target="a.com"} 0' in text
+    assert 'certinspect_cert_revoked{target="b.com"} 1' in text
+    # UNAVAILABLE/UNKNOWN must not produce a (misleading) series.
+    assert 'certinspect_cert_revoked{target="c.com"}' not in text
+
+
 def test_format_prometheus_output_parses_with_prometheus_client(make_cert):
     """The output is valid exposition format per the official parser."""
     parser = pytest.importorskip("prometheus_client.parser")
