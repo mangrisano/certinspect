@@ -66,6 +66,12 @@ def format_human(
         for name in missing:
             lines.append(f"WARNING: SAN does not cover '{name}'")
 
+    if "policy_violations" in info:
+        violations = info["policy_violations"]
+        lines.append(row("Policy", "ok" if not violations else "FAIL"))
+        for reason in violations:
+            lines.append(f"WARNING: policy violation ({reason})")
+
     if "chain_trusted" in info:
         lines.append(row("Chain trusted", info["chain_trusted"]))
         if not info["chain_trusted"] and info.get("chain_error"):
@@ -177,6 +183,7 @@ _SUMMARY_ORDER = (
     "untrusted",
     "pin-mismatch",
     "san-mismatch",
+    "policy",
 )
 _SUMMARY_BY_CODE = {
     0: "valid",
@@ -185,6 +192,7 @@ _SUMMARY_BY_CODE = {
     6: "untrusted",
     7: "pin-mismatch",
     8: "san-mismatch",
+    9: "policy",
 }
 
 

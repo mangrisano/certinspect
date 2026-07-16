@@ -84,6 +84,24 @@ def test_format_human_expected_san_missing_warns(make_cert):
     assert "WARNING: SAN does not cover 'api.example.com'" in text
 
 
+def test_format_human_policy_ok(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    info["policy_violations"] = []
+    text = format_human(info)
+    assert "Policy:" in text
+    assert "ok" in text
+    assert "policy violation" not in text
+
+
+def test_format_human_policy_fail_warns(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    info["policy_violations"] = ["total validity 400 days exceeds the 398-day maximum"]
+    text = format_human(info)
+    assert "Policy:" in text
+    assert "FAIL" in text
+    assert "WARNING: policy violation (total validity 400 days" in text
+
+
 def test_format_human_lists_san(make_cert):
     text = format_human(_info(make_cert(san=["a.example.com", "b.example.com"])))
     assert "a.example.com" in text
@@ -369,6 +387,14 @@ def test_format_summary_counts_san_mismatch(make_cert):
     # Exit code 8 (failed --expect-san) must be tallied, not raise KeyError.
     line = format_summary([("a.com", info, 0), ("b.com", info, 8)])
     assert "1 san-mismatch" in line
+    assert line.endswith("(2 targets)")
+
+
+def test_format_summary_counts_policy(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    # Exit code 9 (policy violation) must be tallied, not raise KeyError.
+    line = format_summary([("a.com", info, 0), ("b.com", info, 9)])
+    assert "1 policy" in line
     assert line.endswith("(2 targets)")
 
 

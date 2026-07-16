@@ -14,6 +14,7 @@ from certinspect.parser import (
     load_certificate,
     missing_san_names,
     pin_matches,
+    policy_violations,
     to_pem,
 )
 
@@ -385,3 +386,57 @@ def test_chain_expiry_warnings_ignores_leaf(make_cert):
 
 def test_chain_expiry_warnings_empty_for_leaf_only(make_cert):
     assert chain_expiry_warnings([load_certificate(make_cert())]) == []
+
+
+def test_policy_violations_empty_when_no_check_enabled(make_cert):
+    info = analyze(load_certificate(make_cert(key_size=1024)))
+    # No policy argument set -> nothing is enforced even for a weak cert.
+    assert policy_violations(info) == []
+
+
+def test_policy_violations_not_after_max_flags_long_validity(make_cert):
+    info = analyze(load_certificate(make_cert(days_valid=400)))
+    violations = policy_violations(info, not_after_max=398)
+    assert len(violations) == 1
+    assert "exceeds the 398-day maximum" in violations[0]
+
+
+def test_policy_violations_not_after_max_ok_within_limit(make_cert):
+    info = analyze(load_certificate(make_cert(days_valid=90)))
+    assert policy_violations(info, not_after_max=398) == []
+
+
+def test_policy_violations_min_key_size_flags_small_key(make_cert):
+    info = analyze(load_certificate(make_cert(key_size=1024)))
+    violations = policy_violations(info, min_key_size=2048)
+    assert len(violations) == 1
+    assert "below the 2048-bit minimum" in violations[0]
+
+
+def test_policy_violations_min_key_size_ok_for_large_key(make_cert):
+    info = analyze(load_certificate(make_cert(key_size=2048)))
+    assert policy_violations(info, min_key_size=2048) == []
+
+
+def test_policy_violations_fail_weak_promotes_warnings(make_cert):
+    info = analyze(load_certificate(make_cert(key_size=1024)))
+    violations = policy_violations(info, fail_weak=True)
+    # The weak-key warning is promoted verbatim to a violation.
+    assert violations == info["weak"]
+    assert len(violations) == 1
+    assert "1024" in violations[0]
+
+
+def test_policy_violations_fail_weak_empty_for_strong_cert(make_cert):
+    info = analyze(load_certificate(make_cert(key_size=2048)))
+    assert policy_violations(info, fail_weak=True) == []
+
+
+def test_policy_violations_accumulates_all_checks(make_cert):
+    info = analyze(load_certificate(make_cert(days_valid=400, key_size=1024)))
+    violations = policy_violations(
+        info, not_after_max=398, min_key_size=2048, fail_weak=True
+    )
+    # Long validity + small key (counted once via its own check and once via
+    # fail_weak's promotion of the weak-key warning).
+    assert len(violations) == 3

@@ -29,6 +29,7 @@ from certinspect.parser import (
     missing_san_names,
     chain_summary,
     pin_matches,
+    policy_violations,
     to_pem,
 )
 from certinspect.formatter import (
@@ -201,6 +202,38 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--not-after-max",
+        type=int,
+        default=None,
+        metavar="N",
+        dest="not_after_max",
+        help=(
+            "Fail (exit code 9) when the certificate's total validity exceeds N "
+            "days. Use 398 to enforce the current CA/Browser Forum maximum. "
+            "Opt-in policy check; works for host and --file targets."
+        ),
+    )
+    parser.add_argument(
+        "--min-key-size",
+        type=int,
+        default=None,
+        metavar="N",
+        dest="min_key_size",
+        help=(
+            "Fail (exit code 9) when the public key is smaller than N bits "
+            "(e.g. 2048 for RSA). Opt-in policy check."
+        ),
+    )
+    parser.add_argument(
+        "--fail-weak",
+        action="store_true",
+        dest="fail_weak",
+        help=(
+            "Turn the weak-crypto warnings (small key, SHA-1/MD5 signature) "
+            "into a hard failure (exit code 9) instead of a mere warning."
+        ),
+    )
+    parser.add_argument(
         "--export",
         metavar="PATH",
         help="Save the inspected certificate as a PEM file at PATH.",
@@ -317,6 +350,9 @@ def _inspect(
     capath: str | None = None,
     servername: str | None = None,
     expect_san: list[str] | None = None,
+    not_after_max: int | None = None,
+    min_key_size: int | None = None,
+    fail_weak: bool = False,
 ) -> tuple[dict, int]:
     """Inspect one source and return its (info, exit_code).
 
@@ -326,7 +362,8 @@ def _inspect(
     Chain verification (exit code 6) is only performed for host targets when
     ``verify`` is set. A failed ``pin`` check yields exit code 7. When
     ``expect_san`` names are not all covered by the certificate's SAN the exit
-    code is 8.
+    code is 8. The opt-in policy checks (``not_after_max``, ``min_key_size``,
+    ``fail_weak``) yield exit code 9 when any is violated.
     """
     der, conn = _fetch_source(
         target, port, file, timeout, starttls=starttls, servername=servername
@@ -396,6 +433,17 @@ def _inspect(
         info["expected_san_missing"] = missing
         if missing:
             code = 8
+
+    if not_after_max is not None or min_key_size is not None or fail_weak:
+        violations = policy_violations(
+            info,
+            not_after_max=not_after_max,
+            min_key_size=min_key_size,
+            fail_weak=fail_weak,
+        )
+        info["policy_violations"] = violations
+        if violations:
+            code = 9
     return info, code
 
 
@@ -556,6 +604,9 @@ def main() -> None:
                 capath=args.capath,
                 servername=args.servername,
                 expect_san=args.expect_san,
+                not_after_max=args.not_after_max,
+                min_key_size=args.min_key_size,
+                fail_weak=args.fail_weak,
             )
         except (OSError, ssl.SSLError, ValueError) as err:
             return raw_target, None, str(err)

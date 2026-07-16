@@ -248,6 +248,79 @@ def test_main_expect_san_in_json(monkeypatch, capsys, make_cert):
     assert data[0]["expected_san_missing"] == ["api.example.com"]
 
 
+def test_main_not_after_max_flags_long_validity(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], days_valid=400)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--not-after-max", "398"])
+    out = capsys.readouterr().out
+    assert code == 9
+    assert "Policy:" in out
+    assert "exceeds the 398-day maximum" in out
+
+
+def test_main_not_after_max_ok_within_limit(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], days_valid=90)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--not-after-max", "398"])
+    assert code == 0
+    assert "Policy:         ok" in capsys.readouterr().out
+
+
+def test_main_min_key_size_flags_small_key(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], key_size=1024)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--min-key-size", "2048"])
+    out = capsys.readouterr().out
+    assert code == 9
+    assert "below the 2048-bit minimum" in out
+
+
+def test_main_fail_weak_promotes_warning_to_failure(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], key_size=1024)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--fail-weak"])
+    out = capsys.readouterr().out
+    assert code == 9
+    assert "policy violation" in out
+
+
+def test_main_weak_cert_without_fail_weak_still_exit_zero(
+    monkeypatch, capsys, make_cert
+):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], key_size=1024)),
+    )
+    # Opt-in: without --fail-weak the weak key stays a warning, exit code 0.
+    code = _run_main(monkeypatch, ["example.com"])
+    assert code == 0
+
+
+def test_main_policy_with_file(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert(san=["example.com"], days_valid=400))
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--not-after-max", "398"])
+    assert code == 9
+
+
+def test_main_policy_violations_in_json(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], key_size=1024)),
+    )
+    _run_main(monkeypatch, ["example.com", "--min-key-size", "2048", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert len(data[0]["policy_violations"]) == 1
+
+
 def test_main_url_target_is_normalized(monkeypatch, capsys, make_cert):
     seen = {}
 

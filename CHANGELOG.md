@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opt-in policy checks that fail with a new exit code 9 without changing the
+  default behavior: `--not-after-max N` (fail when the total validity exceeds N
+  days, e.g. 398 for the CA/Browser Forum maximum), `--min-key-size N` (fail
+  when the public key is below N bits) and `--fail-weak` (promote the existing
+  weak-crypto warnings — small key, SHA-1/MD5 signature — to a hard failure).
+  The human report gains a `Policy` line and the `--summary` tally a `policy`
+  category.
 - Prometheus exporter: three further gauges emitted only for the targets whose
   check actually ran — `certinspect_hostname_match` (host targets) and, with
   `--verify`, `certinspect_chain_trusted` and `certinspect_cert_revoked` (the

@@ -226,3 +226,39 @@ def certificate_status(
     if days < warn_days:
         return "EXPIRING"
     return "VALID"
+
+
+def policy_violations(
+    info: dict,
+    *,
+    not_after_max: int | None = None,
+    min_key_size: int | None = None,
+    fail_weak: bool = False,
+) -> list[str]:
+    """Return the opt-in policy violations for the analyzed certificate.
+
+    Each argument enables one check; when none is set the list is always
+    empty, so the certificate's exit code is unaffected:
+
+    * ``not_after_max`` — the total validity must not exceed this many days
+      (e.g. 398 for the current CA/Browser Forum maximum).
+    * ``min_key_size`` — the public key must be at least this many bits.
+    * ``fail_weak`` — promote the warnings already collected in ``info["weak"]``
+      (weak key size, SHA-1/MD5 signature) to hard violations.
+
+    The returned strings are ready to display; the list preserves check order
+    and is empty when the certificate satisfies every enabled policy.
+    """
+    violations: list[str] = []
+    if not_after_max is not None and info["validity_days"] > not_after_max:
+        violations.append(
+            f"total validity {info['validity_days']} days exceeds the "
+            f"{not_after_max}-day maximum"
+        )
+    if min_key_size is not None and info["key_size"] < min_key_size:
+        violations.append(
+            f"key size {info['key_size']} bit is below the {min_key_size}-bit minimum"
+        )
+    if fail_weak:
+        violations.extend(info["weak"])
+    return violations
