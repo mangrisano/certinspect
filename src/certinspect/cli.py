@@ -23,6 +23,7 @@ from certinspect.fetch import (
 from certinspect.parser import (
     load_certificate,
     analyze,
+    cab_forum_max_validity,
     certificate_status,
     chain_expiry_warnings,
     hostname_matches,
@@ -76,6 +77,7 @@ class InspectOptions:
     servername: str | None = None
     expect_san: list[str] | None = None
     not_after_max: int | None = None
+    cab_forum: bool = False
     min_key_size: int | None = None
     fail_weak: bool = False
 
@@ -242,7 +244,11 @@ def build_parser() -> argparse.ArgumentParser:
             "distinguish a warning window from a critical one."
         ),
     )
-    parser.add_argument(
+    # --not-after-max and --cab-forum both cap the total validity; the latter
+    # resolves to the current CA/Browser Forum maximum, so they are mutually
+    # exclusive (argparse rejects any combination with exit code 2).
+    validity_group = parser.add_mutually_exclusive_group()
+    validity_group.add_argument(
         "--not-after-max",
         type=int,
         default=None,
@@ -252,6 +258,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Fail (exit code 9) when the certificate's total validity exceeds N "
             "days. Use 398 to enforce the current CA/Browser Forum maximum. "
             "Opt-in policy check; works for host and --file targets."
+        ),
+    )
+    validity_group.add_argument(
+        "--cab-forum",
+        action="store_true",
+        dest="cab_forum",
+        help=(
+            "Fail (exit code 9) when the total validity exceeds the CA/Browser "
+            "Forum maximum in effect today (398 days now, then 200, 100 and 47 "
+            "on 2026/2027/2029-03-15). Date-aware shorthand for --not-after-max."
         ),
     )
     parser.add_argument(
@@ -384,8 +400,8 @@ def _inspect(
     Chain verification (exit code 6) is only performed for host targets when
     ``verify`` is set. A failed ``pin`` check yields exit code 7. When
     ``expect_san`` names are not all covered by the certificate's SAN the exit
-    code is 8. The opt-in policy checks (``not_after_max``, ``min_key_size``,
-    ``fail_weak``) yield exit code 9 when any is violated.
+    code is 8. The opt-in policy checks (``not_after_max``/``cab_forum``,
+    ``min_key_size``, ``fail_weak``) yield exit code 9 when any is violated.
     """
     der, conn = _fetch_source(target, port, opts)
     cert = load_certificate(der)
@@ -457,12 +473,16 @@ def _inspect(
 
     if (
         opts.not_after_max is not None
+        or opts.cab_forum
         or opts.min_key_size is not None
         or opts.fail_weak
     ):
+        not_after_max = opts.not_after_max
+        if opts.cab_forum:
+            not_after_max = cab_forum_max_validity()
         violations = policy_violations(
             info,
-            not_after_max=opts.not_after_max,
+            not_after_max=not_after_max,
             min_key_size=opts.min_key_size,
             fail_weak=opts.fail_weak,
         )

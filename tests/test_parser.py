@@ -1,12 +1,13 @@
 """Tests for the parser module: load_certificate and analyze."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
 from certinspect.parser import (
     CertificateLoadError,
     analyze,
+    cab_forum_max_validity,
     certificate_status,
     chain_expiry_warnings,
     chain_summary,
@@ -440,3 +441,25 @@ def test_policy_violations_accumulates_all_checks(make_cert):
     # Long validity + small key (counted once via its own check and once via
     # fail_weak's promotion of the weak-key warning).
     assert len(violations) == 3
+
+
+@pytest.mark.parametrize(
+    ("today", "expected"),
+    [
+        (date(2025, 1, 1), 398),
+        (date(2026, 3, 14), 398),
+        (date(2026, 3, 15), 200),
+        (date(2027, 3, 14), 200),
+        (date(2027, 3, 15), 100),
+        (date(2029, 3, 14), 100),
+        (date(2029, 3, 15), 47),
+        (date(2030, 1, 1), 47),
+    ],
+)
+def test_cab_forum_max_validity_follows_schedule(today, expected):
+    assert cab_forum_max_validity(today) == expected
+
+
+def test_cab_forum_max_validity_defaults_to_today():
+    # Without an argument it must return one of the scheduled caps.
+    assert cab_forum_max_validity() in {398, 200, 100, 47}

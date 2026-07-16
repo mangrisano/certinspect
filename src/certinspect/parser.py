@@ -4,7 +4,7 @@ Turns certificate bytes (DER or PEM) into a dictionary of fields ready to be
 formatted for the user.
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import dsa, ec, rsa
@@ -226,6 +226,33 @@ def certificate_status(
     if days < warn_days:
         return "EXPIRING"
     return "VALID"
+
+
+# CA/Browser Forum TLS validity cap and its scheduled reductions (ballot
+# SC-081): 398 days today, then 200, 100 and finally 47 days. Each entry is the
+# date the new maximum takes effect, newest first so the first match wins.
+_CAB_FORUM_SCHEDULE: tuple[tuple[date, int], ...] = (
+    (date(2029, 3, 15), 47),
+    (date(2027, 3, 15), 100),
+    (date(2026, 3, 15), 200),
+)
+_CAB_FORUM_DEFAULT = 398
+
+
+def cab_forum_max_validity(today: date | None = None) -> int:
+    """Return the CA/Browser Forum maximum TLS validity (in days) on ``today``.
+
+    The Baseline Requirements shorten the cap on fixed dates: 398 days until
+    2026-03-15, then 200, then 100 days from 2027-03-15, and 47 days from
+    2029-03-15. ``today`` defaults to the current date, so the value tracks the
+    schedule automatically.
+    """
+    if today is None:
+        today = date.today()
+    for start, limit in _CAB_FORUM_SCHEDULE:
+        if today >= start:
+            return limit
+    return _CAB_FORUM_DEFAULT
 
 
 def policy_violations(

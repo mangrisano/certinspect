@@ -294,6 +294,43 @@ def test_main_not_after_max_ok_within_limit(monkeypatch, capsys, make_cert):
     assert "Policy:         ok" in capsys.readouterr().out
 
 
+def test_main_cab_forum_flags_long_validity(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        # 400 days exceeds every scheduled CA/Browser Forum cap (398/200/100/47),
+        # so the check fails regardless of the date the test runs.
+        _const_fetch(make_cert(san=["example.com"], days_valid=400)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--cab-forum"])
+    out = capsys.readouterr().out
+    assert code == 9
+    assert "exceeds the" in out
+
+
+def test_main_cab_forum_ok_within_limit(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        # 45 days is within every scheduled cap (strictest is 47) yet far enough
+        # from expiry to stay VALID, so the check always passes.
+        _const_fetch(make_cert(san=["example.com"], days_valid=45)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--cab-forum"])
+    assert code == 0
+    assert "Policy:         ok" in capsys.readouterr().out
+
+
+def test_main_cab_forum_conflicts_with_not_after_max(monkeypatch, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    # Mutually exclusive: argparse rejects the combination with exit code 2.
+    code = _run_main(
+        monkeypatch, ["example.com", "--cab-forum", "--not-after-max", "398"]
+    )
+    assert code == 2
+
+
 def test_main_min_key_size_flags_small_key(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
         "certinspect.cli.get_server_cert",
