@@ -127,12 +127,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=5.0,
         help="Connection timeout in seconds (default: 5).",
     )
-    parser.add_argument(
+    # --json, --csv and --exporter select the output format and are mutually
+    # exclusive; argparse rejects any combination for us (exit code 2).
+    output_group = parser.add_mutually_exclusive_group()
+    output_group.add_argument(
         "--json",
         action="store_true",
         help="Output the result as JSON instead of human-readable text.",
     )
-    parser.add_argument(
+    output_group.add_argument(
         "--csv",
         action="store_true",
         help=(
@@ -285,7 +288,7 @@ def build_parser() -> argparse.ArgumentParser:
             "standard port is used (smtp=587, imap=143, pop3=110, ftp=21)."
         ),
     )
-    parser.add_argument(
+    output_group.add_argument(
         "--exporter",
         choices=("nagios", "prometheus"),
         help=(
@@ -567,12 +570,6 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.exporter and args.json:
-        parser.error("--exporter and --json cannot be used together.")
-    if args.csv and args.json:
-        parser.error("--csv and --json cannot be used together.")
-    if args.csv and args.exporter:
-        parser.error("--csv and --exporter cannot be used together.")
     if len(args.csv_delimiter) != 1:
         parser.error("--csv-delimiter must be a single character.")
     if args.critical_days is not None and args.critical_days > args.days:
@@ -582,7 +579,16 @@ def main() -> None:
     if args.servername and args.file:
         parser.error("--servername applies to host targets, not --file.")
 
-    extra_targets = _read_targets(args.input) if args.input else []
+    extra_targets = []
+    if args.input:
+        # An unreadable --input file (missing, no permission) is a runtime error
+        # like an unreachable host: report it cleanly with exit code 1 instead
+        # of letting the OSError surface as a traceback.
+        try:
+            extra_targets = _read_targets(args.input)
+        except OSError as err:
+            print(f"error: {err}", file=sys.stderr)
+            sys.exit(1)
     if not args.target and not extra_targets and not args.file:
         parser.error("There is no target or no file to inspect.")
 

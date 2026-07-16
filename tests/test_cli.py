@@ -689,6 +689,14 @@ def test_main_input_reads_targets_from_stdin(monkeypatch, capsys, make_cert):
     assert "CN=example.com" in capsys.readouterr().out
 
 
+def test_main_missing_input_file_exits_one(monkeypatch, capsys, tmp_path):
+    missing = tmp_path / "nope.txt"
+    code = _run_main(monkeypatch, ["--input", str(missing)])
+    err = capsys.readouterr().err
+    assert code == 1
+    assert err.startswith("error:")
+
+
 def test_main_exporter_nagios_ok(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
         "certinspect.cli.get_server_cert",
@@ -748,7 +756,7 @@ def test_main_exporter_rejects_json(monkeypatch, capsys, make_cert):
     )
     code = _run_main(monkeypatch, ["example.com", "--exporter", "nagios", "--json"])
     assert code == 2
-    assert "cannot be used together" in capsys.readouterr().err
+    assert "not allowed with" in capsys.readouterr().err
 
 
 def _capturing_fetch(seen, cert_bytes):
@@ -879,13 +887,13 @@ def test_main_csv_delimiter_rejects_multichar(monkeypatch, capsys, make_cert):
 def test_main_csv_rejects_json(monkeypatch, capsys, make_cert):
     code = _run_main(monkeypatch, ["a.com", "--csv", "--json"])
     assert code == 2
-    assert "cannot be used together" in capsys.readouterr().err
+    assert "not allowed with" in capsys.readouterr().err
 
 
 def test_main_csv_rejects_exporter(monkeypatch, capsys, make_cert):
     code = _run_main(monkeypatch, ["a.com", "--csv", "--exporter", "nagios"])
     assert code == 2
-    assert "cannot be used together" in capsys.readouterr().err
+    assert "not allowed with" in capsys.readouterr().err
 
 
 def test_main_cafile_requires_verify(monkeypatch, capsys):
