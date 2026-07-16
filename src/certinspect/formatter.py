@@ -117,9 +117,13 @@ def format_human(
     return "\n".join(lines)
 
 
-def format_json(info: dict) -> str:
-    """Return a JSON representation."""
-    return json.dumps(info, indent=2, default=str)
+def format_json(data: dict | list) -> str:
+    """Return an indented JSON representation of an analyzed result.
+
+    Accepts either a single ``info`` dict or a list of them (batch mode);
+    datetime and other non-JSON values are rendered via ``default=str``.
+    """
+    return json.dumps(data, indent=2, default=str)
 
 
 # Columns emitted by format_csv, in order. The first element is the header

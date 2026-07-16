@@ -8,10 +8,10 @@ with a status code reflecting the worst certificate state found.
 """
 
 import argparse
-import json
 import sys
 import ssl
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, fields
 from urllib.parse import urlsplit
 from certinspect import __version__
 from certinspect.fetch import (
@@ -35,6 +35,7 @@ from certinspect.parser import (
 from certinspect.formatter import (
     format_csv,
     format_human,
+    format_json,
     format_nagios,
     format_prometheus,
     format_summary,
@@ -49,6 +50,43 @@ EXIT_BY_STATUS = {
     "EXPIRED": 4,
     "INVALID DATES": 4,
 }
+
+
+@dataclass(frozen=True)
+class InspectOptions:
+    """Per-run inspection options shared by every target in a batch.
+
+    Bundles the flags that do not change from one target to the next so they
+    can be threaded through ``_inspect`` as a single value instead of a long
+    keyword list. Only ``target`` and ``port`` vary per target and stay
+    explicit arguments.
+    """
+
+    file: str | None = None
+    days: int = 30
+    critical_days: int | None = None
+    export: str | None = None
+    timeout: float = 5.0
+    verify: bool = False
+    chain: bool = False
+    pin: str | None = None
+    starttls: str | None = None
+    cafile: str | None = None
+    capath: str | None = None
+    servername: str | None = None
+    expect_san: list[str] | None = None
+    not_after_max: int | None = None
+    min_key_size: int | None = None
+    fail_weak: bool = False
+
+    @classmethod
+    def from_args(cls, args: argparse.Namespace) -> "InspectOptions":
+        """Build the options from parsed CLI arguments.
+
+        Every field name matches its argparse destination, so the mapping stays
+        in one place: adding a field here (and the matching argument) is enough.
+        """
+        return cls(**{f.name: getattr(args, f.name) for f in fields(cls)})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -316,43 +354,24 @@ def _split_target(raw: str, default_port: int) -> tuple[str, int]:
 def _fetch_source(
     target: str | None,
     port: int,
-    file: str | None,
-    timeout: float,
-    starttls: str | None = None,
-    servername: str | None = None,
+    opts: InspectOptions,
 ) -> tuple[bytes, dict | None]:
     """Return (raw certificate bytes, connection info) for one source.
 
     Connection info is None for local files (no live TLS handshake).
     """
-    if file:
-        with open(file, "rb") as f:
+    if opts.file:
+        with open(opts.file, "rb") as f:
             return f.read(), None
     return get_server_cert(
-        target, port, timeout, starttls=starttls, servername=servername
+        target, port, opts.timeout, starttls=opts.starttls, servername=opts.servername
     )
 
 
 def _inspect(
     target: str | None,
-    *,
     port: int,
-    file: str | None,
-    days: int,
-    critical_days: int | None,
-    export: str | None,
-    timeout: float,
-    verify: bool,
-    chain: bool,
-    pin: str | None,
-    starttls: str | None = None,
-    cafile: str | None = None,
-    capath: str | None = None,
-    servername: str | None = None,
-    expect_san: list[str] | None = None,
-    not_after_max: int | None = None,
-    min_key_size: int | None = None,
-    fail_weak: bool = False,
+    opts: InspectOptions,
 ) -> tuple[dict, int]:
     """Inspect one source and return its (info, exit_code).
 
@@ -365,21 +384,19 @@ def _inspect(
     code is 8. The opt-in policy checks (``not_after_max``, ``min_key_size``,
     ``fail_weak``) yield exit code 9 when any is violated.
     """
-    der, conn = _fetch_source(
-        target, port, file, timeout, starttls=starttls, servername=servername
-    )
+    der, conn = _fetch_source(target, port, opts)
     cert = load_certificate(der)
     info = analyze(cert)
     if conn:
         info["tls_version"] = conn["tls_version"]
         info["cipher"] = conn["cipher"]
-    if export:
-        with open(export, "wb") as f:
+    if opts.export:
+        with open(opts.export, "wb") as f:
             f.write(to_pem(cert))
-    check_name = servername or target
+    check_name = opts.servername or target
     info["hostname_match"] = hostname_matches(info, check_name) if check_name else None
 
-    code = EXIT_BY_STATUS[certificate_status(info, days, critical_days)]
+    code = EXIT_BY_STATUS[certificate_status(info, opts.days, opts.critical_days)]
     if info["hostname_match"] is False:
         code = 5
 
@@ -388,15 +405,15 @@ def _inspect(
     # server. Either way the leaf is skipped by chain_expiry_warnings.
     chain_certs: list = []
 
-    if verify and target:
+    if opts.verify and target:
         trusted, reason, verified = verify_chain(
             target,
             port,
-            timeout,
-            starttls=starttls,
-            cafile=cafile,
-            capath=capath,
-            servername=servername,
+            opts.timeout,
+            starttls=opts.starttls,
+            cafile=opts.cafile,
+            capath=opts.capath,
+            servername=opts.servername,
         )
         info["chain_trusted"] = trusted
         info["chain_error"] = reason
@@ -405,7 +422,7 @@ def _inspect(
 
         # Prefer the issuer from the verified chain; fall back to AIA download.
         issuer = verified[1] if len(verified) > 1 else None
-        revocation, detail = check_revocation(cert, timeout, issuer=issuer)
+        revocation, detail = check_revocation(cert, opts.timeout, issuer=issuer)
         info["revocation_status"] = revocation
         info["revocation_detail"] = detail
         if revocation == "REVOKED":
@@ -415,31 +432,35 @@ def _inspect(
     if not chain_certs and conn:
         chain_certs = conn.get("chain") or []
 
-    chain_warnings = chain_expiry_warnings(chain_certs, days)
+    chain_warnings = chain_expiry_warnings(chain_certs, opts.days)
     if chain_warnings:
         info["chain_warnings"] = chain_warnings
 
-    if chain:
+    if opts.chain:
         presented = (conn.get("chain") if conn else None) or [cert]
         info["chain"] = [chain_summary(c) for c in presented]
 
-    if pin:
-        info["pin_match"] = pin_matches(info, pin)
+    if opts.pin:
+        info["pin_match"] = pin_matches(info, opts.pin)
         if not info["pin_match"]:
             code = 7
 
-    if expect_san:
-        missing = missing_san_names(info, expect_san)
+    if opts.expect_san:
+        missing = missing_san_names(info, opts.expect_san)
         info["expected_san_missing"] = missing
         if missing:
             code = 8
 
-    if not_after_max is not None or min_key_size is not None or fail_weak:
+    if (
+        opts.not_after_max is not None
+        or opts.min_key_size is not None
+        or opts.fail_weak
+    ):
         violations = policy_violations(
             info,
-            not_after_max=not_after_max,
-            min_key_size=min_key_size,
-            fail_weak=fail_weak,
+            not_after_max=opts.not_after_max,
+            min_key_size=opts.min_key_size,
+            fail_weak=opts.fail_weak,
         )
         info["policy_violations"] = violations
         if violations:
@@ -509,7 +530,7 @@ def _render(
             end="",
         )
     elif as_json:
-        print(json.dumps([info for _, info, _ in results], indent=2, default=str))
+        print(format_json([info for _, info, _ in results]))
     else:
         blocks = []
         for target, info, _ in results:
@@ -577,6 +598,8 @@ def main() -> None:
     if args.starttls and default_port == 443:
         default_port = STARTTLS_PORTS[args.starttls]
 
+    opts = InspectOptions.from_args(args)
+
     def _run(raw_target: str | None) -> tuple[str | None, tuple | None, str | None]:
         """Inspect one target, returning (raw_target, payload, error).
 
@@ -588,26 +611,7 @@ def main() -> None:
         try:
             if raw_target is not None:
                 target, port = _split_target(raw_target, default_port)
-            info, code = _inspect(
-                target,
-                port=port,
-                file=args.file,
-                days=args.days,
-                critical_days=args.critical_days,
-                export=args.export,
-                timeout=args.timeout,
-                verify=args.verify,
-                chain=args.chain,
-                pin=args.pin,
-                starttls=args.starttls,
-                cafile=args.cafile,
-                capath=args.capath,
-                servername=args.servername,
-                expect_san=args.expect_san,
-                not_after_max=args.not_after_max,
-                min_key_size=args.min_key_size,
-                fail_weak=args.fail_weak,
-            )
+            info, code = _inspect(target, port, opts)
         except (OSError, ssl.SSLError, ValueError) as err:
             return raw_target, None, str(err)
         return raw_target, (target, info, code), None

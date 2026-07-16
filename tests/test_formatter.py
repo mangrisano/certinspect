@@ -44,6 +44,15 @@ def test_format_json_san_is_list(der_cert):
     assert data["san"] == ["example.com", "www.example.com"]
 
 
+def test_format_json_accepts_a_list_of_results(der_cert, make_cert):
+    # Batch mode serializes a list of info dicts through the same helper.
+    results = [_info(der_cert), _info(make_cert(san=["a.example.com"]))]
+    data = json.loads(format_json(results))
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["subject"] == "CN=example.com"
+
+
 def test_format_human_valid_status(make_cert):
     text = format_human(_info(make_cert(days_valid=90)))
     assert "Status:" in text
