@@ -176,6 +176,7 @@ _SUMMARY_ORDER = (
     "mismatch",
     "untrusted",
     "pin-mismatch",
+    "san-mismatch",
 )
 _SUMMARY_BY_CODE = {
     0: "valid",
@@ -183,6 +184,7 @@ _SUMMARY_BY_CODE = {
     5: "mismatch",
     6: "untrusted",
     7: "pin-mismatch",
+    8: "san-mismatch",
 }
 
 

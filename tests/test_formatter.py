@@ -318,6 +318,14 @@ def test_format_summary_includes_errors_and_problem_codes(make_cert):
     assert line.endswith("(3 targets)")
 
 
+def test_format_summary_counts_san_mismatch(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    # Exit code 8 (failed --expect-san) must be tallied, not raise KeyError.
+    line = format_summary([("a.com", info, 0), ("b.com", info, 8)])
+    assert "1 san-mismatch" in line
+    assert line.endswith("(2 targets)")
+
+
 def test_format_summary_hides_zero_problem_categories(make_cert):
     info = _info(make_cert(san=["example.com"]))
     line = format_summary([("a.com", info, 0)])

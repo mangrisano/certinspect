@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `--summary` no longer raises a `KeyError` when a target fails an
+  `--expect-san` assertion (exit code 8); such targets are now tallied under a
+  new `san-mismatch` category.
+
 ## [1.1.0] - 2026-07-13
 
 ### Added
