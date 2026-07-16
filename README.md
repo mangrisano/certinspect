@@ -43,19 +43,19 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 
 ## Features
 
-| Area               | What you get                                                                                                                                                                               |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN, SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage                                       |
-| Crypto health      | Signature algorithm & key size, weak-crypto warnings, negotiated TLS version & cipher                                                                                                      |
-| Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); show the server-presented chain (`--chain`) |
-| Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain                                                                                                        |
-| Identity checks    | Hostname match against the certificate, SHA-256 fingerprint pinning (`--pin`), SAN coverage assertions (`--expect-san`), SNI override for backends behind a load balancer (`--servername`) |
-| Policy enforcement | Opt-in checks that fail (exit code 9): maximum total validity (`--not-after-max`), minimum key size (`--min-key-size`), or promote weak-crypto warnings to failures (`--fail-weak`)        |
-| Batch & speed      | Inspect many hosts at once, in parallel (`--concurrency`), from args or a file (`--input`)                                                                                                 |
-| Output formats     | Plain text, JSON (`--json`), CSV (`--csv`), Nagios/Icinga & Prometheus (`--exporter`)                                                                                                      |
-| Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                  |
-| Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                            |
-| Automation         | Meaningful exit codes for cron/CI, no telemetry, single runtime dependency                                                                                                                 |
+| Area               | What you get                                                                                                                                                                                                                                  |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN, SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage                                                                                          |
+| Crypto health      | Signature algorithm & key size, weak-crypto warnings, negotiated TLS version & cipher                                                                                                                                                         |
+| Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); show the server-presented chain (`--chain`)                                                    |
+| Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain                                                                                                                                                           |
+| Identity checks    | Hostname match against the certificate, SHA-256 fingerprint pinning (`--pin`), SAN coverage assertions (`--expect-san`), SNI override for backends behind a load balancer (`--servername`)                                                    |
+| Policy enforcement | Opt-in checks that fail (exit code 9): maximum total validity (`--not-after-max`, or `--cab-forum` for the date-aware CA/Browser Forum cap), minimum key size (`--min-key-size`), or promote weak-crypto warnings to failures (`--fail-weak`) |
+| Batch & speed      | Inspect many hosts at once, in parallel (`--concurrency`), from args or a file (`--input`)                                                                                                                                                    |
+| Output formats     | Plain text, JSON (`--json`), CSV (`--csv`), Nagios/Icinga & Prometheus (`--exporter`)                                                                                                                                                         |
+| Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                                                                     |
+| Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                                                                               |
+| Automation         | Meaningful exit codes for cron/CI, no telemetry, single runtime dependency                                                                                                                                                                    |
 
 ## Requirements
 
@@ -425,37 +425,38 @@ certinspect example.com --export ./example.com.pem
 
 ## Options
 
-| Option                            | Description                                                                                                                                                      |
-| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `target...`                       | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`.                                                                                   |
-| `--file PATH`                     | Inspect a local certificate (PEM or DER) instead of a host.                                                                                                      |
-| `--port N`                        | TCP port to connect to (default: 443).                                                                                                                           |
-| `--timeout N`                     | Connection timeout in seconds (default: 5).                                                                                                                      |
-| `--json`                          | Print the result as JSON instead of human-readable text.                                                                                                         |
-| `--csv`                           | Print the results as CSV (one row per target, with a header).                                                                                                    |
-| `--csv-delimiter SEP`             | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.                                                                  |
-| `--quiet`                         | Only print certificates that have a problem.                                                                                                                     |
-| `--verify`                        | Verify the chain + OCSP/CRL revocation, system trust store (hosts only).                                                                                         |
-| `--cafile PATH`                   | Verify the chain against this CA bundle (PEM) instead of the system trust store. Requires `--verify`; for internal/private PKI.                                  |
-| `--capath DIR`                    | Verify the chain against the hashed CA certificates in this directory (OpenSSL `c_rehash` layout). Requires `--verify`; may be combined with `--cafile`.         |
-| `--chain`                         | Show the certificate chain presented by the server.                                                                                                              |
-| `--pin SHA256`                    | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).                                                                                      |
-| `--servername NAME`               | Override the SNI hostname sent in the handshake (hosts only); the hostname match is checked against `NAME`. For reaching a backend by IP behind a load balancer. |
-| `--expect-san NAME`               | Assert the certificate's SAN covers `NAME` (wildcards honored); exit 8 if missing. Repeatable; works for host and `--file` targets.                              |
-| `--not-after-max N`               | Fail (exit 9) when the total validity exceeds N days (use 398 for the CA/Browser Forum maximum). Opt-in; works for host and `--file` targets.                    |
-| `--min-key-size N`                | Fail (exit 9) when the public key is smaller than N bits (e.g. 2048 for RSA). Opt-in.                                                                            |
-| `--fail-weak`                     | Turn the weak-crypto warnings (small key, SHA-1/MD5 signature) into a hard failure (exit 9) instead of a mere warning.                                           |
-| `--input PATH`                    | Read extra targets from a file, one per line ('-' for stdin).                                                                                                    |
-| `--days N`                        | Warn if the certificate expires within N days (default: 30).                                                                                                     |
-| `--critical-days N`               | Escalate to CRITICAL (exit code 4) when the certificate expires within N days. Must be `<= --days`; feeds Nagios CRITICAL and the `--summary` `critical` count.  |
-| `--max-days N`                    | Only show certificates expiring within N days (expired ones always shown; filters display only).                                                                 |
-| `--sort host\|expiry`             | Sort the output by host (alphabetical) or by soonest expiry (display only; does not affect exit code).                                                           |
-| `--summary`                       | Print a one-line tally (valid/expiring/expired/errors) to stderr; counts every target before filtering.                                                          |
-| `--export PATH`                   | Save the inspected certificate as a PEM file at PATH.                                                                                                            |
-| `--starttls {smtp,imap,pop3,ftp}` | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given).                                                                |
-| `--exporter {nagios,prometheus}`  | Emit machine-readable monitoring output (ignores `--quiet`).                                                                                                     |
-| `--concurrency N`                 | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved).                                                                                |
-| `--version`                       | Print the version and exit.                                                                                                                                      |
+| Option                            | Description                                                                                                                                                                                                                      |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `target...`                       | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`.                                                                                                                                                   |
+| `--file PATH`                     | Inspect a local certificate (PEM or DER) instead of a host.                                                                                                                                                                      |
+| `--port N`                        | TCP port to connect to (default: 443).                                                                                                                                                                                           |
+| `--timeout N`                     | Connection timeout in seconds (default: 5).                                                                                                                                                                                      |
+| `--json`                          | Print the result as JSON instead of human-readable text.                                                                                                                                                                         |
+| `--csv`                           | Print the results as CSV (one row per target, with a header).                                                                                                                                                                    |
+| `--csv-delimiter SEP`             | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.                                                                                                                                  |
+| `--quiet`                         | Only print certificates that have a problem.                                                                                                                                                                                     |
+| `--verify`                        | Verify the chain + OCSP/CRL revocation, system trust store (hosts only).                                                                                                                                                         |
+| `--cafile PATH`                   | Verify the chain against this CA bundle (PEM) instead of the system trust store. Requires `--verify`; for internal/private PKI.                                                                                                  |
+| `--capath DIR`                    | Verify the chain against the hashed CA certificates in this directory (OpenSSL `c_rehash` layout). Requires `--verify`; may be combined with `--cafile`.                                                                         |
+| `--chain`                         | Show the certificate chain presented by the server.                                                                                                                                                                              |
+| `--pin SHA256`                    | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).                                                                                                                                                      |
+| `--servername NAME`               | Override the SNI hostname sent in the handshake (hosts only); the hostname match is checked against `NAME`. For reaching a backend by IP behind a load balancer.                                                                 |
+| `--expect-san NAME`               | Assert the certificate's SAN covers `NAME` (wildcards honored); exit 8 if missing. Repeatable; works for host and `--file` targets.                                                                                              |
+| `--not-after-max N`               | Fail (exit 9) when the total validity exceeds N days (use 398 for the CA/Browser Forum maximum). Opt-in; works for host and `--file` targets.                                                                                    |
+| `--cab-forum`                     | Fail (exit 9) when the total validity exceeds the CA/Browser Forum maximum in effect today (398 days now, then 200, 100 and 47 on 2026/2027/2029-03-15). Date-aware shorthand for `--not-after-max`; mutually exclusive with it. |
+| `--min-key-size N`                | Fail (exit 9) when the public key is smaller than N bits (e.g. 2048 for RSA). Opt-in.                                                                                                                                            |
+| `--fail-weak`                     | Turn the weak-crypto warnings (small key, SHA-1/MD5 signature) into a hard failure (exit 9) instead of a mere warning.                                                                                                           |
+| `--input PATH`                    | Read extra targets from a file, one per line ('-' for stdin).                                                                                                                                                                    |
+| `--days N`                        | Warn if the certificate expires within N days (default: 30).                                                                                                                                                                     |
+| `--critical-days N`               | Escalate to CRITICAL (exit code 4) when the certificate expires within N days. Must be `<= --days`; feeds Nagios CRITICAL and the `--summary` `critical` count.                                                                  |
+| `--max-days N`                    | Only show certificates expiring within N days (expired ones always shown; filters display only).                                                                                                                                 |
+| `--sort host\|expiry`             | Sort the output by host (alphabetical) or by soonest expiry (display only; does not affect exit code).                                                                                                                           |
+| `--summary`                       | Print a one-line tally (valid/expiring/expired/errors) to stderr; counts every target before filtering.                                                                                                                          |
+| `--export PATH`                   | Save the inspected certificate as a PEM file at PATH.                                                                                                                                                                            |
+| `--starttls {smtp,imap,pop3,ftp}` | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given).                                                                                                                                |
+| `--exporter {nagios,prometheus}`  | Emit machine-readable monitoring output (ignores `--quiet`).                                                                                                                                                                     |
+| `--concurrency N`                 | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved).                                                                                                                                                |
+| `--version`                       | Print the version and exit.                                                                                                                                                                                                      |
 
 ## Options in action
 
@@ -700,6 +701,32 @@ Total validity: 501 days
 ...
 Policy:         FAIL
 WARNING: policy violation (total validity 501 days exceeds the 398-day maximum)
+$ echo $?
+9
+```
+
+### `--cab-forum`
+
+Same enforcement as `--not-after-max`, but the limit tracks the CA/Browser
+Forum schedule automatically based on today's date, so you never have to update
+the number as the cap shortens. The maximum lifetime drops on fixed dates:
+
+| In effect from | Maximum validity |
+| -------------- | ---------------- |
+| today          | 398 days         |
+| 2026-03-15     | 200 days         |
+| 2027-03-15     | 100 days         |
+| 2029-03-15     | 47 days          |
+
+Mutually exclusive with `--not-after-max`. Works with `--file` too.
+
+```console
+$ certinspect example.com --cab-forum
+...
+Total validity: 501 days
+...
+Policy:         FAIL
+WARNING: policy violation (total validity 501 days exceeds the 200-day maximum)
 $ echo $?
 9
 ```
@@ -972,18 +999,18 @@ certinspect_cert_revoked{target="example.com"} 0
 Designed for automation (cron, CI, monitoring scripts). In batch mode the
 worst code across all targets is returned.
 
-| Code | Meaning                                                               |
-| ---- | --------------------------------------------------------------------- |
-| 0    | Valid certificate                                                     |
-| 1    | Runtime error (network, file, parse)                                  |
-| 2    | Command-line usage error                                              |
-| 3    | Expiring within the `--days` threshold                                |
-| 4    | Expired or with invalid dates                                         |
-| 5    | Hostname does not match the certificate                               |
-| 6    | Chain not trusted or revoked (`--verify`)                             |
-| 7    | Fingerprint does not match `--pin`                                    |
-| 8    | Expected SAN missing (`--expect-san`)                                 |
-| 9    | Policy violation (`--not-after-max`, `--min-key-size`, `--fail-weak`) |
+| Code | Meaning                                                                             |
+| ---- | ----------------------------------------------------------------------------------- |
+| 0    | Valid certificate                                                                   |
+| 1    | Runtime error (network, file, parse)                                                |
+| 2    | Command-line usage error                                                            |
+| 3    | Expiring within the `--days` threshold                                              |
+| 4    | Expired or with invalid dates                                                       |
+| 5    | Hostname does not match the certificate                                             |
+| 6    | Chain not trusted or revoked (`--verify`)                                           |
+| 7    | Fingerprint does not match `--pin`                                                  |
+| 8    | Expected SAN missing (`--expect-san`)                                               |
+| 9    | Policy violation (`--not-after-max`/`--cab-forum`, `--min-key-size`, `--fail-weak`) |
 
 Example in a script:
 
