@@ -86,6 +86,30 @@ def test_main_file_json_output(monkeypatch, capsys, tmp_path, make_cert):
     assert data[0]["subject"] == "CN=example.com"
 
 
+def test_main_json_includes_status(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], days_valid=90)),
+    )
+    _run_main(monkeypatch, ["example.com", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["status"] == "VALID"
+
+
+def test_main_json_status_reflects_thresholds(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], days_valid=5)),
+    )
+    # The stored status honors --critical-days like the rest of the report.
+    _run_main(
+        monkeypatch,
+        ["example.com", "--days", "30", "--critical-days", "7", "--json"],
+    )
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["status"] == "CRITICAL"
+
+
 def test_main_no_target_and_no_file_exits(monkeypatch, capsys):
     code = _run_main(monkeypatch, [])
     assert code == 2

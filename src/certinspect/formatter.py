@@ -19,7 +19,7 @@ def format_human(
 ) -> str:
     """Return a human-readable text representation."""
     days = info["days_to_expire"]
-    status = certificate_status(info, warn_days, critical_days)
+    status = info.get("status") or certificate_status(info, warn_days, critical_days)
 
     def row(label: str, value: object) -> str:
         return f"{label + ':':<{LABEL_WIDTH}}{value}"
@@ -169,7 +169,9 @@ def format_csv(
     writer = csv.writer(buffer, delimiter=delimiter, lineterminator="\n")
     writer.writerow([label for label, _ in _CSV_COLUMNS])
     for target, info, _ in results:
-        status = certificate_status(info, warn_days, critical_days)
+        status = info.get("status") or certificate_status(
+            info, warn_days, critical_days
+        )
         info = {**info, "_status": status}
         writer.writerow([getter(target, info) for _, getter in _CSV_COLUMNS])
     return buffer.getvalue()
@@ -218,7 +220,9 @@ def format_summary(
     counts: dict[str, int] = dict.fromkeys(_SUMMARY_ORDER, 0)
     for _, info, code in results:
         if code == 4:
-            status = certificate_status(info, warn_days, critical_days)
+            status = info.get("status") or certificate_status(
+                info, warn_days, critical_days
+            )
             counts["critical" if status == "CRITICAL" else "expired"] += 1
         else:
             counts[_SUMMARY_BY_CODE[code]] += 1
@@ -285,7 +289,9 @@ def format_nagios(
         severity = _nagios_severity(code)
         worst = max(worst, severity)
         name = target or info["subject"]
-        status = certificate_status(info, warn_days, critical_days)
+        status = info.get("status") or certificate_status(
+            info, warn_days, critical_days
+        )
         days = info["days_to_expire"]
         perfdata = f"days={days};{warn_days};{critical_days or 0}"
         lines.append(

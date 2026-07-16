@@ -399,7 +399,8 @@ def _inspect(
     check_name = opts.servername or target
     info["hostname_match"] = hostname_matches(info, check_name) if check_name else None
 
-    code = EXIT_BY_STATUS[certificate_status(info, opts.days, opts.critical_days)]
+    info["status"] = certificate_status(info, opts.days, opts.critical_days)
+    code = EXIT_BY_STATUS[info["status"]]
     if info["hostname_match"] is False:
         code = 5
 

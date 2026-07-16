@@ -548,10 +548,16 @@ $ certinspect example.com --json
     "weak": [],
     "tls_version": "TLSv1.3",
     "cipher": "TLS_AES_256_GCM_SHA384",
-    "hostname_match": true
+    "hostname_match": true,
+    "status": "VALID"
   }
 ]
 ```
+
+The `status` field mirrors the human report's `Status` line (`VALID`,
+`EXPIRING`, `CRITICAL`, `EXPIRED` or `INVALID DATES`) and honors `--days` /
+`--critical-days`, so a JSON consumer gets the verdict without re-deriving it
+from the dates.
 
 ### `--csv` / `--csv-delimiter SEP`
 
