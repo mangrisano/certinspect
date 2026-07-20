@@ -53,6 +53,14 @@ def test_format_json_accepts_a_list_of_results(der_cert, make_cert):
     assert data[0]["subject"] == "CN=example.com"
 
 
+def test_format_json_keeps_non_ascii_unescaped():
+    # Non-ASCII characters are emitted as readable UTF-8 rather than \uXXXX
+    # escapes, so downstream tools that don't decode \u still parse the output.
+    text = format_json({"subject": "CN=Napol\u00e9on"})
+    assert "Napol\u00e9on" in text
+    assert "\\u" not in text
+
+
 def test_format_human_valid_status(make_cert):
     text = format_human(_info(make_cert(days_valid=90)))
     assert "Status:" in text

@@ -123,7 +123,7 @@ def format_json(data: dict | list) -> str:
     Accepts either a single ``info`` dict or a list of them (batch mode);
     datetime and other non-JSON values are rendered via ``default=str``.
     """
-    return json.dumps(data, indent=2, default=str)
+    return json.dumps(data, indent=2, default=str, ensure_ascii=False)
 
 
 # Columns emitted by format_csv, in order. The first element is the header
