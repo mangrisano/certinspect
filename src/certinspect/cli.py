@@ -35,6 +35,7 @@ from certinspect.parser import (
 )
 from certinspect.formatter import (
     format_csv,
+    format_fields,
     format_human,
     format_json,
     format_nagios,
@@ -141,6 +142,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Output the result as JSON instead of human-readable text.",
+    )
+    output_group.add_argument(
+        "--field",
+        action="append",
+        metavar="NAME",
+        dest="field",
+        help=(
+            "Print only the given field(s), one tab-separated line per target "
+            "(e.g. --field days_to_expire). Repeat for several fields; use "
+            "'target' for the inspected host. Handy for scripting without "
+            "piping --json through a JSON tool."
+        ),
     )
     output_group.add_argument(
         "--csv",
@@ -391,6 +404,16 @@ def build_parser() -> argparse.ArgumentParser:
             "--quiet/--max-days filtering."
         ),
     )
+    parser.add_argument(
+        "--exit-zero",
+        action="store_true",
+        dest="exit_zero",
+        help=(
+            "Always exit with code 0, even on problems or fetch errors. "
+            "Report-only mode for dashboards/CI that read the output rather "
+            "than the exit code."
+        ),
+    )
 
     return parser
 
@@ -551,17 +574,19 @@ def _render(
     sort: str | None = None,
     summary: bool = False,
     exporter: str | None = None,
+    fields: list[str] | None = None,
     errors: list[tuple[str | None, str]] = (),
 ) -> int | None:
     """Print the collected results and return an optional exit-code override.
 
     With ``exporter`` set, render monitoring output: 'nagios' returns its
     plugin exit code (the override), 'prometheus' returns None. Otherwise
-    print JSON, CSV, or human text; ``quiet`` keeps only results with a
-    non-zero exit code and ``max_days`` keeps only those expiring within that
-    many days. ``sort`` reorders the kept results ('host' or 'expiry'). All
-    three affect the display only, never the exit code. ``summary`` prints a
-    one-line tally to stderr, counting every target before filtering.
+    print the selected ``fields`` (tab-separated), JSON, CSV, or human text;
+    ``quiet`` keeps only results with a non-zero exit code and ``max_days``
+    keeps only those expiring within that many days. ``sort`` reorders the kept
+    results ('host' or 'expiry'). All three affect the display only, never the
+    exit code. ``summary`` prints a one-line tally to stderr, counting every
+    target before filtering.
     """
     if exporter == "nagios":
         text, code = format_nagios(
@@ -589,7 +614,11 @@ def _render(
     elif sort == "expiry":
         results = sorted(results, key=lambda r: r[1]["days_to_expire"])
 
-    if as_csv:
+    if fields:
+        text = format_fields(results, fields)
+        if text:
+            print(text)
+    elif as_csv:
         print(
             format_csv(
                 results,
@@ -725,8 +754,11 @@ def main() -> None:
         sort=args.sort,
         summary=args.summary,
         exporter=args.exporter,
+        fields=args.field,
         errors=errors,
     )
+    if args.exit_zero:
+        sys.exit(0)
     sys.exit(override if override is not None else max(codes, default=0))
 
 

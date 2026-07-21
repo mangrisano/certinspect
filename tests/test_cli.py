@@ -488,6 +488,53 @@ def test_main_policy_violations_in_json(monkeypatch, capsys, make_cert):
     assert len(data[0]["policy_violations"]) == 1
 
 
+def test_main_field_prints_selected_value(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert(san=["example.com"], key_size=2048))
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--field", "key_size"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert out.strip() == "2048"
+
+
+def test_main_field_multiple_are_tab_separated(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], key_size=2048)),
+    )
+    _run_main(
+        monkeypatch,
+        ["example.com", "--field", "target", "--field", "key_size"],
+    )
+    assert capsys.readouterr().out.strip() == "example.com\t2048"
+
+
+def test_main_field_conflicts_with_json(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert())
+    code = _run_main(
+        monkeypatch, ["--file", str(cert_path), "--field", "key_size", "--json"]
+    )
+    assert code == 2
+
+
+def test_main_exit_zero_masks_problem_code(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert(days_valid=-5, days_ago_start=365))
+    # Expired cert would exit 4, but --exit-zero forces 0.
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--exit-zero"])
+    assert code == 0
+
+
+def test_main_exit_zero_masks_fetch_error(monkeypatch, capsys, make_cert):
+    def _boom(host, port, timeout, starttls=None, servername=None):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _boom)
+    code = _run_main(monkeypatch, ["example.com", "--exit-zero"])
+    assert code == 0
+
+
 def test_main_url_target_is_normalized(monkeypatch, capsys, make_cert):
     seen = {}
 

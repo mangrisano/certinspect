@@ -139,6 +139,36 @@ def format_json(data: dict | list) -> str:
     return json.dumps(data, indent=2, default=str, ensure_ascii=False)
 
 
+def _field_value(target: str | None, info: dict, name: str) -> str:
+    """Render one selected field of a result as a single string.
+
+    The pseudo-field 'target' exposes the inspected host. Missing or None
+    values render as an empty string; lists are comma-joined.
+    """
+    value = (target or "") if name == "target" else info.get(name)
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item) for item in value)
+    return str(value)
+
+
+def format_fields(
+    results: list[tuple[str | None, dict, int]], fields: list[str]
+) -> str:
+    """Render selected fields, one tab-separated line per target.
+
+    Each name in ``fields`` selects an ``info`` key (plus the pseudo-field
+    'target'); unknown or absent fields render empty. Handy for scripting
+    without piping ``--json`` through a JSON tool.
+    """
+    lines = [
+        "\t".join(_field_value(target, info, name) for name in fields)
+        for target, info, _ in results
+    ]
+    return "\n".join(lines)
+
+
 # Columns emitted by format_csv, in order. The first element is the header
 # label; the second pulls the value out of a (target, info) pair. The columns
 # are deliberately lean and free of embedded commas (CN only, no full DN,

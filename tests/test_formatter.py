@@ -12,6 +12,7 @@ from certinspect.formatter import (
     NAGIOS_UNKNOWN,
     NAGIOS_WARNING,
     format_csv,
+    format_fields,
     format_human,
     format_json,
     format_nagios,
@@ -158,6 +159,36 @@ def test_format_human_shows_must_staple(make_cert):
     text = format_human(_info(make_cert(must_staple=True)))
     assert "Must-Staple:" in text
     assert "True" in text
+
+
+def test_format_fields_single_field(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    text = format_fields([("example.com", info, 0)], ["key_size"])
+    assert text == "2048"
+
+
+def test_format_fields_multiple_are_tab_separated(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    text = format_fields([("example.com", info, 0)], ["target", "key_size"])
+    assert text == "example.com\t2048"
+
+
+def test_format_fields_list_is_comma_joined(make_cert):
+    info = _info(make_cert(san=["a.example.com", "b.example.com"]))
+    text = format_fields([("a.example.com", info, 0)], ["san"])
+    assert text == "a.example.com,b.example.com"
+
+
+def test_format_fields_missing_field_is_empty(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    text = format_fields([("example.com", info, 0)], ["nonexistent"])
+    assert text == ""
+
+
+def test_format_fields_one_line_per_target(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    text = format_fields([("a.com", info, 0), ("b.com", info, 0)], ["target"])
+    assert text == "a.com\nb.com"
 
 
 def test_format_human_warns_on_weak_key(make_cert):
