@@ -82,6 +82,8 @@ class InspectOptions:
     min_key_size: int | None = None
     fail_weak: bool = False
     require_sct: bool = False
+    require_must_staple: bool = False
+    min_tls_version: str | None = None
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "InspectOptions":
@@ -305,6 +307,27 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--require-must-staple",
+        action="store_true",
+        dest="require_must_staple",
+        help=(
+            "Fail (exit code 9) when the certificate lacks the OCSP Must-Staple "
+            "extension (RFC 7633 TLS Feature status_request). Opt-in policy "
+            "check."
+        ),
+    )
+    parser.add_argument(
+        "--min-tls-version",
+        choices=("TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"),
+        default=None,
+        dest="min_tls_version",
+        help=(
+            "Fail (exit code 9) when the connection negotiates a TLS version "
+            "older than this (e.g. TLSv1.2). Opt-in policy check; host targets "
+            "only, as it needs a live handshake."
+        ),
+    )
+    parser.add_argument(
         "--export",
         metavar="PATH",
         help="Save the inspected certificate as a PEM file at PATH.",
@@ -417,8 +440,8 @@ def _inspect(
     ``verify`` is set. A failed ``pin`` check yields exit code 7. When
     ``expect_san`` names are not all covered by the certificate's SAN the exit
     code is 8. The opt-in policy checks (``not_after_max``/``cab_forum``,
-    ``min_key_size``, ``fail_weak``, ``require_sct``) yield exit code 9 when any
-    is violated.
+    ``min_key_size``, ``fail_weak``, ``require_sct``, ``require_must_staple``,
+    ``min_tls_version``) yield exit code 9 when any is violated.
     """
     der, conn = _fetch_source(target, port, opts)
     cert = load_certificate(der)
@@ -494,6 +517,8 @@ def _inspect(
         or opts.min_key_size is not None
         or opts.fail_weak
         or opts.require_sct
+        or opts.require_must_staple
+        or opts.min_tls_version is not None
     ):
         not_after_max = opts.not_after_max
         if opts.cab_forum:
@@ -504,6 +529,8 @@ def _inspect(
             min_key_size=opts.min_key_size,
             fail_weak=opts.fail_weak,
             require_sct=opts.require_sct,
+            require_must_staple=opts.require_must_staple,
+            min_tls_version=opts.min_tls_version,
         )
         info["policy_violations"] = violations
         if violations:
@@ -618,6 +645,8 @@ def main() -> None:
         parser.error("--cafile/--capath require --verify.")
     if args.servername and args.file:
         parser.error("--servername applies to host targets, not --file.")
+    if args.min_tls_version and args.file:
+        parser.error("--min-tls-version applies to host targets, not --file.")
 
     extra_targets = []
     if args.input:

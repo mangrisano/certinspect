@@ -410,6 +410,67 @@ def test_main_require_sct_off_by_default(monkeypatch, capsys, make_cert):
     assert code == 0
 
 
+def test_main_require_must_staple_fails_when_absent(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--require-must-staple"])
+    out = capsys.readouterr().out
+    assert code == 9
+    assert "Must-Staple" in out
+
+
+def test_main_require_must_staple_passes_when_present(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], must_staple=True)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--require-must-staple"])
+    assert code == 0
+
+
+def _fetch_with_tls(cert_bytes, tls_version):
+    """Return a get_server_cert replacement negotiating a given TLS version."""
+    conn = {"tls_version": tls_version, "cipher": "TLS_AES_256_GCM_SHA384"}
+    return lambda host, port, timeout, starttls=None, servername=None: (
+        cert_bytes,
+        conn,
+    )
+
+
+def test_main_min_tls_version_fails_when_below(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _fetch_with_tls(make_cert(san=["example.com"]), "TLSv1.1"),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--min-tls-version", "TLSv1.2"])
+    out = capsys.readouterr().out
+    assert code == 9
+    assert "TLS version TLSv1.1 is below" in out
+
+
+def test_main_min_tls_version_passes_when_at_or_above(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _fetch_with_tls(make_cert(san=["example.com"]), "TLSv1.3"),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--min-tls-version", "TLSv1.2"])
+    assert code == 0
+
+
+def test_main_min_tls_version_rejected_with_file(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert())
+    code = _run_main(
+        monkeypatch, ["--file", str(cert_path), "--min-tls-version", "TLSv1.2"]
+    )
+    assert code == 2
+    assert "host targets" in capsys.readouterr().err
+
+
 def test_main_policy_with_file(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(san=["example.com"], days_valid=400))

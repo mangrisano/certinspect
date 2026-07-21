@@ -57,6 +57,8 @@ def format_human(
         lines.append(
             row("SCTs", count if count else "none (no Certificate Transparency)")
         )
+    if "must_staple" in info:
+        lines.append(row("Must-Staple", info["must_staple"]))
 
     if info["weak"]:
         lines.append("")

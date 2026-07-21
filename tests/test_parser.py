@@ -17,6 +17,7 @@ from certinspect.parser import (
     pin_matches,
     policy_violations,
     to_pem,
+    tls_version_rank,
 )
 
 
@@ -114,6 +115,7 @@ def test_analyze_keys_match_expected_set(der_cert):
         "key_usage",
         "extended_key_usage",
         "sct_count",
+        "must_staple",
         "weak",
     }
     assert set(info) == expected
@@ -345,9 +347,56 @@ def test_policy_require_sct_fails_without_scts(make_cert):
     assert "Certificate Transparency" in violations[0]
 
 
+def test_analyze_must_staple_absent_is_false(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    assert info["must_staple"] is False
+
+
+def test_analyze_must_staple_present_is_true(make_cert):
+    info = analyze(load_certificate(make_cert(must_staple=True)))
+    assert info["must_staple"] is True
+
+
+def test_policy_require_must_staple_fails_when_absent(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    violations = policy_violations(info, require_must_staple=True)
+    assert violations == ["missing OCSP Must-Staple extension"]
+
+
+def test_policy_require_must_staple_passes_when_present(make_cert):
+    info = analyze(load_certificate(make_cert(must_staple=True)))
+    assert policy_violations(info, require_must_staple=True) == []
+
+
 def test_policy_require_sct_off_by_default(make_cert):
     info = analyze(load_certificate(make_cert()))
     assert policy_violations(info) == []
+
+
+def test_tls_version_rank_orders_newest_highest():
+    assert tls_version_rank("TLSv1.3") > tls_version_rank("TLSv1.2")
+    assert tls_version_rank("TLSv1.2") > tls_version_rank("TLSv1")
+    assert tls_version_rank("TLSv1.0") == tls_version_rank("TLSv1")
+    assert tls_version_rank("bogus") is None
+
+
+def test_policy_min_tls_version_fails_when_below(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    info["tls_version"] = "TLSv1.1"
+    violations = policy_violations(info, min_tls_version="TLSv1.2")
+    assert violations == ["TLS version TLSv1.1 is below the required TLSv1.2"]
+
+
+def test_policy_min_tls_version_passes_when_at_or_above(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    info["tls_version"] = "TLSv1.3"
+    assert policy_violations(info, min_tls_version="TLSv1.2") == []
+
+
+def test_policy_min_tls_version_skipped_without_handshake(make_cert):
+    # A --file target has no negotiated TLS version, so the check is a no-op.
+    info = analyze(load_certificate(make_cert()))
+    assert policy_violations(info, min_tls_version="TLSv1.3") == []
 
 
 def test_pin_matches_exact(make_cert):

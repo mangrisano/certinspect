@@ -27,6 +27,7 @@ def build_certificate(
     ec_curve: ec.EllipticCurve | None = None,
     key_usage: x509.KeyUsage | None = None,
     extended_key_usage: list | None = None,
+    must_staple: bool = False,
 ) -> bytes:
     """Build a self-signed certificate and return its serialized bytes.
 
@@ -77,6 +78,11 @@ def build_certificate(
     if extended_key_usage is not None:
         builder = builder.add_extension(
             x509.ExtendedKeyUsage(extended_key_usage), critical=False
+        )
+    if must_staple:
+        builder = builder.add_extension(
+            x509.TLSFeature([x509.TLSFeatureType.status_request]),
+            critical=False,
         )
 
     cert = builder.sign(key, sig_hash or hashes.SHA256())

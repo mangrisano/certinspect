@@ -183,6 +183,21 @@ def _sct_count(cert: x509.Certificate) -> int:
     return len(ext.value)
 
 
+def _must_staple(cert: x509.Certificate) -> bool:
+    """Return whether the certificate carries the OCSP Must-Staple extension.
+
+    Must-Staple (RFC 7633: the TLS Feature extension with ``status_request``)
+    tells clients to reject the connection unless the server presents a stapled
+    OCSP response, closing the OCSP soft-fail hole. Returns False when the
+    extension is absent.
+    """
+    try:
+        ext = cert.extensions.get_extension_for_class(x509.TLSFeature)
+    except x509.ExtensionNotFound:
+        return False
+    return x509.TLSFeatureType.status_request in ext.value
+
+
 def analyze(cert: x509.Certificate) -> dict:
     """Extract the relevant information from the certificate as a dict."""
     now = datetime.now(timezone.utc)
@@ -221,6 +236,7 @@ def analyze(cert: x509.Certificate) -> dict:
         "key_usage": _key_usage(cert),
         "extended_key_usage": _extended_key_usage(cert),
         "sct_count": _sct_count(cert),
+        "must_staple": _must_staple(cert),
         "weak": weak,
     }
 
@@ -278,6 +294,29 @@ def cab_forum_max_validity(today: date | None = None) -> int:
     return _CAB_FORUM_DEFAULT
 
 
+# TLS/SSL protocol versions ordered oldest -> newest, using the strings that
+# ``ssl.SSLSocket.version()`` reports. The index is a comparable rank.
+_TLS_VERSION_ORDER = (
+    "SSLv2",
+    "SSLv3",
+    "TLSv1",
+    "TLSv1.1",
+    "TLSv1.2",
+    "TLSv1.3",
+)
+
+
+def tls_version_rank(version: str) -> int | None:
+    """Return a comparable rank for a TLS/SSL version, or None if unknown.
+
+    Accepts the strings ssl reports ("TLSv1.3", "TLSv1", ...); "TLSv1.0" is
+    treated as "TLSv1". Newer versions rank higher.
+    """
+    normalized = "TLSv1" if version == "TLSv1.0" else version
+    order = {name: rank for rank, name in enumerate(_TLS_VERSION_ORDER)}
+    return order.get(normalized)
+
+
 def policy_violations(
     info: dict,
     *,
@@ -285,6 +324,8 @@ def policy_violations(
     min_key_size: int | None = None,
     fail_weak: bool = False,
     require_sct: bool = False,
+    require_must_staple: bool = False,
+    min_tls_version: str | None = None,
 ) -> list[str]:
     """Return the opt-in policy violations for the analyzed certificate.
 
@@ -298,6 +339,10 @@ def policy_violations(
       (weak key size, SHA-1/MD5 signature) to hard violations.
     * ``require_sct`` — the certificate must embed at least one Signed
       Certificate Timestamp (Certificate Transparency).
+    * ``require_must_staple`` — the certificate must carry the OCSP
+      Must-Staple extension (RFC 7633 TLS Feature ``status_request``).
+    * ``min_tls_version`` — the negotiated TLS version (``info["tls_version"]``,
+      only present for host targets) must be at least this version.
 
     The returned strings are ready to display; the list preserves check order
     and is empty when the certificate satisfies every enabled policy.
@@ -318,4 +363,14 @@ def policy_violations(
         violations.append(
             "no embedded Signed Certificate Timestamps (Certificate Transparency)"
         )
+    if require_must_staple and not info["must_staple"]:
+        violations.append("missing OCSP Must-Staple extension")
+    if min_tls_version is not None:
+        negotiated = info.get("tls_version")
+        min_rank = tls_version_rank(min_tls_version)
+        neg_rank = tls_version_rank(negotiated) if negotiated else None
+        if neg_rank is not None and min_rank is not None and neg_rank < min_rank:
+            violations.append(
+                f"TLS version {negotiated} is below the required {min_tls_version}"
+            )
     return violations
