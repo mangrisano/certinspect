@@ -211,13 +211,17 @@ def certificate_status(
 ) -> str:
     """Return the validity status derived from the analyzed data.
 
-    One of: 'INVALID DATES', 'EXPIRED', 'CRITICAL', 'EXPIRING', 'VALID'.
-    'EXPIRING' means the certificate is still valid but expires within
-    ``warn_days`` days; when ``critical_days`` is given, a certificate that
-    expires within that tighter window is reported as 'CRITICAL' instead.
+    One of: 'INVALID DATES', 'NOT YET VALID', 'EXPIRED', 'CRITICAL',
+    'EXPIRING', 'VALID'. 'NOT YET VALID' means the certificate's validity
+    period starts in the future (it cannot be used yet). 'EXPIRING' means the
+    certificate is still valid but expires within ``warn_days`` days; when
+    ``critical_days`` is given, a certificate that expires within that tighter
+    window is reported as 'CRITICAL' instead.
     """
     if info["not_valid_before"] > info["not_valid_after"]:
         return "INVALID DATES"
+    if info["not_valid_before"] > datetime.now(timezone.utc):
+        return "NOT YET VALID"
     days = info["days_to_expire"]
     if days < 0:
         return "EXPIRED"

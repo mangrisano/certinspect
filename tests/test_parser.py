@@ -325,6 +325,12 @@ def test_status_critical_ignored_without_threshold(make_cert):
     assert certificate_status(info, warn_days=30) == "EXPIRING"
 
 
+def test_status_not_yet_valid(make_cert):
+    # Validity starts 5 days in the future -> the cert cannot be used yet.
+    info = analyze(load_certificate(make_cert(days_ago_start=-5, days_valid=90)))
+    assert certificate_status(info, warn_days=30) == "NOT YET VALID"
+
+
 def test_pin_matches_exact(make_cert):
     info = analyze(load_certificate(make_cert()))
     assert pin_matches(info, info["fingerprint_sha256"]) is True

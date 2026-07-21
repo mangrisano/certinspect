@@ -151,6 +151,16 @@ def test_main_exit_code_expired(monkeypatch, capsys, tmp_path, make_cert):
     assert code == 4
 
 
+def test_main_exit_code_not_yet_valid(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    # Validity starts in the future: not usable yet -> exit code 4.
+    cert_path.write_bytes(make_cert(days_ago_start=-5, days_valid=90))
+    code = _run_main(monkeypatch, ["--file", str(cert_path)])
+    out = capsys.readouterr().out
+    assert code == 4
+    assert "NOT YET VALID" in out
+
+
 def test_main_hostname_match_exit_zero(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
         "certinspect.cli.get_server_cert",

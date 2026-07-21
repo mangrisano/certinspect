@@ -50,6 +50,7 @@ EXIT_BY_STATUS = {
     "CRITICAL": 4,
     "EXPIRED": 4,
     "INVALID DATES": 4,
+    "NOT YET VALID": 4,
 }
 
 

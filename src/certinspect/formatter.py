@@ -93,6 +93,11 @@ def format_human(
     if status == "CRITICAL":
         lines.append("")
         lines.append(f"CRITICAL: certificate expires in {days} days")
+    elif status == "NOT YET VALID":
+        lines.append("")
+        lines.append(
+            f"WARNING: certificate is not valid until {info['not_valid_before']}"
+        )
     elif 0 <= days < warn_days:
         lines.append("")
         lines.append(f"WARNING: certificate expires in {days} days")
@@ -184,6 +189,7 @@ _SUMMARY_ORDER = (
     "valid",
     "expiring",
     "critical",
+    "not-yet-valid",
     "expired",
     "mismatch",
     "untrusted",
@@ -211,11 +217,11 @@ def format_summary(
     """Return a one-line tally of the inspected targets.
 
     Counts come from each target's exit code, so the line reflects the worst
-    state found per host (e.g. an expired cert counts as 'expired'). When
-    ``critical_days`` is set, near-expiry certificates (exit code 4) are split
-    into 'critical' vs 'expired'. Failed fetches are counted separately as
-    errors. valid/expiring/expired are always shown; the rest only when
-    non-zero (plus 'critical' whenever a critical threshold is in effect).
+    state found per host (e.g. an expired cert counts as 'expired'). Exit
+    code 4 is split by status into 'critical', 'not-yet-valid' or 'expired'.
+    Failed fetches are counted separately as errors. valid/expiring/expired
+    are always shown; the rest only when non-zero (plus 'critical' whenever a
+    critical threshold is in effect).
     """
     counts: dict[str, int] = dict.fromkeys(_SUMMARY_ORDER, 0)
     for _, info, code in results:
@@ -223,7 +229,12 @@ def format_summary(
             status = info.get("status") or certificate_status(
                 info, warn_days, critical_days
             )
-            counts["critical" if status == "CRITICAL" else "expired"] += 1
+            if status == "CRITICAL":
+                counts["critical"] += 1
+            elif status == "NOT YET VALID":
+                counts["not-yet-valid"] += 1
+            else:
+                counts["expired"] += 1
         else:
             counts[_SUMMARY_BY_CODE[code]] += 1
 

@@ -437,3 +437,12 @@ def test_format_summary_shows_critical_zero_when_threshold_set(make_cert):
     info = _info(make_cert(san=["a.com"], days_valid=200))
     line = format_summary([("a.com", info, 0)], critical_days=7)
     assert "0 critical" in line
+
+
+def test_format_summary_counts_not_yet_valid(make_cert):
+    valid = _info(make_cert(san=["a.com"], days_valid=200))
+    future = _info(make_cert(san=["b.com"], days_ago_start=-5, days_valid=90))
+    # Exit code 4 with a NOT YET VALID status is tallied apart from 'expired'.
+    line = format_summary([("a.com", valid, 0), ("b.com", future, 4)])
+    assert "1 not-yet-valid" in line
+    assert "1 expired" not in line
