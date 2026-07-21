@@ -52,10 +52,10 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 | Identity checks    | Hostname match against the certificate, SHA-256 fingerprint pinning (`--pin`), SAN coverage assertions (`--expect-san`), SNI override for backends behind a load balancer (`--servername`)                                                                                                                                                                                                                                                        |
 | Policy enforcement | Opt-in checks that fail (exit code 9): maximum total validity (`--not-after-max`, or `--cab-forum` for the date-aware CA/Browser Forum cap), minimum key size (`--min-key-size`), promote weak-crypto warnings to failures (`--fail-weak`), require embedded Certificate Transparency SCTs (`--require-sct`), require the OCSP Must-Staple extension (`--require-must-staple`), or enforce a minimum negotiated TLS version (`--min-tls-version`) |
 | Batch & speed      | Inspect many hosts at once, in parallel (`--concurrency`), from args or a file (`--input`)                                                                                                                                                                                                                                                                                                                                                        |
-| Output formats     | Plain text, JSON (`--json`), CSV (`--csv`), Nagios/Icinga & Prometheus (`--exporter`)                                                                                                                                                                                                                                                                                                                                                             |
+| Output formats     | Plain text, JSON (`--json`), CSV (`--csv`), single-field lines for scripting (`--field`), Nagios/Icinga & Prometheus (`--exporter`)                                                                                                                                                                                                                                                                                                               |
 | Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                                                                                                                                                                                                                                                                         |
 | Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                                                                                                                                                                                                                                                                                   |
-| Automation         | Meaningful exit codes for cron/CI, no telemetry, single runtime dependency                                                                                                                                                                                                                                                                                                                                                                        |
+| Automation         | Meaningful exit codes for cron/CI (or force success with `--exit-zero`), no telemetry, single runtime dependency                                                                                                                                                                                                                                                                                                                                  |
 
 ## Requirements
 
@@ -458,6 +458,8 @@ certinspect example.com --export ./example.com.pem
 | `--max-days N`                    | Only show certificates expiring within N days (expired ones always shown; filters display only).                                                                                                                                 |
 | `--sort host\|expiry`             | Sort the output by host (alphabetical) or by soonest expiry (display only; does not affect exit code).                                                                                                                           |
 | `--summary`                       | Print a one-line tally (valid/expiring/expired/errors) to stderr; counts every target before filtering.                                                                                                                          |
+| `--field NAME`                    | Print only the given field(s), one tab-separated line per target (repeatable; `target` for the host). For scripting without a JSON tool.                                                                                         |
+| `--exit-zero`                     | Always exit 0, even on problems or fetch errors. Report-only mode for dashboards/CI that read the output, not the exit code.                                                                                                     |
 | `--export PATH`                   | Save the inspected certificate as a PEM file at PATH.                                                                                                                                                                            |
 | `--starttls {smtp,imap,pop3,ftp}` | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given).                                                                                                                                |
 | `--exporter {nagios,prometheus}`  | Emit machine-readable monitoring output (ignores `--quiet`).                                                                                                                                                                     |
@@ -898,6 +900,38 @@ error: doesnotexist.invalid: [Errno 8] nodename nor servname provided, or not kn
 target,common_name,status,days_to_expire,valid_from,valid_until,issuer,hostname_match
 example.com,example.com,VALID,64,2026-05-31 21:39:12+00:00,2026-08-29 21:41:26+00:00,Cloudflare TLS Issuing ECC CA 3,True
 summary: 1 valid · 0 expiring · 0 expired · 1 error (2 targets)
+```
+
+### `--field NAME`
+
+Print only the fields you ask for, one tab-separated line per target, so you
+can pull values straight into a script without a JSON tool. Repeat `--field`
+for several columns; the pseudo-field `target` is the inspected host and list
+fields (like `san`) are comma-joined.
+
+```console
+$ certinspect example.com github.com --field target --field days_to_expire --field status
+example.com	64	VALID
+github.com	37	VALID
+
+$ certinspect example.com --field days_to_expire
+64
+```
+
+### `--exit-zero`
+
+Run every check and print the report as usual, but always exit 0 — even for
+expired certs or unreachable hosts. Useful when a dashboard or CI step reads
+the output and you don't want the process to fail.
+
+```console
+$ certinspect expired.example.com --exit-zero
+=== expired.example.com ===
+Subject:        CN=expired.example.com
+Status:         EXPIRED
+...
+$ echo $?
+0
 ```
 
 ### `--export PATH`

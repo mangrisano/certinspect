@@ -9,16 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `--min-tls-version`: opt-in policy check that fails (exit code 9) when the
-  connection negotiates a TLS version older than the given floor (e.g.
-  `TLSv1.2`). Host targets only, as it needs a live handshake.
-
-### Added
-
 - `--require-must-staple`: opt-in policy check that fails (exit code 9) when
   the certificate lacks the OCSP Must-Staple extension (RFC 7633 TLS Feature
   `status_request`). Whether the extension is present is also reported as the
   `must_staple` field (`--json`) and a `Must-Staple` row in the human output.
+- `--min-tls-version`: opt-in policy check that fails (exit code 9) when the
+  connection negotiates a TLS version older than the given floor (e.g.
+  `TLSv1.2`). Host targets only, as it needs a live handshake.
+- `--field NAME`: print only the selected field(s), one tab-separated line per
+  target (repeatable; `target` exposes the inspected host). Handy for scripting
+  without piping `--json` through a JSON tool.
+- `--exit-zero`: always exit with code 0, even on problems or fetch errors, for
+  report-only dashboards/CI that read the output rather than the exit code.
 
 ## [1.5.0] - 2026-07-21
 
