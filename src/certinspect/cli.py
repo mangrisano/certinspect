@@ -88,6 +88,7 @@ class InspectOptions:
     client_cert: str | None = None
     client_key: str | None = None
     proxy: str | None = None
+    no_proxy: bool = False
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "InspectOptions":
@@ -236,7 +237,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Tunnel the connection through an HTTP CONNECT proxy, e.g. "
             "http://proxy:8080 or http://user:pass@proxy:8080 (host targets "
-            'only). Pass "$HTTPS_PROXY" to reuse the environment proxy.'
+            "only). With no --proxy the environment proxy (HTTPS_PROXY, honouring "
+            "NO_PROXY) is used automatically, like curl."
+        ),
+    )
+    parser.add_argument(
+        "--no-proxy",
+        action="store_true",
+        dest="no_proxy",
+        help=(
+            "Force a direct connection, ignoring any proxy set in the "
+            "environment. Mutually exclusive with --proxy."
         ),
     )
     parser.add_argument(
@@ -481,6 +492,8 @@ def _fetch_source(
         kwargs["client_key"] = opts.client_key
     if opts.proxy:
         kwargs["proxy"] = opts.proxy
+    if opts.no_proxy:
+        kwargs["no_proxy"] = True
     return get_server_cert(target, port, opts.timeout, **kwargs)
 
 
@@ -535,6 +548,8 @@ def _inspect(
             verify_kwargs["client_key"] = opts.client_key
         if opts.proxy:
             verify_kwargs["proxy"] = opts.proxy
+        if opts.no_proxy:
+            verify_kwargs["no_proxy"] = True
         trusted, reason, verified = verify_chain(
             target,
             port,
@@ -721,8 +736,12 @@ def main() -> None:
         parser.error("--min-tls-version applies to host targets, not --file.")
     if args.client_key and not args.client_cert:
         parser.error("--client-key requires --client-cert.")
-    if (args.client_cert or args.proxy) and args.file:
-        parser.error("--client-cert/--proxy apply to host targets, not --file.")
+    if args.proxy and args.no_proxy:
+        parser.error("--proxy and --no-proxy are mutually exclusive.")
+    if (args.client_cert or args.proxy or args.no_proxy) and args.file:
+        parser.error(
+            "--client-cert/--proxy/--no-proxy apply to host targets, not --file."
+        )
 
     extra_targets = []
     if args.input:

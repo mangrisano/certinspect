@@ -122,6 +122,51 @@ def test_open_socket_proxy_refused_raises_and_closes(monkeypatch):
     assert fake.closed is True
 
 
+def test_resolve_proxy_explicit_wins(monkeypatch):
+    from certinspect import fetch
+
+    monkeypatch.setattr(fetch.urllib.request, "getproxies", lambda: {})
+    assert (
+        fetch._resolve_proxy("example.com", "http://p:8080", False) == "http://p:8080"
+    )
+
+
+def test_resolve_proxy_no_proxy_forces_direct(monkeypatch):
+    from certinspect import fetch
+
+    monkeypatch.setattr(
+        fetch.urllib.request, "getproxies", lambda: {"https": "http://p:8080"}
+    )
+    assert fetch._resolve_proxy("example.com", None, True) is None
+
+
+def test_resolve_proxy_falls_back_to_environment(monkeypatch):
+    from certinspect import fetch
+
+    monkeypatch.setattr(
+        fetch.urllib.request, "getproxies", lambda: {"https": "http://env:3128"}
+    )
+    monkeypatch.setattr(fetch.urllib.request, "proxy_bypass", lambda host: False)
+    assert fetch._resolve_proxy("example.com", None, False) == "http://env:3128"
+
+
+def test_resolve_proxy_honours_no_proxy_bypass(monkeypatch):
+    from certinspect import fetch
+
+    monkeypatch.setattr(
+        fetch.urllib.request, "getproxies", lambda: {"https": "http://env:3128"}
+    )
+    monkeypatch.setattr(fetch.urllib.request, "proxy_bypass", lambda host: True)
+    assert fetch._resolve_proxy("internal.local", None, False) is None
+
+
+def test_resolve_proxy_direct_without_environment(monkeypatch):
+    from certinspect import fetch
+
+    monkeypatch.setattr(fetch.urllib.request, "getproxies", lambda: {})
+    assert fetch._resolve_proxy("example.com", None, False) is None
+
+
 def test_negotiate_starttls_server_refuses():
     from certinspect.fetch import _negotiate_starttls
 

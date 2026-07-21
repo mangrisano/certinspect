@@ -508,6 +508,24 @@ def test_main_forwards_proxy(monkeypatch, capsys, make_cert):
     assert recorded.get("proxy") == "http://proxy:8080"
 
 
+def test_main_forwards_no_proxy(monkeypatch, capsys, make_cert):
+    recorded: dict = {}
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _recording_fetch(make_cert(san=["example.com"]), recorded),
+    )
+    _run_main(monkeypatch, ["example.com", "--no-proxy"])
+    assert recorded.get("no_proxy") is True
+
+
+def test_main_proxy_and_no_proxy_conflict(monkeypatch, capsys):
+    code = _run_main(
+        monkeypatch, ["example.com", "--proxy", "http://p:8080", "--no-proxy"]
+    )
+    assert code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
 def test_main_client_cert_rejected_with_file(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert())

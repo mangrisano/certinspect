@@ -39,6 +39,27 @@ def _read_connect_response(sock: socket.socket) -> bytes:
     return bytes(buf)
 
 
+def _resolve_proxy(host: str, proxy: str | None, no_proxy: bool) -> str | None:
+    """Return the proxy URL to use for ``host``, or None for a direct link.
+
+    An explicit ``proxy`` wins. ``no_proxy`` forces a direct connection. With
+    neither, fall back to the environment's HTTPS/HTTP proxy (``HTTPS_PROXY``
+    and friends, plus the system settings on macOS/Windows), honouring
+    ``NO_PROXY`` so excluded hosts stay direct — the same behaviour as curl.
+    """
+    if no_proxy:
+        return None
+    if proxy:
+        return proxy
+    proxies = urllib.request.getproxies()
+    candidate = proxies.get("https") or proxies.get("http")
+    if not candidate:
+        return None
+    if urllib.request.proxy_bypass(host):
+        return None
+    return candidate
+
+
 def _open_socket(
     host: str, port: int, timeout: float, proxy: str | None = None
 ) -> socket.socket:
@@ -155,6 +176,7 @@ def get_server_cert(
     client_cert: str | None = None,
     client_key: str | None = None,
     proxy: str | None = None,
+    no_proxy: bool = False,
 ) -> tuple[bytes, dict]:
     """Return the server certificate (DER bytes) and connection info.
 
@@ -171,14 +193,16 @@ def get_server_cert(
 
     ``client_cert``/``client_key`` present a client certificate for mutual TLS
     (mTLS) endpoints. ``proxy`` tunnels the connection through an HTTP CONNECT
-    proxy (e.g. ``http://proxy:8080``).
+    proxy (e.g. ``http://proxy:8080``); with no explicit proxy the environment
+    (``HTTPS_PROXY``/``NO_PROXY``) is honoured unless ``no_proxy`` is set.
     """
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
     if client_cert:
         context.load_cert_chain(certfile=client_cert, keyfile=client_key)
-    with _open_socket(host, port, timeout, proxy) as sock:
+    resolved_proxy = _resolve_proxy(host, proxy, no_proxy)
+    with _open_socket(host, port, timeout, resolved_proxy) as sock:
         if starttls:
             _negotiate_starttls(sock, starttls)
         with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
@@ -219,6 +243,7 @@ def verify_chain(
     client_cert: str | None = None,
     client_key: str | None = None,
     proxy: str | None = None,
+    no_proxy: bool = False,
 ) -> tuple[bool, str | None, list[x509.Certificate]]:
     """Check whether the server's certificate chain is trusted.
 
@@ -238,7 +263,8 @@ def verify_chain(
     the name the certificate is validated against); it defaults to ``host``.
 
     ``client_cert``/``client_key`` present a client certificate for mutual TLS,
-    and ``proxy`` tunnels the handshake through an HTTP CONNECT proxy.
+    and ``proxy`` tunnels the handshake through an HTTP CONNECT proxy (with the
+    environment's proxy honoured by default unless ``no_proxy`` is set).
     """
     if cafile or capath:
         context = ssl.create_default_context(cafile=cafile, capath=capath)
@@ -246,8 +272,9 @@ def verify_chain(
         context = ssl.create_default_context()
     if client_cert:
         context.load_cert_chain(certfile=client_cert, keyfile=client_key)
+    resolved_proxy = _resolve_proxy(host, proxy, no_proxy)
     try:
-        with _open_socket(host, port, timeout, proxy) as sock:
+        with _open_socket(host, port, timeout, resolved_proxy) as sock:
             if starttls:
                 _negotiate_starttls(sock, starttls)
             with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
