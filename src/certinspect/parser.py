@@ -165,6 +165,24 @@ def _extended_key_usage(cert: x509.Certificate) -> list[str]:
     return [oid._name for oid in eku]
 
 
+def _sct_count(cert: x509.Certificate) -> int:
+    """Return the number of Signed Certificate Timestamps embedded in the cert.
+
+    SCTs prove the certificate was submitted to Certificate Transparency logs;
+    modern browsers distrust publicly-trusted certificates that carry none.
+    Only the SCTs embedded in the certificate are counted, not those a server
+    may deliver via the TLS handshake or OCSP stapling. Returns 0 when the
+    extension is absent.
+    """
+    try:
+        ext = cert.extensions.get_extension_for_class(
+            x509.PrecertificateSignedCertificateTimestamps
+        )
+    except x509.ExtensionNotFound:
+        return 0
+    return len(ext.value)
+
+
 def analyze(cert: x509.Certificate) -> dict:
     """Extract the relevant information from the certificate as a dict."""
     now = datetime.now(timezone.utc)
@@ -202,6 +220,7 @@ def analyze(cert: x509.Certificate) -> dict:
         "self_signed": cert.subject == cert.issuer,
         "key_usage": _key_usage(cert),
         "extended_key_usage": _extended_key_usage(cert),
+        "sct_count": _sct_count(cert),
         "weak": weak,
     }
 
@@ -265,6 +284,7 @@ def policy_violations(
     not_after_max: int | None = None,
     min_key_size: int | None = None,
     fail_weak: bool = False,
+    require_sct: bool = False,
 ) -> list[str]:
     """Return the opt-in policy violations for the analyzed certificate.
 
@@ -276,6 +296,8 @@ def policy_violations(
     * ``min_key_size`` — the public key must be at least this many bits.
     * ``fail_weak`` — promote the warnings already collected in ``info["weak"]``
       (weak key size, SHA-1/MD5 signature) to hard violations.
+    * ``require_sct`` — the certificate must embed at least one Signed
+      Certificate Timestamp (Certificate Transparency).
 
     The returned strings are ready to display; the list preserves check order
     and is empty when the certificate satisfies every enabled policy.
@@ -292,4 +314,8 @@ def policy_violations(
         )
     if fail_weak:
         violations.extend(info["weak"])
+    if require_sct and not info["sct_count"]:
+        violations.append(
+            "no embedded Signed Certificate Timestamps (Certificate Transparency)"
+        )
     return violations

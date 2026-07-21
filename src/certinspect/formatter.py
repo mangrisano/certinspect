@@ -52,6 +52,12 @@ def format_human(
     if info["extended_key_usage"]:
         lines.append(row("Ext. key usage", ", ".join(info["extended_key_usage"])))
 
+    if "sct_count" in info:
+        count = info["sct_count"]
+        lines.append(
+            row("SCTs", count if count else "none (no Certificate Transparency)")
+        )
+
     if info["weak"]:
         lines.append("")
         for reason in info["weak"]:

@@ -389,6 +389,27 @@ def test_main_weak_cert_without_fail_weak_still_exit_zero(
     assert code == 0
 
 
+def test_main_require_sct_fails_without_scts(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    # A freshly built certificate carries no embedded SCTs.
+    code = _run_main(monkeypatch, ["example.com", "--require-sct"])
+    out = capsys.readouterr().out
+    assert code == 9
+    assert "Certificate Transparency" in out
+
+
+def test_main_require_sct_off_by_default(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    code = _run_main(monkeypatch, ["example.com"])
+    assert code == 0
+
+
 def test_main_policy_with_file(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(san=["example.com"], days_valid=400))

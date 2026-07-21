@@ -113,6 +113,7 @@ def test_analyze_keys_match_expected_set(der_cert):
         "self_signed",
         "key_usage",
         "extended_key_usage",
+        "sct_count",
         "weak",
     }
     assert set(info) == expected
@@ -329,6 +330,24 @@ def test_status_not_yet_valid(make_cert):
     # Validity starts 5 days in the future -> the cert cannot be used yet.
     info = analyze(load_certificate(make_cert(days_ago_start=-5, days_valid=90)))
     assert certificate_status(info, warn_days=30) == "NOT YET VALID"
+
+
+def test_analyze_sct_count_absent_is_zero(make_cert):
+    # A freshly built certificate carries no embedded SCTs.
+    info = analyze(load_certificate(make_cert()))
+    assert info["sct_count"] == 0
+
+
+def test_policy_require_sct_fails_without_scts(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    violations = policy_violations(info, require_sct=True)
+    assert len(violations) == 1
+    assert "Certificate Transparency" in violations[0]
+
+
+def test_policy_require_sct_off_by_default(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    assert policy_violations(info) == []
 
 
 def test_pin_matches_exact(make_cert):

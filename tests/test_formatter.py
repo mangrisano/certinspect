@@ -148,6 +148,12 @@ def test_format_human_shows_self_signed(make_cert):
     assert "Self-Signed:" in text
 
 
+def test_format_human_shows_sct_none_without_transparency(make_cert):
+    text = format_human(_info(make_cert()))
+    assert "SCTs:" in text
+    assert "no Certificate Transparency" in text
+
+
 def test_format_human_warns_on_weak_key(make_cert):
     text = format_human(_info(make_cert(key_size=1024)))
     assert "WARNING" in text

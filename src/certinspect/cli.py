@@ -81,6 +81,7 @@ class InspectOptions:
     cab_forum: bool = False
     min_key_size: int | None = None
     fail_weak: bool = False
+    require_sct: bool = False
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "InspectOptions":
@@ -293,6 +294,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--require-sct",
+        action="store_true",
+        dest="require_sct",
+        help=(
+            "Fail (exit code 9) when the certificate embeds no Signed "
+            "Certificate Timestamps (Certificate Transparency). Only the SCTs "
+            "embedded in the certificate are checked, not those delivered over "
+            "the TLS handshake or OCSP. Opt-in policy check."
+        ),
+    )
+    parser.add_argument(
         "--export",
         metavar="PATH",
         help="Save the inspected certificate as a PEM file at PATH.",
@@ -405,7 +417,8 @@ def _inspect(
     ``verify`` is set. A failed ``pin`` check yields exit code 7. When
     ``expect_san`` names are not all covered by the certificate's SAN the exit
     code is 8. The opt-in policy checks (``not_after_max``/``cab_forum``,
-    ``min_key_size``, ``fail_weak``) yield exit code 9 when any is violated.
+    ``min_key_size``, ``fail_weak``, ``require_sct``) yield exit code 9 when any
+    is violated.
     """
     der, conn = _fetch_source(target, port, opts)
     cert = load_certificate(der)
@@ -480,6 +493,7 @@ def _inspect(
         or opts.cab_forum
         or opts.min_key_size is not None
         or opts.fail_weak
+        or opts.require_sct
     ):
         not_after_max = opts.not_after_max
         if opts.cab_forum:
@@ -489,6 +503,7 @@ def _inspect(
             not_after_max=not_after_max,
             min_key_size=opts.min_key_size,
             fail_weak=opts.fail_weak,
+            require_sct=opts.require_sct,
         )
         info["policy_violations"] = violations
         if violations:
