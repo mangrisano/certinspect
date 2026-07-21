@@ -161,6 +161,20 @@ def test_main_exit_code_not_yet_valid(monkeypatch, capsys, tmp_path, make_cert):
     assert "NOT YET VALID" in out
 
 
+def test_main_file_reads_stdin(monkeypatch, capsys, make_cert):
+    import io
+    import types
+
+    cert_bytes = make_cert()
+    monkeypatch.setattr(
+        "sys.stdin", types.SimpleNamespace(buffer=io.BytesIO(cert_bytes))
+    )
+    code = _run_main(monkeypatch, ["--file", "-"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "CN=example.com" in out
+
+
 def test_main_hostname_match_exit_zero(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
         "certinspect.cli.get_server_cert",

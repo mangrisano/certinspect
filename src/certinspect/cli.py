@@ -115,7 +115,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--file",
         help=(
             "Path to a local certificate file (PEM or DER) to inspect "
-            "instead of a host."
+            "instead of a host; use '-' to read the certificate from standard "
+            "input."
         ),
     )
     parser.add_argument(
@@ -381,6 +382,8 @@ def _fetch_source(
     Connection info is None for local files (no live TLS handshake).
     """
     if opts.file:
+        if opts.file == "-":
+            return sys.stdin.buffer.read(), None
         with open(opts.file, "rb") as f:
             return f.read(), None
     return get_server_cert(
