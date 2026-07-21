@@ -34,6 +34,7 @@ class _FakeSocket:
     def __init__(self, script: bytes):
         self._inbox = bytearray(script)
         self.sent = bytearray()
+        self.closed = False
 
     def recv(self, n: int) -> bytes:
         chunk = bytes(self._inbox[:n])
@@ -42,6 +43,9 @@ class _FakeSocket:
 
     def sendall(self, data: bytes) -> None:
         self.sent += data
+
+    def close(self) -> None:
+        self.closed = True
 
 
 @pytest.mark.parametrize(
@@ -71,6 +75,51 @@ def test_negotiate_starttls_smtp_sends_ehlo():
     sock = _FakeSocket(b"220 mail ready\r\n250 STARTTLS\r\n220 go ahead\r\n")
     _negotiate_starttls(sock, "smtp")
     assert b"EHLO" in sock.sent
+
+
+def test_open_socket_direct_when_no_proxy(monkeypatch):
+    from certinspect import fetch
+
+    sentinel = object()
+    monkeypatch.setattr(
+        fetch.socket, "create_connection", lambda addr, timeout=None: sentinel
+    )
+    assert fetch._open_socket("example.com", 443, 5.0) is sentinel
+
+
+def test_open_socket_proxy_sends_connect(monkeypatch):
+    from certinspect import fetch
+
+    fake = _FakeSocket(b"HTTP/1.1 200 Connection established\r\n\r\n")
+    monkeypatch.setattr(
+        fetch.socket, "create_connection", lambda addr, timeout=None: fake
+    )
+    sock = fetch._open_socket("example.com", 443, 5.0, "http://proxy:8080")
+    assert sock is fake
+    assert b"CONNECT example.com:443 HTTP/1.1" in bytes(fake.sent)
+
+
+def test_open_socket_proxy_sends_auth(monkeypatch):
+    from certinspect import fetch
+
+    fake = _FakeSocket(b"HTTP/1.1 200 OK\r\n\r\n")
+    monkeypatch.setattr(
+        fetch.socket, "create_connection", lambda addr, timeout=None: fake
+    )
+    fetch._open_socket("example.com", 443, 5.0, "http://user:pass@proxy:8080")
+    assert b"Proxy-Authorization: Basic " in bytes(fake.sent)
+
+
+def test_open_socket_proxy_refused_raises_and_closes(monkeypatch):
+    from certinspect import fetch
+
+    fake = _FakeSocket(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+    monkeypatch.setattr(
+        fetch.socket, "create_connection", lambda addr, timeout=None: fake
+    )
+    with pytest.raises(ValueError, match="proxy CONNECT"):
+        fetch._open_socket("example.com", 443, 5.0, "http://proxy:8080")
+    assert fake.closed is True
 
 
 def test_negotiate_starttls_server_refuses():

@@ -85,6 +85,9 @@ class InspectOptions:
     require_sct: bool = False
     require_must_staple: bool = False
     min_tls_version: str | None = None
+    client_cert: str | None = None
+    client_key: str | None = None
+    proxy: str | None = None
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "InspectOptions":
@@ -207,6 +210,34 @@ def build_parser() -> argparse.ArgumentParser:
         "--chain",
         action="store_true",
         help="Show the certificate chain presented by the server.",
+    )
+    parser.add_argument(
+        "--client-cert",
+        metavar="PATH",
+        dest="client_cert",
+        help=(
+            "Present a client certificate (PEM) for mutual-TLS endpoints (host "
+            "targets only). If the file does not also contain the private key, "
+            "pass it with --client-key."
+        ),
+    )
+    parser.add_argument(
+        "--client-key",
+        metavar="PATH",
+        dest="client_key",
+        help=(
+            "Private key (PEM) for --client-cert, when it is stored separately "
+            "from the certificate."
+        ),
+    )
+    parser.add_argument(
+        "--proxy",
+        metavar="URL",
+        help=(
+            "Tunnel the connection through an HTTP CONNECT proxy, e.g. "
+            "http://proxy:8080 or http://user:pass@proxy:8080 (host targets "
+            'only). Pass "$HTTPS_PROXY" to reuse the environment proxy.'
+        ),
     )
     parser.add_argument(
         "--pin",
@@ -444,9 +475,13 @@ def _fetch_source(
             return sys.stdin.buffer.read(), None
         with open(opts.file, "rb") as f:
             return f.read(), None
-    return get_server_cert(
-        target, port, opts.timeout, starttls=opts.starttls, servername=opts.servername
-    )
+    kwargs: dict = {"starttls": opts.starttls, "servername": opts.servername}
+    if opts.client_cert:
+        kwargs["client_cert"] = opts.client_cert
+        kwargs["client_key"] = opts.client_key
+    if opts.proxy:
+        kwargs["proxy"] = opts.proxy
+    return get_server_cert(target, port, opts.timeout, **kwargs)
 
 
 def _inspect(
@@ -489,14 +524,22 @@ def _inspect(
     chain_certs: list = []
 
     if opts.verify and target:
+        verify_kwargs: dict = {
+            "starttls": opts.starttls,
+            "cafile": opts.cafile,
+            "capath": opts.capath,
+            "servername": opts.servername,
+        }
+        if opts.client_cert:
+            verify_kwargs["client_cert"] = opts.client_cert
+            verify_kwargs["client_key"] = opts.client_key
+        if opts.proxy:
+            verify_kwargs["proxy"] = opts.proxy
         trusted, reason, verified = verify_chain(
             target,
             port,
             opts.timeout,
-            starttls=opts.starttls,
-            cafile=opts.cafile,
-            capath=opts.capath,
-            servername=opts.servername,
+            **verify_kwargs,
         )
         info["chain_trusted"] = trusted
         info["chain_error"] = reason
@@ -676,6 +719,10 @@ def main() -> None:
         parser.error("--servername applies to host targets, not --file.")
     if args.min_tls_version and args.file:
         parser.error("--min-tls-version applies to host targets, not --file.")
+    if args.client_key and not args.client_cert:
+        parser.error("--client-key requires --client-cert.")
+    if (args.client_cert or args.proxy) and args.file:
+        parser.error("--client-cert/--proxy apply to host targets, not --file.")
 
     extra_targets = []
     if args.input:

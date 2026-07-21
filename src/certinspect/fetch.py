@@ -9,9 +9,11 @@ be able to inspect expired or self-signed certificates without the
 connection failing. Validity is computed later in parser.py.
 """
 
+import base64
 import socket
 import ssl
 import urllib.request
+from urllib.parse import urlsplit
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -22,6 +24,57 @@ from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
 # Standard plaintext ports for the STARTTLS-capable protocols, used as the
 # default port when --port is left unset.
 STARTTLS_PORTS = {"smtp": 587, "imap": 143, "pop3": 110, "ftp": 21}
+
+
+def _read_connect_response(sock: socket.socket) -> bytes:
+    """Read an HTTP CONNECT response up to the end of its header block."""
+    buf = bytearray()
+    while b"\r\n\r\n" not in buf:
+        chunk = sock.recv(256)
+        if not chunk:
+            break
+        buf += chunk
+        if len(buf) > 65536:
+            break
+    return bytes(buf)
+
+
+def _open_socket(
+    host: str, port: int, timeout: float, proxy: str | None = None
+) -> socket.socket:
+    """Open a TCP socket to ``host:port``, directly or via an HTTP proxy.
+
+    When ``proxy`` is set (e.g. ``http://user:pass@proxy:8080``) the connection
+    is tunnelled through the proxy with the HTTP ``CONNECT`` method, so a host
+    behind a corporate/cloud egress proxy can still be reached. Raises
+    ValueError if the proxy refuses the tunnel.
+    """
+    if not proxy:
+        return socket.create_connection((host, port), timeout=timeout)
+
+    parts = urlsplit(proxy if "://" in proxy else f"//{proxy}")
+    sock = socket.create_connection(
+        (parts.hostname, parts.port or 8080), timeout=timeout
+    )
+    try:
+        request = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+        if parts.username is not None:
+            creds = f"{parts.username}:{parts.password or ''}".encode()
+            token = base64.b64encode(creds).decode("ascii")
+            request += f"Proxy-Authorization: Basic {token}\r\n"
+        request += "\r\n"
+        sock.sendall(request.encode("ascii"))
+        status_line = _read_connect_response(sock).split(b"\r\n", 1)[0]
+        fields = status_line.split(None, 2)
+        if len(fields) < 2 or fields[1] != b"200":
+            raise ValueError(
+                f"proxy CONNECT to {host}:{port} failed: "
+                f"{status_line.decode('latin-1', 'replace').strip()}"
+            )
+    except Exception:
+        sock.close()
+        raise
+    return sock
 
 
 def _readline(sock: socket.socket) -> bytes:
@@ -99,6 +152,9 @@ def get_server_cert(
     timeout: float = 5.0,
     starttls: str | None = None,
     servername: str | None = None,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+    proxy: str | None = None,
 ) -> tuple[bytes, dict]:
     """Return the server certificate (DER bytes) and connection info.
 
@@ -112,11 +168,17 @@ def get_server_cert(
     ``servername`` overrides the SNI hostname sent in the TLS handshake; it
     defaults to ``host``. Use it to reach a specific backend by IP while still
     presenting the virtual hostname a load balancer routes on.
+
+    ``client_cert``/``client_key`` present a client certificate for mutual TLS
+    (mTLS) endpoints. ``proxy`` tunnels the connection through an HTTP CONNECT
+    proxy (e.g. ``http://proxy:8080``).
     """
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    with socket.create_connection((host, port), timeout=timeout) as sock:
+    if client_cert:
+        context.load_cert_chain(certfile=client_cert, keyfile=client_key)
+    with _open_socket(host, port, timeout, proxy) as sock:
         if starttls:
             _negotiate_starttls(sock, starttls)
         with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
@@ -154,6 +216,9 @@ def verify_chain(
     cafile: str | None = None,
     capath: str | None = None,
     servername: str | None = None,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+    proxy: str | None = None,
 ) -> tuple[bool, str | None, list[x509.Certificate]]:
     """Check whether the server's certificate chain is trusted.
 
@@ -171,13 +236,18 @@ def verify_chain(
 
     ``servername`` overrides the SNI hostname sent in the handshake (and thus
     the name the certificate is validated against); it defaults to ``host``.
+
+    ``client_cert``/``client_key`` present a client certificate for mutual TLS,
+    and ``proxy`` tunnels the handshake through an HTTP CONNECT proxy.
     """
     if cafile or capath:
         context = ssl.create_default_context(cafile=cafile, capath=capath)
     else:
         context = ssl.create_default_context()
+    if client_cert:
+        context.load_cert_chain(certfile=client_cert, keyfile=client_key)
     try:
-        with socket.create_connection((host, port), timeout=timeout) as sock:
+        with _open_socket(host, port, timeout, proxy) as sock:
             if starttls:
                 _negotiate_starttls(sock, starttls)
             with context.wrap_socket(sock, server_hostname=servername or host) as ssock:

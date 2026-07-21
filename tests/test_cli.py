@@ -468,6 +468,73 @@ def test_main_min_tls_version_rejected_with_file(
         monkeypatch, ["--file", str(cert_path), "--min-tls-version", "TLSv1.2"]
     )
     assert code == 2
+
+
+def _recording_fetch(cert_bytes, recorded):
+    """A get_server_cert double that records the keyword arguments it gets."""
+
+    def _fetch(host, port, timeout, **kwargs):
+        recorded.update(kwargs)
+        return cert_bytes, CONN
+
+    return _fetch
+
+
+def test_main_forwards_client_cert(monkeypatch, capsys, tmp_path, make_cert):
+    recorded: dict = {}
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _recording_fetch(make_cert(san=["example.com"]), recorded),
+    )
+    cert = tmp_path / "client.pem"
+    cert.write_text("dummy")
+    key = tmp_path / "client.key"
+    key.write_text("dummy")
+    _run_main(
+        monkeypatch,
+        ["example.com", "--client-cert", str(cert), "--client-key", str(key)],
+    )
+    assert recorded.get("client_cert") == str(cert)
+    assert recorded.get("client_key") == str(key)
+
+
+def test_main_forwards_proxy(monkeypatch, capsys, make_cert):
+    recorded: dict = {}
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _recording_fetch(make_cert(san=["example.com"]), recorded),
+    )
+    _run_main(monkeypatch, ["example.com", "--proxy", "http://proxy:8080"])
+    assert recorded.get("proxy") == "http://proxy:8080"
+
+
+def test_main_client_cert_rejected_with_file(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert())
+    client = tmp_path / "client.pem"
+    client.write_text("dummy")
+    code = _run_main(
+        monkeypatch, ["--file", str(cert_path), "--client-cert", str(client)]
+    )
+    assert code == 2
+    assert "host targets" in capsys.readouterr().err
+
+
+def test_main_client_key_requires_client_cert(monkeypatch, capsys, tmp_path):
+    key = tmp_path / "client.key"
+    key.write_text("dummy")
+    code = _run_main(monkeypatch, ["example.com", "--client-key", str(key)])
+    assert code == 2
+    assert "--client-cert" in capsys.readouterr().err
+
+
+def test_main_proxy_rejected_with_file(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert())
+    code = _run_main(
+        monkeypatch, ["--file", str(cert_path), "--proxy", "http://proxy:8080"]
+    )
+    assert code == 2
     assert "host targets" in capsys.readouterr().err
 
 
