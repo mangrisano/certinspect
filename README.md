@@ -45,7 +45,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 
 | Area               | What you get                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN, SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage, embedded Certificate Transparency SCT count, OCSP Must-Staple flag                                                                                                                                                                                                                          |
+| Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN (DNS and IP), SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage, embedded Certificate Transparency SCT count, OCSP Must-Staple flag                                                                                                                                                                                                             |
 | Crypto health      | Signature algorithm & key size, weak-crypto warnings, negotiated TLS version & cipher                                                                                                                                                                                                                                                                                                                                                             |
 | Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); show the server-presented chain (`--chain`)                                                                                                                                                                                                                                                        |
 | Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain                                                                                                                                                                                                                                                                                                                                                               |
@@ -55,6 +55,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 | Output formats     | Plain text, JSON (`--json`), CSV (`--csv`), single-field lines for scripting (`--field`), Nagios/Icinga & Prometheus (`--exporter`)                                                                                                                                                                                                                                                                                                               |
 | Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                                                                                                                                                                                                                                                                         |
 | Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                                                                                                                                                                                                                                                                                   |
+| Connectivity       | Mutual-TLS client certificates (`--client-cert`/`--client-key`) and HTTP CONNECT proxy tunnelling (`--proxy`) for hosts behind a corporate/cloud egress proxy                                                                                                                                                                                                                                                                                     |
 | Automation         | Meaningful exit codes for cron/CI (or force success with `--exit-zero`), no telemetry, single runtime dependency                                                                                                                                                                                                                                                                                                                                  |
 
 ## Requirements
@@ -442,6 +443,9 @@ certinspect example.com --export ./example.com.pem
 | `--cafile PATH`                   | Verify the chain against this CA bundle (PEM) instead of the system trust store. Requires `--verify`; for internal/private PKI.                                                                                                  |
 | `--capath DIR`                    | Verify the chain against the hashed CA certificates in this directory (OpenSSL `c_rehash` layout). Requires `--verify`; may be combined with `--cafile`.                                                                         |
 | `--chain`                         | Show the certificate chain presented by the server.                                                                                                                                                                              |
+| `--client-cert PATH`              | Present a client certificate (PEM) for mutual-TLS endpoints (host targets only). Use `--client-key` when the key is stored separately.                                                                                           |
+| `--client-key PATH`               | Private key (PEM) for `--client-cert` when stored separately from the certificate.                                                                                                                                               |
+| `--proxy URL`                     | Tunnel the connection through an HTTP CONNECT proxy, e.g. `http://proxy:8080` or `http://user:pass@proxy:8080` (host targets only).                                                                                              |
 | `--pin SHA256`                    | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).                                                                                                                                                      |
 | `--servername NAME`               | Override the SNI hostname sent in the handshake (hosts only); the hostname match is checked against `NAME`. For reaching a backend by IP behind a load balancer.                                                                 |
 | `--expect-san NAME`               | Assert the certificate's SAN covers `NAME` (wildcards honored); exit 8 if missing. Repeatable; works for host and `--file` targets.                                                                                              |
@@ -673,12 +677,40 @@ SAN:
   - api.example.com
 ```
 
+### `--client-cert PATH` / `--client-key PATH`
+
+Present a client certificate so certinspect can complete the handshake with a
+mutual-TLS (mTLS) endpoint — internal service meshes, API gateways or admin
+ports that require client authentication. Point `--client-cert` at a PEM file;
+add `--client-key` when the private key lives in a separate file.
+
+```console
+$ certinspect gateway.internal --client-cert ./client.pem --client-key ./client.key
+=== gateway.internal ===
+Subject:        CN=gateway.internal
+Status:         VALID
+...
+```
+
+### `--proxy URL`
+
+Tunnel the TLS connection through an HTTP `CONNECT` proxy, so a host reachable
+only through a corporate/cloud egress proxy can still be inspected. Basic proxy
+auth is supported via `user:pass@`. Pass `"$HTTPS_PROXY"` to reuse the
+environment's proxy.
+
+```console
+$ certinspect example.com --proxy http://proxy.corp:8080
+$ certinspect example.com --proxy "$HTTPS_PROXY"
+```
+
 ### `--expect-san NAME`
 
 Assert that the certificate's SAN covers one or more names, independently of
 the host you connected to. A missing name adds a warning and yields exit code 8. The flag is repeatable and honors wildcards (`*.example.com` covers
-`api.example.com`). It also works with `--file`, so you can gate a certificate
-before deploying it.
+`api.example.com`). IP-address SANs are covered too, so `--expect-san 10.0.0.5`
+works for certificates issued to an IP. It also works with `--file`, so you can
+gate a certificate before deploying it.
 
 ```console
 $ certinspect example.com --expect-san www.example.com

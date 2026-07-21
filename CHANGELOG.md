@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- IP-address Subject Alternative Names are now included in the `san` field
+  alongside DNS names, so certificates issued for IPs (common for cloud load
+  balancers and internal services) are reported correctly and `--expect-san`
+  can assert an IP is covered.
+- `--client-cert`/`--client-key`: present a client certificate for mutual-TLS
+  (mTLS) endpoints (host targets only).
+- `--proxy URL`: tunnel the connection through an HTTP CONNECT proxy (e.g.
+  `http://proxy:8080`, with optional `user:pass@`), so hosts reachable only
+  through a corporate/cloud egress proxy can be inspected. Applies to the
+  certificate fetch and `--verify` (host targets only).
+
 ## [1.6.0] - 2026-07-21
 
 ### Added
