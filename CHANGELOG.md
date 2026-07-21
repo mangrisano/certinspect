@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-21
+
 ### Added
 
 - `--require-must-staple`: opt-in policy check that fails (exit code 9) when
@@ -265,7 +267,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/mangrisano/certinspect/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/mangrisano/certinspect/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/mangrisano/certinspect/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/mangrisano/certinspect/compare/v1.3.0...v1.4.0
