@@ -55,7 +55,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 | Output formats     | Plain text, JSON (`--json`), CSV (`--csv`), single-field lines for scripting (`--field`), Nagios/Icinga & Prometheus (`--exporter`)                                                                                                                                                                                                                                                                                                               |
 | Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                                                                                                                                                                                                                                                                         |
 | Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                                                                                                                                                                                                                                                                                   |
-| Connectivity       | Mutual-TLS client certificates (`--client-cert`/`--client-key`) and HTTP CONNECT proxy tunnelling (`--proxy`) for hosts behind a corporate/cloud egress proxy                                                                                                                                                                                                                                                                                     |
+| Connectivity       | Mutual-TLS client certificates (`--client-cert`/`--client-key`) and HTTP CONNECT proxy tunnelling — explicit (`--proxy`) or from the environment (`HTTPS_PROXY`/`NO_PROXY`, like curl; `--no-proxy` to opt out) — for hosts behind a corporate/cloud egress proxy                                                                                                                                                                                 |
 | Automation         | Meaningful exit codes for cron/CI (or force success with `--exit-zero`), no telemetry, single runtime dependency                                                                                                                                                                                                                                                                                                                                  |
 
 ## Requirements
@@ -445,7 +445,8 @@ certinspect example.com --export ./example.com.pem
 | `--chain`                         | Show the certificate chain presented by the server.                                                                                                                                                                              |
 | `--client-cert PATH`              | Present a client certificate (PEM) for mutual-TLS endpoints (host targets only). Use `--client-key` when the key is stored separately.                                                                                           |
 | `--client-key PATH`               | Private key (PEM) for `--client-cert` when stored separately from the certificate.                                                                                                                                               |
-| `--proxy URL`                     | Tunnel the connection through an HTTP CONNECT proxy, e.g. `http://proxy:8080` or `http://user:pass@proxy:8080` (host targets only).                                                                                              |
+| `--proxy URL`                     | Tunnel the connection through an HTTP CONNECT proxy, e.g. `http://proxy:8080` or `http://user:pass@proxy:8080` (host targets only). Without it, the environment proxy (`HTTPS_PROXY`, honouring `NO_PROXY`) is used, like curl.  |
+| `--no-proxy`                      | Force a direct connection, ignoring any proxy set in the environment. Mutually exclusive with `--proxy`.                                                                                                                         |
 | `--pin SHA256`                    | Fail (exit 7) unless the SHA-256 fingerprint matches (colons/case ignored).                                                                                                                                                      |
 | `--servername NAME`               | Override the SNI hostname sent in the handshake (hosts only); the hostname match is checked against `NAME`. For reaching a backend by IP behind a load balancer.                                                                 |
 | `--expect-san NAME`               | Assert the certificate's SAN covers `NAME` (wildcards honored); exit 8 if missing. Repeatable; works for host and `--file` targets.                                                                                              |
@@ -692,16 +693,21 @@ Status:         VALID
 ...
 ```
 
-### `--proxy URL`
+### `--proxy URL` / `--no-proxy`
 
 Tunnel the TLS connection through an HTTP `CONNECT` proxy, so a host reachable
 only through a corporate/cloud egress proxy can still be inspected. Basic proxy
-auth is supported via `user:pass@`. Pass `"$HTTPS_PROXY"` to reuse the
-environment's proxy.
+auth is supported via `user:pass@`.
+
+Like curl, certinspect also uses the environment proxy automatically when
+`--proxy` is not given: it reads `HTTPS_PROXY`/`HTTP_PROXY` (and the system
+proxy on macOS/Windows) and honours `NO_PROXY`. Use `--no-proxy` to force a
+direct connection regardless of the environment.
 
 ```console
-$ certinspect example.com --proxy http://proxy.corp:8080
-$ certinspect example.com --proxy "$HTTPS_PROXY"
+$ certinspect example.com --proxy http://proxy.corp:8080   # explicit
+$ HTTPS_PROXY=http://proxy.corp:8080 certinspect example.com  # from the env
+$ certinspect example.com --no-proxy                       # ignore the env proxy
 ```
 
 ### `--expect-san NAME`

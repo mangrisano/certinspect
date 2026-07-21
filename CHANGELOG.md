@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The standard proxy environment variables (`HTTPS_PROXY`/`HTTP_PROXY`, and
+  the system proxy settings on macOS/Windows) are now honoured automatically
+  when no `--proxy` is given, respecting `NO_PROXY`, the same way curl behaves.
+  A new `--no-proxy` flag forces a direct connection, and `--proxy` still
+  overrides everything.
+
 ## [1.7.0] - 2026-07-21
 
 ### Added
