@@ -109,6 +109,9 @@ certinspect example.com github.com --csv --csv-delimiter ';'
 # Inspect a local certificate
 certinspect --file ./certificate.pem
 
+# Or pipe a certificate in from stdin
+openssl s_client -connect example.com:443 </dev/null 2>/dev/null | certinspect --file -
+
 # Custom expiry warning threshold (default: 30 days)
 certinspect example.com --days 14
 
@@ -428,7 +431,7 @@ certinspect example.com --export ./example.com.pem
 | Option                            | Description                                                                                                                                                                                                                      |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `target...`                       | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`.                                                                                                                                                   |
-| `--file PATH`                     | Inspect a local certificate (PEM or DER) instead of a host.                                                                                                                                                                      |
+| `--file PATH`                     | Inspect a local certificate (PEM or DER) instead of a host. Use `-` to read the certificate from standard input.                                                                                                                 |
 | `--port N`                        | TCP port to connect to (default: 443).                                                                                                                                                                                           |
 | `--timeout N`                     | Connection timeout in seconds (default: 5).                                                                                                                                                                                      |
 | `--json`                          | Print the result as JSON instead of human-readable text.                                                                                                                                                                         |
@@ -556,9 +559,9 @@ $ certinspect example.com --json
 ```
 
 The `status` field mirrors the human report's `Status` line (`VALID`,
-`EXPIRING`, `CRITICAL`, `EXPIRED` or `INVALID DATES`) and honors `--days` /
-`--critical-days`, so a JSON consumer gets the verdict without re-deriving it
-from the dates.
+`EXPIRING`, `CRITICAL`, `EXPIRED`, `NOT YET VALID` or `INVALID DATES`) and
+honors `--days` / `--critical-days`, so a JSON consumer gets the verdict
+without re-deriving it from the dates.
 
 ### `--csv` / `--csv-delimiter SEP`
 
@@ -1005,7 +1008,7 @@ worst code across all targets is returned.
 | 1    | Runtime error (network, file, parse)                                                |
 | 2    | Command-line usage error                                                            |
 | 3    | Expiring within the `--days` threshold                                              |
-| 4    | Expired or with invalid dates                                                       |
+| 4    | Expired, not yet valid, or with invalid dates                                       |
 | 5    | Hostname does not match the certificate                                             |
 | 6    | Chain not trusted or revoked (`--verify`)                                           |
 | 7    | Fingerprint does not match `--pin`                                                  |

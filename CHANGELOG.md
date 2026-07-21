@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New `NOT YET VALID` status (exit code 4) for certificates whose validity
+  period starts in the future, so a not-yet-usable certificate is no longer
+  misreported as `VALID`. The `--summary` tally counts it separately as
+  `not-yet-valid`.
+- `--file -` reads the certificate from standard input, so a certificate can
+  be piped in (e.g. `openssl ... | certinspect --file -`).
+
 ## [1.4.1] - 2026-07-20
 
 ### Fixed
