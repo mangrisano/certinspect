@@ -85,6 +85,34 @@ def test_analyze_san_absent_returns_empty_list(make_cert):
     assert info["san"] == []
 
 
+def test_analyze_san_includes_ip_addresses(make_cert):
+    info = analyze(
+        load_certificate(
+            make_cert(san=["example.com"], san_ips=["10.0.0.5", "2001:db8::1"])
+        )
+    )
+    assert info["san"] == ["example.com", "10.0.0.5", "2001:db8::1"]
+
+
+def test_analyze_san_ip_only(make_cert):
+    info = analyze(load_certificate(make_cert(san=None, san_ips=["192.0.2.10"])))
+    assert info["san"] == ["192.0.2.10"]
+
+
+def test_missing_san_names_matches_ip(make_cert):
+    info = analyze(
+        load_certificate(make_cert(san=["example.com"], san_ips=["10.0.0.5"]))
+    )
+    assert missing_san_names(info, ["10.0.0.5"]) == []
+    assert missing_san_names(info, ["10.0.0.6"]) == ["10.0.0.6"]
+
+
+def test_hostname_matches_ip(make_cert):
+    info = analyze(load_certificate(make_cert(san=None, san_ips=["10.0.0.5"])))
+    assert hostname_matches(info, "10.0.0.5") is True
+    assert hostname_matches(info, "10.0.0.6") is False
+
+
 def test_analyze_fingerprint_format(der_cert):
     info = analyze(load_certificate(der_cert))
     fp = info["fingerprint_sha256"]

@@ -5,6 +5,7 @@ so the tests do not depend on any network access or stored fixture files.
 """
 
 from datetime import datetime, timedelta, timezone
+import ipaddress
 
 import pytest
 from cryptography import x509
@@ -19,6 +20,7 @@ def build_certificate(
     days_valid: int = 90,
     days_ago_start: int = 1,
     san: list[str] | None = ("example.com", "www.example.com"),
+    san_ips: list[str] | None = None,
     key_size: int = 2048,
     ca: bool = False,
     issuer_name: str | None = None,
@@ -36,6 +38,7 @@ def build_certificate(
         days_valid: number of days from now until expiry (negative = expired).
         days_ago_start: how many days in the past the validity starts.
         san: list of DNS names for the SAN extension, or None to omit it.
+        san_ips: list of IP-address strings to add to the SAN extension.
         key_size: RSA key size in bits.
         ca: whether to mark the certificate as a CA via BasicConstraints.
         issuer_name: CN to use for the issuer (defaults to common_name,
@@ -63,9 +66,12 @@ def build_certificate(
         .not_valid_before(now - timedelta(days=days_ago_start))
         .not_valid_after(now + timedelta(days=days_valid))
     )
-    if san:
+    general_names = [x509.DNSName(n) for n in (san or [])]
+    if san_ips:
+        general_names += [x509.IPAddress(ipaddress.ip_address(ip)) for ip in san_ips]
+    if general_names:
         builder = builder.add_extension(
-            x509.SubjectAlternativeName([x509.DNSName(n) for n in san]),
+            x509.SubjectAlternativeName(general_names),
             critical=False,
         )
     if ca:

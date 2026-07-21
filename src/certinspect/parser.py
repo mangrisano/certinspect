@@ -205,7 +205,9 @@ def analyze(cert: x509.Certificate) -> dict:
     validity_days = (cert.not_valid_after_utc - cert.not_valid_before_utc).days
     try:
         ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
-        san = ext.value.get_values_for_type(x509.DNSName)
+        san_value = ext.value
+        san = list(san_value.get_values_for_type(x509.DNSName))
+        san += [str(ip) for ip in san_value.get_values_for_type(x509.IPAddress)]
     except x509.ExtensionNotFound:
         san = []
 
