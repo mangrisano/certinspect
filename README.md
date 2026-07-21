@@ -43,19 +43,19 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 
 ## Features
 
-| Area               | What you get                                                                                                                                                                                                                                  |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN, SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage                                                                                          |
-| Crypto health      | Signature algorithm & key size, weak-crypto warnings, negotiated TLS version & cipher                                                                                                                                                         |
-| Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); show the server-presented chain (`--chain`)                                                    |
-| Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain                                                                                                                                                           |
-| Identity checks    | Hostname match against the certificate, SHA-256 fingerprint pinning (`--pin`), SAN coverage assertions (`--expect-san`), SNI override for backends behind a load balancer (`--servername`)                                                    |
-| Policy enforcement | Opt-in checks that fail (exit code 9): maximum total validity (`--not-after-max`, or `--cab-forum` for the date-aware CA/Browser Forum cap), minimum key size (`--min-key-size`), or promote weak-crypto warnings to failures (`--fail-weak`) |
-| Batch & speed      | Inspect many hosts at once, in parallel (`--concurrency`), from args or a file (`--input`)                                                                                                                                                    |
-| Output formats     | Plain text, JSON (`--json`), CSV (`--csv`), Nagios/Icinga & Prometheus (`--exporter`)                                                                                                                                                         |
-| Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                                                                     |
-| Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                                                                               |
-| Automation         | Meaningful exit codes for cron/CI, no telemetry, single runtime dependency                                                                                                                                                                    |
+| Area               | What you get                                                                                                                                                                                                                                                                                                    |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN, SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage, embedded Certificate Transparency SCT count                                                                                                               |
+| Crypto health      | Signature algorithm & key size, weak-crypto warnings, negotiated TLS version & cipher                                                                                                                                                                                                                           |
+| Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); show the server-presented chain (`--chain`)                                                                                                                      |
+| Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain                                                                                                                                                                                                                             |
+| Identity checks    | Hostname match against the certificate, SHA-256 fingerprint pinning (`--pin`), SAN coverage assertions (`--expect-san`), SNI override for backends behind a load balancer (`--servername`)                                                                                                                      |
+| Policy enforcement | Opt-in checks that fail (exit code 9): maximum total validity (`--not-after-max`, or `--cab-forum` for the date-aware CA/Browser Forum cap), minimum key size (`--min-key-size`), promote weak-crypto warnings to failures (`--fail-weak`), or require embedded Certificate Transparency SCTs (`--require-sct`) |
+| Batch & speed      | Inspect many hosts at once, in parallel (`--concurrency`), from args or a file (`--input`)                                                                                                                                                                                                                      |
+| Output formats     | Plain text, JSON (`--json`), CSV (`--csv`), Nagios/Icinga & Prometheus (`--exporter`)                                                                                                                                                                                                                           |
+| Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                                                                                                                                       |
+| Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                                                                                                                                                 |
+| Automation         | Meaningful exit codes for cron/CI, no telemetry, single runtime dependency                                                                                                                                                                                                                                      |
 
 ## Requirements
 
@@ -449,6 +449,7 @@ certinspect example.com --export ./example.com.pem
 | `--cab-forum`                     | Fail (exit 9) when the total validity exceeds the CA/Browser Forum maximum in effect today (398 days now, then 200, 100 and 47 on 2026/2027/2029-03-15). Date-aware shorthand for `--not-after-max`; mutually exclusive with it. |
 | `--min-key-size N`                | Fail (exit 9) when the public key is smaller than N bits (e.g. 2048 for RSA). Opt-in.                                                                                                                                            |
 | `--fail-weak`                     | Turn the weak-crypto warnings (small key, SHA-1/MD5 signature) into a hard failure (exit 9) instead of a mere warning.                                                                                                           |
+| `--require-sct`                   | Fail (exit 9) when the certificate embeds no Signed Certificate Timestamps (Certificate Transparency). Checks embedded SCTs only, not those from the TLS handshake or OCSP. Opt-in.                                              |
 | `--input PATH`                    | Read extra targets from a file, one per line ('-' for stdin).                                                                                                                                                                    |
 | `--days N`                        | Warn if the certificate expires within N days (default: 30).                                                                                                                                                                     |
 | `--critical-days N`               | Escalate to CRITICAL (exit code 4) when the certificate expires within N days. Must be `<= --days`; feeds Nagios CRITICAL and the `--summary` `critical` count.                                                                  |
@@ -766,6 +767,25 @@ $ echo $?
 9
 ```
 
+### `--require-sct`
+
+Fail (exit code 9) when the certificate embeds no Signed Certificate
+Timestamps. Publicly-trusted certificates must be logged in Certificate
+Transparency logs and carry SCTs, or browsers such as Chrome distrust them.
+Only the SCTs embedded in the certificate are checked, not those a server may
+deliver over the TLS handshake or OCSP. The embedded SCT count is always shown
+as the `SCTs` row.
+
+```console
+$ certinspect internal.example.com --require-sct
+...
+SCTs:           none (no Certificate Transparency)
+Policy:         FAIL
+WARNING: policy violation (no embedded Signed Certificate Timestamps (Certificate Transparency))
+$ echo $?
+9
+```
+
 ### `--input PATH`
 
 Read targets from a file (`#` comments allowed, `-` for stdin).
@@ -1002,18 +1022,18 @@ certinspect_cert_revoked{target="example.com"} 0
 Designed for automation (cron, CI, monitoring scripts). In batch mode the
 worst code across all targets is returned.
 
-| Code | Meaning                                                                             |
-| ---- | ----------------------------------------------------------------------------------- |
-| 0    | Valid certificate                                                                   |
-| 1    | Runtime error (network, file, parse)                                                |
-| 2    | Command-line usage error                                                            |
-| 3    | Expiring within the `--days` threshold                                              |
-| 4    | Expired, not yet valid, or with invalid dates                                       |
-| 5    | Hostname does not match the certificate                                             |
-| 6    | Chain not trusted or revoked (`--verify`)                                           |
-| 7    | Fingerprint does not match `--pin`                                                  |
-| 8    | Expected SAN missing (`--expect-san`)                                               |
-| 9    | Policy violation (`--not-after-max`/`--cab-forum`, `--min-key-size`, `--fail-weak`) |
+| Code | Meaning                                                                                              |
+| ---- | ---------------------------------------------------------------------------------------------------- |
+| 0    | Valid certificate                                                                                    |
+| 1    | Runtime error (network, file, parse)                                                                 |
+| 2    | Command-line usage error                                                                             |
+| 3    | Expiring within the `--days` threshold                                                               |
+| 4    | Expired, not yet valid, or with invalid dates                                                        |
+| 5    | Hostname does not match the certificate                                                              |
+| 6    | Chain not trusted or revoked (`--verify`)                                                            |
+| 7    | Fingerprint does not match `--pin`                                                                   |
+| 8    | Expected SAN missing (`--expect-san`)                                                                |
+| 9    | Policy violation (`--not-after-max`/`--cab-forum`, `--min-key-size`, `--fail-weak`, `--require-sct`) |
 
 Example in a script:
 

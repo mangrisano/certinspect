@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `not-yet-valid`.
 - `--file -` reads the certificate from standard input, so a certificate can
   be piped in (e.g. `openssl ... | certinspect --file -`).
+- `--require-sct`: opt-in policy check that fails (exit code 9) when the
+  certificate embeds no Signed Certificate Timestamps (Certificate
+  Transparency). Only the SCTs embedded in the certificate are checked, not
+  those delivered over the TLS handshake or OCSP. The number of embedded SCTs
+  is also reported as the `sct_count` field (`--json`) and an `SCTs` row in
+  the human output.
 
 ## [1.4.1] - 2026-07-20
 
