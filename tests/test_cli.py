@@ -86,6 +86,53 @@ def test_main_file_json_output(monkeypatch, capsys, tmp_path, make_cert):
     assert data[0]["subject"] == "CN=example.com"
 
 
+def test_apply_profile_fills_unset_policy_options():
+    from certinspect.cli import _apply_profile
+
+    args = build_parser().parse_args(["example.com", "--profile", "standard"])
+    _apply_profile(args)
+    assert args.min_key_size == 2048
+    assert args.fail_weak is True
+    assert args.min_tls_version == "TLSv1.2"
+
+
+def test_apply_profile_explicit_flag_overrides():
+    from certinspect.cli import _apply_profile
+
+    args = build_parser().parse_args(
+        ["example.com", "--profile", "standard", "--min-key-size", "3072"]
+    )
+    _apply_profile(args)
+    assert args.min_key_size == 3072
+
+
+def test_apply_profile_skips_tls_version_for_file():
+    from certinspect.cli import _apply_profile
+
+    args = build_parser().parse_args(["--file", "cert.pem", "--profile", "strict"])
+    _apply_profile(args)
+    # A local file has no live handshake, so the TLS-version check is dropped.
+    assert args.min_tls_version is None
+    assert args.require_sct is True
+    assert args.cab_forum is True
+
+
+def test_main_profile_standard_flags_weak_key(monkeypatch, tmp_path, make_cert):
+    cert_path = tmp_path / "weak.der"
+    cert_path.write_bytes(make_cert(key_size=1024))
+
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--profile", "standard"])
+    assert code == 9
+
+
+def test_main_profile_lenient_passes_strong_cert(monkeypatch, tmp_path, make_cert):
+    cert_path = tmp_path / "ok.der"
+    cert_path.write_bytes(make_cert())
+
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--profile", "lenient"])
+    assert code == 0
+
+
 def test_main_json_includes_status(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
         "certinspect.cli.get_server_cert",

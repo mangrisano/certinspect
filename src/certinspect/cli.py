@@ -31,6 +31,7 @@ from certinspect.parser import (
     chain_summary,
     pin_matches,
     policy_violations,
+    POLICY_PROFILES,
     to_pem,
 )
 from certinspect.formatter import (
@@ -302,6 +303,21 @@ def build_parser() -> argparse.ArgumentParser:
             "Escalate to CRITICAL (exit code 4) when the certificate expires "
             "within this many days. Must be <= --days; lets monitoring "
             "distinguish a warning window from a critical one."
+        ),
+    )
+    parser.add_argument(
+        "--profile",
+        choices=tuple(POLICY_PROFILES),
+        default=None,
+        help=(
+            "Apply a named bundle of the opt-in policy checks (exit code 9) in "
+            "one go. Intensity ladder, not an official standard: 'lenient' = "
+            "TLS >= 1.2 and fail on weak crypto; 'standard' adds a 2048-bit "
+            "minimum key; 'strict' = TLS >= 1.3, 2048-bit key, weak-crypto "
+            "failure, required Certificate Transparency SCTs and the CA/Browser "
+            "Forum validity cap. Any explicit flag overrides the profile; the "
+            "TLS-version part applies to host targets only. Passing a profile "
+            "is not a compliance attestation."
         ),
     )
     # --not-after-max and --cab-forum both cap the total validity; the latter
@@ -719,10 +735,35 @@ def _read_targets(path: str) -> list[str]:
             lines.close()
 
 
+def _apply_profile(args: argparse.Namespace) -> None:
+    """Merge the selected --profile preset into the parsed arguments.
+
+    A profile is a named bundle of the opt-in policy checks. Its values only
+    fill in options the user left at their default, so any explicit flag on the
+    command line overrides the profile. The profile's ``--min-tls-version`` is
+    skipped for --file targets, which have no live handshake to measure, and an
+    explicit ``--not-after-max`` takes precedence over a profile's CA/Browser
+    Forum cap (keeping the two validity checks mutually exclusive).
+    """
+    if not args.profile:
+        return
+    preset = POLICY_PROFILES[args.profile]
+    if "min_key_size" in preset and args.min_key_size is None:
+        args.min_key_size = preset["min_key_size"]
+    if "min_tls_version" in preset and args.min_tls_version is None and not args.file:
+        args.min_tls_version = preset["min_tls_version"]
+    for name in ("fail_weak", "require_sct", "require_must_staple"):
+        if preset.get(name):
+            setattr(args, name, True)
+    if preset.get("cab_forum") and args.not_after_max is None:
+        args.cab_forum = True
+
+
 def main() -> None:
     """CLI entry point."""
     parser = build_parser()
     args = parser.parse_args()
+    _apply_profile(args)
 
     if len(args.csv_delimiter) != 1:
         parser.error("--csv-delimiter must be a single character.")

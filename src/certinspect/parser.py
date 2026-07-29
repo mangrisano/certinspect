@@ -376,3 +376,49 @@ def policy_violations(
                 f"TLS version {negotiated} is below the required {min_tls_version}"
             )
     return violations
+
+
+# Named policy profiles: opinionated bundles of the opt-in policy checks a
+# sysadmin can enable in one go with --profile. Each maps a profile name to the
+# policy knobs it turns on; an explicit flag on the command line always
+# overrides the value a profile would set.
+#
+# The names are a plain intensity ladder (lenient < standard < strict), NOT the
+# name of any official standard, and each stricter tier is a superset of the
+# one below it. These are pragmatic, hand-picked presets meant to make common
+# hardening levels one flag away — passing a profile is NOT a compliance
+# attestation. The choices are informed by widely used guidance (the CA/Browser
+# Forum Baseline Requirements for the validity cap, Certificate Transparency
+# for the SCT requirement, and the common "no early TLS / strong crypto"
+# baseline echoed by PCI DSS and the Mozilla server-side TLS guidelines), but
+# the exact mapping below is this project's own decision. certinspect only sees
+# the certificate and the handshake, so a profile can never cover the parts of
+# those standards that concern server configuration or the wider environment.
+#
+# What each profile enables (see the individual flags for details):
+#   lenient  -> --min-tls-version TLSv1.2, --fail-weak
+#   standard -> lenient + --min-key-size 2048
+#   strict   -> --min-tls-version TLSv1.3, --min-key-size 2048, --fail-weak,
+#               --require-sct, --cab-forum
+POLICY_PROFILES: dict[str, dict] = {
+    # Gentle modern minimum: reject legacy TLS and weak crypto, nothing more.
+    "lenient": {
+        "min_tls_version": "TLSv1.2",
+        "fail_weak": True,
+    },
+    # Recommended middle ground: adds a 2048-bit key floor to the minimum.
+    "standard": {
+        "min_tls_version": "TLSv1.2",
+        "min_key_size": 2048,
+        "fail_weak": True,
+    },
+    # Tightest posture: TLS 1.3, strong crypto, Certificate Transparency and
+    # the CA/Browser Forum validity cap.
+    "strict": {
+        "min_tls_version": "TLSv1.3",
+        "min_key_size": 2048,
+        "fail_weak": True,
+        "require_sct": True,
+        "cab_forum": True,
+    },
+}
