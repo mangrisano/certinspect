@@ -471,3 +471,179 @@ def test_check_ocsp_soft_fails_on_unparseable_response(monkeypatch):
     status, detail = fetch._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "UNAVAILABLE"
     assert "could not be parsed" in detail
+
+
+# --- SSRF guard and response-size cap ---------------------------------------
+
+
+def _addrinfo(ip: str):
+    """Return a getaddrinfo-shaped result resolving a host to ``ip``."""
+    import socket as _socket
+
+    family = _socket.AF_INET6 if ":" in ip else _socket.AF_INET
+    return [(family, _socket.SOCK_STREAM, 6, "", (ip, 0))]
+
+
+@pytest.mark.parametrize(
+    "ip",
+    ["127.0.0.1", "169.254.169.254", "0.0.0.0", "::1", "224.0.0.1"],
+)
+def test_guard_fetch_host_blocks_internal_addresses(monkeypatch, ip):
+    """Loopback, link-local (cloud metadata), unspecified and multicast
+    targets from a certificate URL must be refused."""
+    from certinspect import fetch
+
+    monkeypatch.setattr(fetch.socket, "getaddrinfo", lambda *a, **k: _addrinfo(ip))
+    with pytest.raises(ValueError, match="non-routable or internal"):
+        fetch._guard_fetch_host("http://danger.example/x")
+
+
+def test_guard_fetch_host_allows_private_pki(monkeypatch):
+    """An internal PKI on an RFC1918 address must stay reachable."""
+    from certinspect import fetch
+
+    monkeypatch.setattr(
+        fetch.socket, "getaddrinfo", lambda *a, **k: _addrinfo("10.10.0.5")
+    )
+    assert fetch._guard_fetch_host("http://ocsp.internal.lan/") is None
+
+
+def test_http_refuses_link_local_metadata_address(monkeypatch):
+    """The guard is wired into _http, so a metadata URL raises before urlopen."""
+    from certinspect import fetch
+
+    monkeypatch.setattr(
+        fetch.socket, "getaddrinfo", lambda *a, **k: _addrinfo("169.254.169.254")
+    )
+    with pytest.raises(ValueError, match="non-routable or internal"):
+        fetch._http("http://metadata.example/ocsp", timeout=1.0)
+
+
+def test_http_caps_oversized_response(monkeypatch):
+    """A response larger than the cap is rejected instead of read in full."""
+    from certinspect import fetch
+
+    monkeypatch.setattr(fetch, "_guard_fetch_host", lambda url: None)
+    monkeypatch.setattr(fetch, "_MAX_HTTP_RESPONSE_BYTES", 10)
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, amt=-1):
+            return b"x" * amt
+
+    monkeypatch.setattr(fetch.urllib.request, "urlopen", lambda *a, **k: _Resp())
+    with pytest.raises(ValueError, match="exceeds the"):
+        fetch._http("http://big.example/crl", timeout=1.0)
+
+
+# --- OCSP response freshness ------------------------------------------------
+
+
+def _signed_ocsp(cert_status, this_update, next_update):
+    """Build a signed OCSP response for a fresh single-CA OCSP PKI.
+
+    Returns ``(issuer_cert, leaf_cert, der_response)``; the responder is the
+    issuer itself, matching the common single-CA deployment.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509 import ocsp
+    from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
+
+    now = datetime.now(timezone.utc)
+    issuer_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    issuer_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test CA")])
+    issuer_cert = (
+        x509.CertificateBuilder()
+        .subject_name(issuer_name)
+        .issuer_name(issuer_name)
+        .public_key(issuer_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(issuer_key, hashes.SHA256())
+    )
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf_cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "leaf")]))
+        .issuer_name(issuer_name)
+        .public_key(leaf_key.public_key())
+        .serial_number(4242)
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=90))
+        .add_extension(
+            x509.AuthorityInformationAccess(
+                [
+                    x509.AccessDescription(
+                        AuthorityInformationAccessOID.OCSP,
+                        x509.UniformResourceIdentifier(OCSP_URL),
+                    )
+                ]
+            ),
+            critical=False,
+        )
+        .sign(issuer_key, hashes.SHA256())
+    )
+    response = (
+        ocsp.OCSPResponseBuilder()
+        .add_response(
+            cert=leaf_cert,
+            issuer=issuer_cert,
+            algorithm=hashes.SHA1(),
+            cert_status=cert_status,
+            this_update=this_update,
+            next_update=next_update,
+            revocation_time=None,
+            revocation_reason=None,
+        )
+        .responder_id(ocsp.OCSPResponderEncoding.NAME, issuer_cert)
+        .sign(issuer_key, hashes.SHA256())
+    )
+    return issuer_cert, leaf_cert, response.public_bytes(serialization.Encoding.DER)
+
+
+def test_check_ocsp_good_when_response_is_fresh(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography.x509 import ocsp
+
+    from certinspect import fetch
+
+    now = datetime.now(timezone.utc)
+    issuer_cert, leaf_cert, der = _signed_ocsp(
+        ocsp.OCSPCertStatus.GOOD, now - timedelta(hours=1), now + timedelta(days=1)
+    )
+    monkeypatch.setattr(fetch, "_http", lambda url, data=None, timeout=None: der)
+
+    status, _ = fetch._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
+    assert status == "GOOD"
+
+
+def test_check_ocsp_soft_fails_on_stale_response(monkeypatch):
+    """A GOOD response whose nextUpdate has passed must degrade to UNAVAILABLE,
+    so a replayed stale answer cannot mask a later revocation."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography.x509 import ocsp
+
+    from certinspect import fetch
+
+    now = datetime.now(timezone.utc)
+    issuer_cert, leaf_cert, der = _signed_ocsp(
+        ocsp.OCSPCertStatus.GOOD, now - timedelta(days=2), now - timedelta(days=1)
+    )
+    monkeypatch.setattr(fetch, "_http", lambda url, data=None, timeout=None: der)
+
+    status, detail = fetch._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
+    assert status == "UNAVAILABLE"
+    assert "stale" in detail

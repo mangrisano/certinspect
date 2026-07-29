@@ -10,9 +10,11 @@ connection failing. Validity is computed later in parser.py.
 """
 
 import base64
+import ipaddress
 import socket
 import ssl
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 from cryptography import x509
@@ -24,6 +26,59 @@ from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
 # Standard plaintext ports for the STARTTLS-capable protocols, used as the
 # default port when --port is left unset.
 STARTTLS_PORTS = {"smtp": 587, "imap": 143, "pop3": 110, "ftp": 21}
+
+# Cap the size of any certificate-supplied HTTP response (OCSP/CRL/CA-Issuer)
+# so a malicious certificate cannot point us at an unbounded download and
+# exhaust memory. Real-world CRLs stay comfortably below this.
+_MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024
+
+# Clock-skew tolerance when judging whether an OCSP response is still fresh.
+_OCSP_CLOCK_SKEW = timedelta(minutes=5)
+
+
+def _is_blocked_fetch_address(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> bool:
+    """Return True for addresses a certificate-supplied URL must not reach.
+
+    Loopback, link-local (which covers the cloud metadata endpoint
+    ``169.254.169.254``), unspecified, multicast and reserved ranges are
+    refused. Private RFC1918 ranges are deliberately allowed so revocation
+    still works behind an internal PKI.
+    """
+    return (
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_unspecified
+        or ip.is_multicast
+        or ip.is_reserved
+    )
+
+
+def _guard_fetch_host(url: str) -> None:
+    """Refuse to fetch a certificate-supplied URL pointing at an internal host.
+
+    OCSP, CRL and CA-Issuer URLs come from the inspected certificate, i.e. from
+    untrusted input; following them blindly would turn certinspect into an SSRF
+    primitive able to reach the cloud metadata service or a port on localhost.
+    The host is resolved and every returned address checked. The guard is
+    best-effort (the HTTP client resolves DNS again, so a rebinding attacker
+    could still race it) but closes the obvious vectors. Raises ValueError when
+    the target is not allowed, which the callers already treat as a soft-fail.
+    """
+    host = urlsplit(url).hostname
+    if not host:
+        raise ValueError(f"URL has no host: {url}")
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except OSError as err:
+        raise ValueError(f"could not resolve {host}: {err}") from err
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if _is_blocked_fetch_address(ip):
+            raise ValueError(
+                f"refusing to fetch {url}: {ip} is a non-routable or internal address"
+            )
 
 
 def _read_connect_response(sock: socket.socket) -> bytes:
@@ -326,14 +381,22 @@ def _http(url: str, *, data: bytes | None = None, timeout: float) -> bytes:
     """Perform a minimal HTTP(S) GET/POST and return the response body.
 
     Only ``http`` and ``https`` URLs are accepted; the URLs come from the
-    certificate's own AIA extension. A POST is used when ``data`` is given.
+    certificate's own AIA/CRL extensions, i.e. from untrusted input, so the
+    target host is screened against internal/non-routable addresses and the
+    response size is capped. A POST is used when ``data`` is given.
     """
     if not url.lower().startswith(("http://", "https://")):
         raise ValueError(f"unsupported URL scheme: {url}")
+    _guard_fetch_host(url)
     headers = {"Content-Type": "application/ocsp-request"} if data else {}
     request = urllib.request.Request(url, data=data, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
-        return response.read()
+        body = response.read(_MAX_HTTP_RESPONSE_BYTES + 1)
+    if len(body) > _MAX_HTTP_RESPONSE_BYTES:
+        raise ValueError(
+            f"response from {url} exceeds the {_MAX_HTTP_RESPONSE_BYTES}-byte limit"
+        )
+    return body
 
 
 def _fetch_issuer(cert: x509.Certificate, timeout: float) -> x509.Certificate | None:
@@ -375,6 +438,28 @@ def _crl_urls(cert: x509.Certificate) -> list[str]:
     return urls
 
 
+def _ocsp_response_stale(response: ocsp.OCSPResponse) -> str | None:
+    """Return a reason when the OCSP response is outside its validity window.
+
+    A response whose ``nextUpdate`` is already in the past (or whose
+    ``thisUpdate`` lies in the future) may be a replayed or stale answer and
+    must not back a trusted GOOD verdict; a small clock-skew tolerance is
+    allowed. Missing timestamps or parse errors return None ("cannot tell"),
+    preserving the browser-like soft-fail behaviour.
+    """
+    now = datetime.now(timezone.utc)
+    try:
+        this_update = response.this_update_utc
+        next_update = response.next_update_utc
+    except (ValueError, AttributeError):
+        return None
+    if this_update is not None and this_update - _OCSP_CLOCK_SKEW > now:
+        return f"OCSP response not yet valid (thisUpdate {this_update})"
+    if next_update is not None and next_update + _OCSP_CLOCK_SKEW < now:
+        return f"OCSP response is stale (nextUpdate {next_update})"
+    return None
+
+
 def _check_ocsp(
     cert: x509.Certificate,
     issuer: x509.Certificate | None,
@@ -413,6 +498,9 @@ def _check_ocsp(
         return "UNAVAILABLE", f"OCSP response could not be parsed: {err}"
 
     if status == ocsp.OCSPCertStatus.GOOD:
+        stale = _ocsp_response_stale(response)
+        if stale is not None:
+            return "UNAVAILABLE", stale
         return "GOOD", None
     if status == ocsp.OCSPCertStatus.REVOKED:
         when = getattr(response, "revocation_time_utc", None)
