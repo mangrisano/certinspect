@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.2] - 2026-07-29
+
+### Fixed
+
+- `verify_chain` now validates chain trust independently of the hostname. It
+  previously inherited `check_hostname=True`, so a certificate with a valid
+  chain but a mismatched hostname was reported as `chain_trusted=false` (with a
+  misleading "Hostname mismatch" chain error) even though the chain was sound.
+  The hostname is already reported separately as `hostname_match` (exit code 5),
+  so `chain_trusted` now reflects the chain alone.
+
 ## [1.9.1] - 2026-07-29
 
 ### Changed
@@ -331,7 +342,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.9.1...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.9.2...HEAD
+[1.9.2]: https://github.com/mangrisano/certinspect/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/mangrisano/certinspect/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mangrisano/certinspect/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/mangrisano/certinspect/compare/v1.7.0...v1.8.0
