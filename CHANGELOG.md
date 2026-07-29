@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-29
+
+### Added
+
+- `--profile {lenient,standard,strict}`: apply a named bundle of the opt-in
+  policy checks (exit code 9) in one go, so a common hardening level is a single
+  flag away. The names are a plain intensity ladder (each tier a superset of the
+  one below), not an official standard, and passing a profile is not a
+  compliance attestation. `lenient` requires TLS >= 1.2 and fails on weak
+  crypto; `standard` adds a 2048-bit minimum key; `strict` requires TLS >= 1.3,
+  a 2048-bit key, weak-crypto failure, embedded Certificate Transparency SCTs
+  and the CA/Browser Forum validity cap. Any explicit policy flag overrides the
+  profile, and the profile's TLS-version requirement is skipped for `--file`
+  targets (no live handshake).
+
+### Security
+
+- Revocation lookups now refuse to follow an OCSP, CRL or CA-Issuer URL taken
+  from the certificate when it resolves to a loopback, link-local (the cloud
+  metadata endpoint `169.254.169.254`), unspecified, multicast or reserved
+  address, closing a server-side request forgery (SSRF) vector. Private RFC1918
+  ranges stay allowed so revocation keeps working behind an internal PKI. The
+  downloaded response is also size-capped so a malicious certificate cannot
+  point the fetch at an unbounded download.
+- OCSP responses whose validity window has lapsed (a `nextUpdate` already in
+  the past) or has not yet begun are now treated as `UNAVAILABLE` instead of a
+  trusted `GOOD`, so a replayed stale response can no longer mask a later
+  revocation. The CRL fallback still applies.
+
 ## [1.8.0] - 2026-07-21
 
 ### Added
@@ -292,7 +321,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/mangrisano/certinspect/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/mangrisano/certinspect/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/mangrisano/certinspect/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/mangrisano/certinspect/compare/v1.5.0...v1.6.0
