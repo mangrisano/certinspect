@@ -38,3 +38,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff.lint]
+# Pin the classic default rule set (pyflakes + a subset of pycodestyle) so
+# linting stays reproducible no matter which ruff version CI installs: a newer
+# ruff that enables extra rule families by default must not spontaneously break
+# the build. Opt into more rules deliberately, not by tool drift.
+select = ["E4", "E7", "E9", "F"]
