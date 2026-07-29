@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.1] - 2026-07-29
+
+### Changed
+
+- Republish of 1.9.0, which was tagged but never reached PyPI because of a CI
+  issue. Pins the ruff lint rule set (`[tool.ruff.lint] select`) to the classic
+  default so the build stays reproducible regardless of the ruff version CI
+  installs. Same features as 1.9.0 — the new `--profile` option and the
+  revocation/SSRF hardening listed below.
+
 ## [1.9.0] - 2026-07-29
 
 ### Added
@@ -321,7 +331,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.9.1...HEAD
+[1.9.1]: https://github.com/mangrisano/certinspect/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mangrisano/certinspect/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/mangrisano/certinspect/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/mangrisano/certinspect/compare/v1.6.0...v1.7.0
