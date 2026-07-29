@@ -253,6 +253,39 @@ def test_verify_chain_default_uses_system_store(monkeypatch):
     assert recorded["kwargs"] == {}
 
 
+def test_verify_chain_ignores_hostname(monkeypatch):
+    """Chain trust is validated independently of the hostname (reported apart as
+    hostname_match), so verify_chain must disable check_hostname."""
+    import ssl
+
+    from certinspect import fetch
+
+    recorded = {}
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class _Context:
+        check_hostname = True
+
+        def wrap_socket(self, sock, server_hostname=None):
+            recorded["check_hostname"] = self.check_hostname
+            err = ssl.SSLCertVerificationError("boom")
+            err.verify_message = "boom"
+            raise err
+
+    monkeypatch.setattr(fetch.ssl, "create_default_context", lambda *a, **k: _Context())
+    monkeypatch.setattr(fetch.socket, "create_connection", lambda *a, **k: _Conn())
+
+    fetch.verify_chain("example.com")
+
+    assert recorded["check_hostname"] is False
+
+
 # --- CRL fallback -----------------------------------------------------------
 
 CRL_URL = "http://crl.example.com/ca.crl"

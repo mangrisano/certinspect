@@ -325,6 +325,8 @@ def verify_chain(
         context = ssl.create_default_context(cafile=cafile, capath=capath)
     else:
         context = ssl.create_default_context()
+    # Verify chain trust only; the hostname is reported separately as hostname_match.
+    context.check_hostname = False
     if client_cert:
         context.load_cert_chain(certfile=client_cert, keyfile=client_key)
     resolved_proxy = _resolve_proxy(host, proxy, no_proxy)
