@@ -268,16 +268,16 @@ WARNING: chain certificate 'Example Legacy Root CA' expired 3 days ago
 Revocation:     GOOD
 ```
 
-When a chain fails to verify, certinspect classifies *why* into a
+When a chain fails to verify, certinspect classifies _why_ into a
 `chain_diagnosis` with a machine-readable `code` and a human `detail`, turning a
 raw OpenSSL error into an actionable root cause:
 
-| Code | Meaning | Remedy |
-| --- | --- | --- |
-| `INCOMPLETE_CHAIN` | only the leaf was sent; its intermediate is missing | make the server send its intermediate (the AIA URL is shown) |
-| `CHAIN_MISMATCH` | the sent intermediates do not sign the leaf | install the correct intermediate for the leaf's issuer |
-| `UNTRUSTED_ROOT` | the chain is complete but its root is not trusted | pass `--cafile` for an internal CA, or update the trust store |
-| `EXPIRED_IN_CHAIN` | a certificate in the chain has expired | renew/replace the expired certificate |
+| Code               | Meaning                                             | Remedy                                                        |
+| ------------------ | --------------------------------------------------- | ------------------------------------------------------------- |
+| `INCOMPLETE_CHAIN` | only the leaf was sent; its intermediate is missing | make the server send its intermediate (the AIA URL is shown)  |
+| `CHAIN_MISMATCH`   | the sent intermediates do not sign the leaf         | install the correct intermediate for the leaf's issuer        |
+| `UNTRUSTED_ROOT`   | the chain is complete but its root is not trusted   | pass `--cafile` for an internal CA, or update the trust store |
+| `EXPIRED_IN_CHAIN` | a certificate in the chain has expired              | renew/replace the expired certificate                         |
 
 ```console
 $ certinspect broken.example.com --verify

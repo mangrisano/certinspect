@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Chain diagnosis: when `--verify` fails, certinspect now classifies *why* into
+- Chain diagnosis: when `--verify` fails, certinspect now classifies _why_ into
   a `chain_diagnosis` (`code` + human `detail`) instead of only a raw OpenSSL
   error. Codes: `INCOMPLETE_CHAIN` (server didn't send the intermediate; the
   AIA "CA Issuers" URL is shown), `CHAIN_MISMATCH` (the sent intermediates do
