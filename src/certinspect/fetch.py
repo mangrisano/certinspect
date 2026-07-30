@@ -13,6 +13,7 @@ import base64
 import ipaddress
 import socket
 import ssl
+import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
@@ -116,9 +117,16 @@ def _resolve_proxy(host: str, proxy: str | None, no_proxy: bool) -> str | None:
 
 
 def _open_socket(
-    host: str, port: int, timeout: float, proxy: str | None = None
+    host: str,
+    port: int,
+    connect_timeout: float,
+    read_timeout: float,
+    proxy: str | None = None,
 ) -> socket.socket:
     """Open a TCP socket to ``host:port``, directly or via an HTTP proxy.
+
+    The socket is opened with ``connect_timeout`` and then switched to
+    ``read_timeout`` for the TLS handshake and subsequent reads.
 
     When ``proxy`` is set (e.g. ``http://user:pass@proxy:8080``) the connection
     is tunnelled through the proxy with the HTTP ``CONNECT`` method, so a host
@@ -126,11 +134,13 @@ def _open_socket(
     ValueError if the proxy refuses the tunnel.
     """
     if not proxy:
-        return socket.create_connection((host, port), timeout=timeout)
+        sock = socket.create_connection((host, port), timeout=connect_timeout)
+        sock.settimeout(read_timeout)
+        return sock
 
     parts = urlsplit(proxy if "://" in proxy else f"//{proxy}")
     sock = socket.create_connection(
-        (parts.hostname, parts.port or 8080), timeout=timeout
+        (parts.hostname, parts.port or 8080), timeout=connect_timeout
     )
     try:
         request = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n"
@@ -150,7 +160,34 @@ def _open_socket(
     except Exception:
         sock.close()
         raise
+    sock.settimeout(read_timeout)
     return sock
+
+
+_RETRY_BACKOFF_SECONDS = 0.5
+
+
+def retry_network(call, retries: int):
+    """Run ``call`` again on transient network errors, up to ``retries`` times.
+
+    Only connection-level failures (timeouts, refused/reset connections, DNS
+    errors) are retried; a completed handshake that yields a result is returned
+    as-is. Re-raises the last error once the retries are exhausted.
+    """
+    for remaining in range(retries, -1, -1):
+        try:
+            return call()
+        except (TimeoutError, ConnectionError, socket.gaierror):
+            if remaining == 0:
+                raise
+            time.sleep(_RETRY_BACKOFF_SECONDS)
+
+
+def _split_timeout(timeout: float | tuple[float, float]) -> tuple[float, float]:
+    """Return (connect, read) timeouts from a float or a (connect, read) tuple."""
+    if isinstance(timeout, tuple):
+        return timeout
+    return timeout, timeout
 
 
 def _readline(sock: socket.socket) -> bytes:
@@ -256,8 +293,11 @@ def get_server_cert(
     context.verify_mode = ssl.CERT_NONE
     if client_cert:
         context.load_cert_chain(certfile=client_cert, keyfile=client_key)
+    connect_timeout, read_timeout = _split_timeout(timeout)
     resolved_proxy = _resolve_proxy(host, proxy, no_proxy)
-    with _open_socket(host, port, timeout, resolved_proxy) as sock:
+    with _open_socket(
+        host, port, connect_timeout, read_timeout, resolved_proxy
+    ) as sock:
         if starttls:
             _negotiate_starttls(sock, starttls)
         with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
@@ -329,9 +369,12 @@ def verify_chain(
     context.check_hostname = False
     if client_cert:
         context.load_cert_chain(certfile=client_cert, keyfile=client_key)
+    connect_timeout, read_timeout = _split_timeout(timeout)
     resolved_proxy = _resolve_proxy(host, proxy, no_proxy)
     try:
-        with _open_socket(host, port, timeout, resolved_proxy) as sock:
+        with _open_socket(
+            host, port, connect_timeout, read_timeout, resolved_proxy
+        ) as sock:
             if starttls:
                 _negotiate_starttls(sock, starttls)
             with context.wrap_socket(sock, server_hostname=servername or host) as ssock:

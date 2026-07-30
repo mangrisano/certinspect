@@ -47,6 +47,9 @@ class _FakeSocket:
     def close(self) -> None:
         self.closed = True
 
+    def settimeout(self, timeout) -> None:
+        pass
+
 
 @pytest.mark.parametrize(
     "protocol, script, command",
@@ -80,11 +83,21 @@ def test_negotiate_starttls_smtp_sends_ehlo():
 def test_open_socket_direct_when_no_proxy(monkeypatch):
     from certinspect import fetch
 
-    sentinel = object()
-    monkeypatch.setattr(
-        fetch.socket, "create_connection", lambda addr, timeout=None: sentinel
-    )
-    assert fetch._open_socket("example.com", 443, 5.0) is sentinel
+    recorded = {}
+
+    class _Sock:
+        def settimeout(self, timeout):
+            recorded["read_timeout"] = timeout
+
+    sock = _Sock()
+
+    def _create(addr, timeout=None):
+        recorded["connect_timeout"] = timeout
+        return sock
+
+    monkeypatch.setattr(fetch.socket, "create_connection", _create)
+    assert fetch._open_socket("example.com", 443, 3.0, 5.0) is sock
+    assert recorded == {"connect_timeout": 3.0, "read_timeout": 5.0}
 
 
 def test_open_socket_proxy_sends_connect(monkeypatch):
@@ -94,7 +107,7 @@ def test_open_socket_proxy_sends_connect(monkeypatch):
     monkeypatch.setattr(
         fetch.socket, "create_connection", lambda addr, timeout=None: fake
     )
-    sock = fetch._open_socket("example.com", 443, 5.0, "http://proxy:8080")
+    sock = fetch._open_socket("example.com", 443, 5.0, 5.0, "http://proxy:8080")
     assert sock is fake
     assert b"CONNECT example.com:443 HTTP/1.1" in bytes(fake.sent)
 
@@ -106,7 +119,7 @@ def test_open_socket_proxy_sends_auth(monkeypatch):
     monkeypatch.setattr(
         fetch.socket, "create_connection", lambda addr, timeout=None: fake
     )
-    fetch._open_socket("example.com", 443, 5.0, "http://user:pass@proxy:8080")
+    fetch._open_socket("example.com", 443, 5.0, 5.0, "http://user:pass@proxy:8080")
     assert b"Proxy-Authorization: Basic " in bytes(fake.sent)
 
 
@@ -118,8 +131,66 @@ def test_open_socket_proxy_refused_raises_and_closes(monkeypatch):
         fetch.socket, "create_connection", lambda addr, timeout=None: fake
     )
     with pytest.raises(ValueError, match="proxy CONNECT"):
-        fetch._open_socket("example.com", 443, 5.0, "http://proxy:8080")
+        fetch._open_socket("example.com", 443, 5.0, 5.0, "http://proxy:8080")
     assert fake.closed is True
+
+
+def test_split_timeout_from_float():
+    from certinspect import fetch
+
+    assert fetch._split_timeout(5.0) == (5.0, 5.0)
+
+
+def test_split_timeout_from_tuple():
+    from certinspect import fetch
+
+    assert fetch._split_timeout((2.0, 8.0)) == (2.0, 8.0)
+
+
+def test_retry_network_retries_then_succeeds(monkeypatch):
+    from certinspect import fetch
+
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def _call():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise ConnectionError("transient")
+        return "ok"
+
+    assert fetch.retry_network(_call, retries=3) == "ok"
+    assert calls["n"] == 3
+
+
+def test_retry_network_gives_up_and_raises(monkeypatch):
+    from certinspect import fetch
+
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def _call():
+        calls["n"] += 1
+        raise TimeoutError("nope")
+
+    with pytest.raises(TimeoutError):
+        fetch.retry_network(_call, retries=2)
+    assert calls["n"] == 3  # the initial attempt plus two retries
+
+
+def test_retry_network_does_not_retry_non_transient(monkeypatch):
+    from certinspect import fetch
+
+    monkeypatch.setattr(fetch.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def _call():
+        calls["n"] += 1
+        raise ValueError("not a network error")
+
+    with pytest.raises(ValueError):
+        fetch.retry_network(_call, retries=3)
+    assert calls["n"] == 1
 
 
 def test_resolve_proxy_explicit_wins(monkeypatch):
@@ -197,6 +268,9 @@ def test_verify_chain_uses_custom_ca(monkeypatch):
         def __exit__(self, *exc):
             return False
 
+        def settimeout(self, timeout):
+            pass
+
     class _Context:
         def wrap_socket(self, sock, server_hostname=None):
             err = ssl.SSLCertVerificationError("self signed certificate")
@@ -235,6 +309,9 @@ def test_verify_chain_default_uses_system_store(monkeypatch):
         def __exit__(self, *exc):
             return False
 
+        def settimeout(self, timeout):
+            pass
+
     class _Context:
         def wrap_socket(self, sock, server_hostname=None):
             err = ssl.SSLCertVerificationError("unable to get local issuer")
@@ -268,6 +345,9 @@ def test_verify_chain_ignores_hostname(monkeypatch):
 
         def __exit__(self, *exc):
             return False
+
+        def settimeout(self, timeout):
+            pass
 
     class _Context:
         check_hostname = True

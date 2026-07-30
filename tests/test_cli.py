@@ -63,6 +63,37 @@ def _run_main(monkeypatch, argv):
     return 0 if code is None else code
 
 
+def test_main_separate_timeouts_passed_as_tuple(monkeypatch, make_cert):
+    seen = {}
+
+    def _fetch(host, port, timeout, **kwargs):
+        seen["timeout"] = timeout
+        return make_cert(san=["example.com"]), CONN
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    _run_main(
+        monkeypatch,
+        ["example.com", "--connect-timeout", "2", "--read-timeout", "8"],
+    )
+    assert seen["timeout"] == (2.0, 8.0)
+
+
+def test_main_retries_transient_failure(monkeypatch, make_cert):
+    monkeypatch.setattr("certinspect.fetch._RETRY_BACKOFF_SECONDS", 0)
+    calls = {"n": 0}
+
+    def _fetch(host, port, timeout, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("transient")
+        return make_cert(san=["example.com"]), CONN
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    code = _run_main(monkeypatch, ["example.com", "--retries", "2"])
+    assert code == 0
+    assert calls["n"] == 2
+
+
 def test_main_file_human_output(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert())

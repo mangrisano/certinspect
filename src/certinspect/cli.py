@@ -18,6 +18,7 @@ from certinspect.fetch import (
     STARTTLS_PORTS,
     check_revocation,
     get_server_cert,
+    retry_network,
     verify_chain,
 )
 from certinspect.parser import (
@@ -72,6 +73,9 @@ class InspectOptions:
     critical_days: int | None = None
     export: str | None = None
     timeout: float = 5.0
+    connect_timeout: float | None = None
+    read_timeout: float | None = None
+    retries: int = 0
     verify: bool = False
     chain: bool = False
     pin: str | None = None
@@ -100,6 +104,18 @@ class InspectOptions:
         in one place: adding a field here (and the matching argument) is enough.
         """
         return cls(**{f.name: getattr(args, f.name) for f in fields(cls)})
+
+    @property
+    def effective_connect_timeout(self) -> float:
+        """Connect timeout, defaulting to ``timeout`` when unset."""
+        return (
+            self.connect_timeout if self.connect_timeout is not None else self.timeout
+        )
+
+    @property
+    def effective_read_timeout(self) -> float:
+        """Read/handshake timeout, defaulting to ``timeout`` when unset."""
+        return self.read_timeout if self.read_timeout is not None else self.timeout
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -140,6 +156,26 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=5.0,
         help="Connection timeout in seconds (default: 5).",
+    )
+    parser.add_argument(
+        "--connect-timeout",
+        type=float,
+        default=None,
+        dest="connect_timeout",
+        help="TCP connect timeout in seconds (default: --timeout).",
+    )
+    parser.add_argument(
+        "--read-timeout",
+        type=float,
+        default=None,
+        dest="read_timeout",
+        help="Handshake/read timeout in seconds (default: --timeout).",
+    )
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=0,
+        help="Retry transient connection failures this many times (default: 0).",
     )
     # --json, --csv and --exporter select the output format and are mutually
     # exclusive; argparse rejects any combination for us (exit code 2).
@@ -511,7 +547,11 @@ def _fetch_source(
         kwargs["proxy"] = opts.proxy
     if opts.no_proxy:
         kwargs["no_proxy"] = True
-    return get_server_cert(target, port, opts.timeout, **kwargs)
+    timeouts = (opts.effective_connect_timeout, opts.effective_read_timeout)
+    return retry_network(
+        lambda: get_server_cert(target, port, timeouts, **kwargs),
+        opts.retries,
+    )
 
 
 def _inspect(
@@ -567,11 +607,10 @@ def _inspect(
             verify_kwargs["proxy"] = opts.proxy
         if opts.no_proxy:
             verify_kwargs["no_proxy"] = True
-        trusted, reason, verified = verify_chain(
-            target,
-            port,
-            opts.timeout,
-            **verify_kwargs,
+        timeouts = (opts.effective_connect_timeout, opts.effective_read_timeout)
+        trusted, reason, verified = retry_network(
+            lambda: verify_chain(target, port, timeouts, **verify_kwargs),
+            opts.retries,
         )
         info["chain_trusted"] = trusted
         info["chain_error"] = reason
