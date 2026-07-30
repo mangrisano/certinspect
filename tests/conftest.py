@@ -11,7 +11,7 @@ import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
 
 
 def build_certificate(
@@ -30,6 +30,7 @@ def build_certificate(
     key_usage: x509.KeyUsage | None = None,
     extended_key_usage: list | None = None,
     must_staple: bool = False,
+    aia_ca_issuers: str | None = None,
 ) -> bytes:
     """Build a self-signed certificate and return its serialized bytes.
 
@@ -88,6 +89,19 @@ def build_certificate(
     if must_staple:
         builder = builder.add_extension(
             x509.TLSFeature([x509.TLSFeatureType.status_request]),
+            critical=False,
+        )
+
+    if aia_ca_issuers is not None:
+        builder = builder.add_extension(
+            x509.AuthorityInformationAccess(
+                [
+                    x509.AccessDescription(
+                        AuthorityInformationAccessOID.CA_ISSUERS,
+                        x509.UniformResourceIdentifier(aia_ca_issuers),
+                    )
+                ]
+            ),
             critical=False,
         )
 

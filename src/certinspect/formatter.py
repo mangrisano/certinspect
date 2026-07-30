@@ -84,6 +84,10 @@ def format_human(
         lines.append(row("Chain trusted", info["chain_trusted"]))
         if not info["chain_trusted"] and info.get("chain_error"):
             lines.append(f"WARNING: chain not trusted ({info['chain_error']})")
+        diagnosis = info.get("chain_diagnosis")
+        if diagnosis:
+            lines.append(row("Chain diagnosis", diagnosis["code"]))
+            lines.append(f"  -> {diagnosis['detail']}")
 
     for warning in info.get("chain_warnings", ()):
         lines.append(f"WARNING: {warning}")

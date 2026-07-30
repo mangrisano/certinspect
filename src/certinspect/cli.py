@@ -26,6 +26,7 @@ from certinspect.parser import (
     cab_forum_max_validity,
     certificate_status,
     chain_expiry_warnings,
+    diagnose_chain,
     hostname_matches,
     missing_san_names,
     chain_summary,
@@ -576,6 +577,11 @@ def _inspect(
         info["chain_error"] = reason
         if not trusted:
             code = 6
+            presented = conn.get("chain") if conn else None
+            if presented:
+                diagnosis = diagnose_chain(presented)
+                if diagnosis:
+                    info["chain_diagnosis"] = diagnosis
 
         # Prefer the issuer from the verified chain; fall back to AIA download.
         issuer = verified[1] if len(verified) > 1 else None

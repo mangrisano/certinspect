@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import dsa, ec, rsa
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID, NameOID
 
 
 class CertificateLoadError(ValueError): ...
@@ -70,8 +70,27 @@ def chain_summary(cert: x509.Certificate) -> dict:
 
 def _short_name(cert: x509.Certificate) -> str:
     """Return the certificate's Common Name, or its full subject DN."""
-    attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
-    return attrs[0].value if attrs else cert.subject.rfc4514_string()
+    return _name_cn(cert.subject)
+
+
+def _name_cn(name: x509.Name) -> str:
+    """Return the Common Name of an X.509 name, or its full RFC 4514 DN."""
+    attrs = name.get_attributes_for_oid(NameOID.COMMON_NAME)
+    return attrs[0].value if attrs else name.rfc4514_string()
+
+
+def _ca_issuer_url(cert: x509.Certificate) -> str | None:
+    """Return the AIA "CA Issuers" URL of a certificate, or None when absent."""
+    try:
+        aia = cert.extensions.get_extension_for_oid(
+            ExtensionOID.AUTHORITY_INFORMATION_ACCESS
+        ).value
+    except x509.ExtensionNotFound:
+        return None
+    for desc in aia:
+        if desc.access_method == AuthorityInformationAccessOID.CA_ISSUERS:
+            return desc.access_location.value
+    return None
 
 
 def chain_expiry_warnings(
@@ -95,6 +114,77 @@ def chain_expiry_warnings(
         elif days < warn_days:
             warnings.append(f"chain certificate '{name}' expires in {days} days")
     return warnings
+
+
+def diagnose_chain(presented: list[x509.Certificate]) -> dict | None:
+    """Explain why a certificate chain failed to verify.
+
+    ``presented`` is the chain exactly as sent by the server (leaf first). It is
+    inspected only after verification has already failed, so the returned
+    ``{"code", "detail"}`` names the most likely root cause and its remedy; it is
+    not an independent trust decision. Returns None when the chain is empty
+    (e.g. the interpreter cannot expose it) and nothing can be said.
+
+    Codes:
+      ``EXPIRED_IN_CHAIN``  a certificate in the chain has expired
+      ``CHAIN_MISMATCH``    the sent intermediates do not sign the leaf
+      ``INCOMPLETE_CHAIN``  only the leaf was sent; its public issuer is missing
+      ``UNTRUSTED_ROOT``    the chain is complete but its anchor is not trusted
+    """
+    if not presented:
+        return None
+    leaf, intermediates = presented[0], presented[1:]
+
+    now = datetime.now(timezone.utc)
+    for cert in presented:
+        if cert.not_valid_after_utc < now:
+            role = "leaf" if cert is leaf else "chain certificate"
+            return {
+                "code": "EXPIRED_IN_CHAIN",
+                "detail": (
+                    f"{role} '{_short_name(cert)}' expired on "
+                    f"{cert.not_valid_after_utc:%Y-%m-%d}"
+                ),
+            }
+
+    issuer_cn = _name_cn(leaf.issuer)
+    if any(leaf.issuer == cert.subject for cert in intermediates):
+        anchor = _name_cn(presented[-1].issuer)
+        return {
+            "code": "UNTRUSTED_ROOT",
+            "detail": (
+                f"the chain is complete but its root '{anchor}' is not in the "
+                "trust store; pass --cafile with that CA if it is internal, "
+                "otherwise update the trust store"
+            ),
+        }
+
+    if intermediates:
+        sent = ", ".join(f"'{_short_name(cert)}'" for cert in intermediates)
+        return {
+            "code": "CHAIN_MISMATCH",
+            "detail": (
+                f"the server sent intermediate(s) {sent} that do not sign the "
+                f"leaf; its real issuer '{issuer_cn}' is absent from the chain"
+            ),
+        }
+
+    url = _ca_issuer_url(leaf)
+    if url:
+        return {
+            "code": "INCOMPLETE_CHAIN",
+            "detail": (
+                f"the server sent only the leaf; the intermediate '{issuer_cn}' "
+                f"is missing and is published at {url}"
+            ),
+        }
+    return {
+        "code": "UNTRUSTED_ROOT",
+        "detail": (
+            f"the server sent only the leaf, issued by '{issuer_cn}', which is "
+            "not a public CA; pass --cafile with that CA"
+        ),
+    }
 
 
 def _is_ca(cert: x509.Certificate) -> bool:

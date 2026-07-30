@@ -11,6 +11,7 @@ from certinspect.parser import (
     certificate_status,
     chain_expiry_warnings,
     chain_summary,
+    diagnose_chain,
     hostname_matches,
     load_certificate,
     missing_san_names,
@@ -489,6 +490,63 @@ def test_chain_expiry_warnings_ignores_leaf(make_cert):
 
 def test_chain_expiry_warnings_empty_for_leaf_only(make_cert):
     assert chain_expiry_warnings([load_certificate(make_cert())]) == []
+
+
+def test_diagnose_chain_none_when_empty():
+    assert diagnose_chain([]) is None
+
+
+def test_diagnose_chain_untrusted_root_when_chain_complete(make_cert):
+    leaf = load_certificate(
+        make_cert(common_name="leaf.example", issuer_name="Internal CA")
+    )
+    inter = load_certificate(make_cert(common_name="Internal CA", ca=True))
+    result = diagnose_chain([leaf, inter])
+    assert result["code"] == "UNTRUSTED_ROOT"
+
+
+def test_diagnose_chain_mismatch_when_wrong_intermediate(make_cert):
+    leaf = load_certificate(
+        make_cert(common_name="leaf.example", issuer_name="Real CA")
+    )
+    wrong = load_certificate(make_cert(common_name="Unrelated CA", ca=True))
+    result = diagnose_chain([leaf, wrong])
+    assert result["code"] == "CHAIN_MISMATCH"
+    assert "Real CA" in result["detail"]
+
+
+def test_diagnose_chain_incomplete_when_only_leaf_with_aia(make_cert):
+    leaf = load_certificate(
+        make_cert(
+            common_name="leaf.example",
+            issuer_name="Public Intermediate",
+            aia_ca_issuers="http://ca.example/int.crt",
+        )
+    )
+    result = diagnose_chain([leaf])
+    assert result["code"] == "INCOMPLETE_CHAIN"
+    assert "http://ca.example/int.crt" in result["detail"]
+
+
+def test_diagnose_chain_private_ca_when_only_leaf_without_aia(make_cert):
+    leaf = load_certificate(
+        make_cert(common_name="leaf.example", issuer_name="Private Root")
+    )
+    result = diagnose_chain([leaf])
+    assert result["code"] == "UNTRUSTED_ROOT"
+    assert "Private Root" in result["detail"]
+
+
+def test_diagnose_chain_expired_takes_precedence(make_cert):
+    leaf = load_certificate(
+        make_cert(common_name="leaf.example", issuer_name="Internal CA")
+    )
+    expired = load_certificate(
+        make_cert(common_name="Internal CA", ca=True, days_valid=-5, days_ago_start=400)
+    )
+    result = diagnose_chain([leaf, expired])
+    assert result["code"] == "EXPIRED_IN_CHAIN"
+    assert "Internal CA" in result["detail"]
 
 
 def test_policy_violations_empty_when_no_check_enabled(make_cert):
