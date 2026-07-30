@@ -48,7 +48,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 | Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN (DNS and IP), SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage, embedded Certificate Transparency SCT count, OCSP Must-Staple flag                                                                                                                                                                                                             |
 | Crypto health      | Signature algorithm & key size, weak-crypto warnings, negotiated TLS version & cipher                                                                                                                                                                                                                                                                                                                                                             |
 | Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); show the server-presented chain (`--chain`)                                                                                                                                                                                                                                                        |
-| Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain                                                                                                                                                                                                                                                                                                                                                               |
+| Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain; diagnose _why_ an untrusted chain failed (incomplete / mismatched / untrusted-root / expired) with a fix suggestion                                                                                                                                                                                                                                          |
 | Identity checks    | Hostname match against the certificate, SHA-256 fingerprint pinning (`--pin`), SAN coverage assertions (`--expect-san`), SNI override for backends behind a load balancer (`--servername`)                                                                                                                                                                                                                                                        |
 | Policy enforcement | Opt-in checks that fail (exit code 9): maximum total validity (`--not-after-max`, or `--cab-forum` for the date-aware CA/Browser Forum cap), minimum key size (`--min-key-size`), promote weak-crypto warnings to failures (`--fail-weak`), require embedded Certificate Transparency SCTs (`--require-sct`), require the OCSP Must-Staple extension (`--require-must-staple`), or enforce a minimum negotiated TLS version (`--min-tls-version`) |
 | Policy profiles    | Turn on a whole hardening level with one flag (`--profile lenient`/`standard`/`strict`); a plain intensity ladder, not a compliance attestation, and explicit policy flags still override the profile                                                                                                                                                                                                                                             |
@@ -267,6 +267,31 @@ WARNING: chain certificate 'Example Intermediate CA' expires in 12 days
 WARNING: chain certificate 'Example Legacy Root CA' expired 3 days ago
 Revocation:     GOOD
 ```
+
+When a chain fails to verify, certinspect classifies *why* into a
+`chain_diagnosis` with a machine-readable `code` and a human `detail`, turning a
+raw OpenSSL error into an actionable root cause:
+
+| Code | Meaning | Remedy |
+| --- | --- | --- |
+| `INCOMPLETE_CHAIN` | only the leaf was sent; its intermediate is missing | make the server send its intermediate (the AIA URL is shown) |
+| `CHAIN_MISMATCH` | the sent intermediates do not sign the leaf | install the correct intermediate for the leaf's issuer |
+| `UNTRUSTED_ROOT` | the chain is complete but its root is not trusted | pass `--cafile` for an internal CA, or update the trust store |
+| `EXPIRED_IN_CHAIN` | a certificate in the chain has expired | renew/replace the expired certificate |
+
+```console
+$ certinspect broken.example.com --verify
+=== broken.example.com ===
+Subject:        CN=*.example.com
+...
+Chain trusted:  False
+WARNING: chain not trusted (unable to get local issuer certificate)
+Chain diagnosis: CHAIN_MISMATCH
+  -> the server sent intermediate(s) 'Other CA G3' that do not sign the leaf; its real issuer 'Real Issuing CA' is absent from the chain
+```
+
+(The presented chain is exposed by Python 3.13+, so the diagnosis is available
+there; on older interpreters only `chain_trusted`/`chain_error` are reported.)
 
 ## Use cases
 
