@@ -471,7 +471,10 @@ certinspect example.com --export ./example.com.pem
 | `target...`                           | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`.                                                                                                                                                   |
 | `--file PATH`                         | Inspect a local certificate (PEM or DER) instead of a host. Use `-` to read the certificate from standard input.                                                                                                                 |
 | `--port N`                            | TCP port to connect to (default: 443).                                                                                                                                                                                           |
-| `--timeout N`                         | Connection timeout in seconds (default: 5).                                                                                                                                                                                      |
+| `--timeout N`                         | Connection timeout in seconds (default: 5). Used for both connect and read unless the two below are set.                                                                                                                        |
+| `--connect-timeout N`                 | TCP connect timeout in seconds (default: `--timeout`).                                                                                                                                                                           |
+| `--read-timeout N`                    | Handshake/read timeout in seconds (default: `--timeout`).                                                                                                                                                                        |
+| `--retries N`                         | Retry transient connection failures (timeouts, refused/reset, DNS) this many times (default: 0).                                                                                                                                 |
 | `--json`                              | Print the result as JSON instead of human-readable text.                                                                                                                                                                         |
 | `--csv`                               | Print the results as CSV (one row per target, with a header).                                                                                                                                                                    |
 | `--csv-delimiter SEP`                 | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.                                                                                                                                  |
@@ -566,10 +569,13 @@ Valid until:    2026-08-29 21:41:26+00:00
 ### `--port N` / `--timeout N` — connection tuning
 
 The report is identical to a plain inspection; only how/where certinspect
-connects changes.
+connects changes. Split the single `--timeout` into `--connect-timeout` and
+`--read-timeout` to fail fast on dead hosts while still allowing a slow
+handshake (requests-style), and add `--retries` to ride out transient network
+blips instead of reporting a false failure.
 
 ```console
-$ certinspect example.com --port 443 --timeout 10
+$ certinspect example.com --connect-timeout 3 --read-timeout 10 --retries 2
 === example.com ===
 Subject:        CN=example.com
 Status:         VALID
