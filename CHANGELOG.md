@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-07-30
+
+### Added
+
+- Separate connect and read timeouts (`--connect-timeout`, `--read-timeout`,
+  both defaulting to `--timeout`) so a dead host fails fast while a slow
+  handshake is still allowed, and `--retries N` to retry transient connection
+  failures (timeouts, refused/reset connections, DNS errors) instead of
+  reporting a false failure. `get_server_cert`/`verify_chain` accept a
+  requests-style `(connect, read)` timeout tuple.
+
 ## [1.10.0] - 2026-07-30
 
 ### Added
@@ -354,7 +365,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/mangrisano/certinspect/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/mangrisano/certinspect/compare/v1.9.2...v1.10.0
 [1.9.2]: https://github.com/mangrisano/certinspect/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/mangrisano/certinspect/compare/v1.9.0...v1.9.1
