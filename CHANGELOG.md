@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-07-30
+
+### Added
+
+- Chain diagnosis: when `--verify` fails, certinspect now classifies *why* into
+  a `chain_diagnosis` (`code` + human `detail`) instead of only a raw OpenSSL
+  error. Codes: `INCOMPLETE_CHAIN` (server didn't send the intermediate; the
+  AIA "CA Issuers" URL is shown), `CHAIN_MISMATCH` (the sent intermediates do
+  not sign the leaf), `UNTRUSTED_ROOT` (chain complete but the anchor isn't
+  trusted — suggests `--cafile`), and `EXPIRED_IN_CHAIN`. The diagnosis uses the
+  chain the server presents, exposed by Python 3.13+.
+
 ## [1.9.2] - 2026-07-29
 
 ### Fixed
@@ -342,7 +354,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.9.2...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/mangrisano/certinspect/compare/v1.9.2...v1.10.0
 [1.9.2]: https://github.com/mangrisano/certinspect/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/mangrisano/certinspect/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/mangrisano/certinspect/compare/v1.8.0...v1.9.0
