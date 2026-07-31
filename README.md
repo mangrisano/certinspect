@@ -12,6 +12,8 @@
 
 [PyPI](https://pypi.org/project/certinspect/) · [Usage](#usage) · [Use cases](#use-cases) · [Options](#options) · [Recipes](#recipes) · [Exit codes](#exit-codes) · [Changelog](#changelog) · [Issues](https://github.com/mangrisano/certinspect/issues)
 
+<img src="https://raw.githubusercontent.com/mangrisano/certinspect/main/docs/demo.gif" alt="certinspect demo" width="760">
+
 </div>
 
 > **Point it at a host. Learn the truth about its TLS certificate.**
