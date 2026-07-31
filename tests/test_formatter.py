@@ -291,6 +291,7 @@ def test_format_prometheus_omits_conditional_gauges_by_default(make_cert):
     assert "certinspect_hostname_match" not in text
     assert "certinspect_chain_trusted" not in text
     assert "certinspect_cert_revoked" not in text
+    assert "certinspect_policy_ok" not in text
 
 
 def test_format_prometheus_exposes_hostname_match(make_cert):
@@ -330,6 +331,19 @@ def test_format_prometheus_exposes_revoked_only_when_definitive(make_cert):
     assert 'certinspect_cert_revoked{target="b.com"} 1' in text
     # UNAVAILABLE/UNKNOWN must not produce a (misleading) series.
     assert 'certinspect_cert_revoked{target="c.com"}' not in text
+
+
+def test_format_prometheus_exposes_policy_ok(make_cert):
+    passed = _info(make_cert(days_valid=42))
+    passed["policy_violations"] = []
+    failed = _info(make_cert(days_valid=42))
+    failed["policy_violations"] = [
+        "total validity 400 days exceeds the 398-day maximum"
+    ]
+    text = format_prometheus([("a.com", passed, 0), ("b.com", failed, 9)])
+    assert "# TYPE certinspect_policy_ok gauge" in text
+    assert 'certinspect_policy_ok{target="a.com"} 1' in text
+    assert 'certinspect_policy_ok{target="b.com"} 0' in text
 
 
 def test_format_prometheus_output_parses_with_prometheus_client(make_cert):

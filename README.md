@@ -1222,6 +1222,20 @@ certinspect_chain_trusted{target="example.com"} 1
 certinspect_cert_revoked{target="example.com"} 0
 ```
 
+A `certinspect_policy_ok` gauge follows the same rule: it appears only when
+policy checks are requested (`--not-after-max`/`--cab-forum`, `--min-key-size`,
+`--fail-weak`, `--require-sct`, `--require-must-staple`, `--min-tls-version`),
+reporting `1` when the target passed them all and `0` when it violated at least
+one — so you can alert on policy breaches directly:
+
+```console
+$ certinspect example.com --min-key-size 4096 --exporter prometheus
+# ... certinspect_up / cert_expiry_days / cert_valid as above ...
+# HELP certinspect_policy_ok Whether the certificate passed the requested policy checks (1) or not (0).
+# TYPE certinspect_policy_ok gauge
+certinspect_policy_ok{target="example.com"} 0
+```
+
 ## Exit codes
 
 Designed for automation (cron, CI, monitoring scripts). In batch mode the

@@ -385,10 +385,13 @@ def format_prometheus(
     requested: ``certinspect_hostname_match`` (host targets), and — when
     ``--verify`` is used — ``certinspect_chain_trusted`` and
     ``certinspect_cert_revoked`` (the latter only when OCSP/CRL gave a
-    definitive GOOD/REVOKED answer).
+    definitive GOOD/REVOKED answer). ``certinspect_policy_ok`` is emitted only
+    when policy checks were requested (1 when the target passed them, 0 when it
+    violated at least one).
     """
     up, expiry, valid = [], [], []
     hostname_match, chain_trusted, revoked = [], [], []
+    policy_ok = []
 
     for target, info, _ in results:
         label = _prometheus_label(target or info["subject"])
@@ -413,6 +416,9 @@ def format_prometheus(
         if info.get("revocation_status") in ("GOOD", "REVOKED"):
             hit = 1 if info["revocation_status"] == "REVOKED" else 0
             revoked.append(f'certinspect_cert_revoked{{target="{label}"}} {hit}')
+        if "policy_violations" in info:
+            hit = 0 if info["policy_violations"] else 1
+            policy_ok.append(f'certinspect_policy_ok{{target="{label}"}} {hit}')
 
     for target, _ in errors:
         label = _prometheus_label(target or "")
@@ -449,5 +455,11 @@ def format_prometheus(
             "# HELP certinspect_cert_revoked Whether the certificate is revoked (1) or not (0).",
             "# TYPE certinspect_cert_revoked gauge",
             *revoked,
+        ]
+    if policy_ok:
+        lines += [
+            "# HELP certinspect_policy_ok Whether the certificate passed the requested policy checks (1) or not (0).",
+            "# TYPE certinspect_policy_ok gauge",
+            *policy_ok,
         ]
     return "\n".join(lines)

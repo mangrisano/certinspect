@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Prometheus exporter: a `certinspect_policy_ok` gauge, emitted only when policy
+  checks are requested, reporting `1` when a target passed every requested
+  policy check and `0` when it violated at least one — so you can alert on
+  policy breaches (exit code 9) without parsing text.
+
 ### Changed
 
 - Signature-algorithm and extended-key-usage names are now resolved through a
