@@ -3,6 +3,7 @@
 <img src="https://raw.githubusercontent.com/mangrisano/certinspect/main/docs/logo.svg" alt="certinspect" width="440">
 
 [![CI](https://github.com/mangrisano/certinspect/actions/workflows/ci.yml/badge.svg)](https://github.com/mangrisano/certinspect/actions/workflows/ci.yml)
+[![Performance](https://github.com/mangrisano/certinspect/actions/workflows/performance.yml/badge.svg)](https://github.com/mangrisano/certinspect/actions/workflows/performance.yml)
 [![PyPI](https://img.shields.io/pypi/v/certinspect.svg?cacheSeconds=3600)](https://pypi.org/project/certinspect/)
 [![Python](https://img.shields.io/pypi/pyversions/certinspect.svg?cacheSeconds=3600)](https://pypi.org/project/certinspect/)
 [![Downloads](https://static.pepy.tech/badge/certinspect)](https://pepy.tech/project/certinspect)
