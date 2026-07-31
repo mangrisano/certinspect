@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Signature-algorithm and extended-key-usage names are now resolved through a
+  stable OID → name table instead of cryptography's private, undocumented
+  `ObjectIdentifier._name` attribute, which drifted across library versions and
+  even returned `"Unknown OID"` for some well-known OIDs. Output for common
+  certificates is unchanged; unmapped OIDs now fall back to their dotted string.
+
 ## [1.11.0] - 2026-07-30
 
 ### Added

@@ -14,6 +14,50 @@ from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID, N
 class CertificateLoadError(ValueError): ...
 
 
+# Human-readable names for the OIDs certinspect surfaces, keyed by each OID's
+# immutable dotted string. This replaces cryptography's private, undocumented
+# ObjectIdentifier._name, which drifts between versions and even returns
+# "Unknown OID" for several well-known OIDs.
+_SIGNATURE_ALGORITHM_NAMES = {
+    "1.2.840.113549.1.1.4": "md5WithRSAEncryption",
+    "1.2.840.113549.1.1.5": "sha1WithRSAEncryption",
+    "1.2.840.113549.1.1.14": "sha224WithRSAEncryption",
+    "1.2.840.113549.1.1.11": "sha256WithRSAEncryption",
+    "1.2.840.113549.1.1.12": "sha384WithRSAEncryption",
+    "1.2.840.113549.1.1.13": "sha512WithRSAEncryption",
+    "1.2.840.113549.1.1.10": "rsassaPss",
+    "1.2.840.10045.4.1": "ecdsa-with-SHA1",
+    "1.2.840.10045.4.3.1": "ecdsa-with-SHA224",
+    "1.2.840.10045.4.3.2": "ecdsa-with-SHA256",
+    "1.2.840.10045.4.3.3": "ecdsa-with-SHA384",
+    "1.2.840.10045.4.3.4": "ecdsa-with-SHA512",
+    "1.2.840.10040.4.3": "dsa-with-sha1",
+    "2.16.840.1.101.3.4.3.1": "dsa-with-sha224",
+    "2.16.840.1.101.3.4.3.2": "dsa-with-sha256",
+    "1.3.101.112": "ed25519",
+    "1.3.101.113": "ed448",
+}
+
+_EXTENDED_KEY_USAGE_NAMES = {
+    "1.3.6.1.5.5.7.3.1": "serverAuth",
+    "1.3.6.1.5.5.7.3.2": "clientAuth",
+    "1.3.6.1.5.5.7.3.3": "codeSigning",
+    "1.3.6.1.5.5.7.3.4": "emailProtection",
+    "1.3.6.1.5.5.7.3.8": "timeStamping",
+    "1.3.6.1.5.5.7.3.9": "OCSPSigning",
+    "2.5.29.37.0": "anyExtendedKeyUsage",
+    "1.3.6.1.4.1.11129.2.4.4": "certificateTransparency",
+    "1.3.6.1.5.5.7.3.17": "ipsecIKE",
+    "1.3.6.1.5.2.3.5": "pkInitKDC",
+    "1.3.6.1.4.1.311.20.2.2": "msSmartcardLogin",
+}
+
+
+def _oid_name(oid: x509.ObjectIdentifier, names: dict[str, str]) -> str:
+    """Return the friendly name for oid, or its dotted string if unmapped."""
+    return names.get(oid.dotted_string, oid.dotted_string)
+
+
 def to_pem(cert: x509.Certificate) -> bytes:
     return cert.public_bytes(serialization.Encoding.PEM)
 
@@ -252,7 +296,7 @@ def _extended_key_usage(cert: x509.Certificate) -> list[str]:
         eku = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
     except x509.ExtensionNotFound:
         return []
-    return [oid._name for oid in eku]
+    return [_oid_name(oid, _EXTENDED_KEY_USAGE_NAMES) for oid in eku]
 
 
 def _sct_count(cert: x509.Certificate) -> int:
@@ -307,9 +351,9 @@ def analyze(cert: x509.Certificate) -> dict:
     reason = _weak_key(cert.public_key())
     if reason:
         weak.append(reason)
-    sig = cert.signature_algorithm_oid._name.lower()
-    if "sha1" in sig or "md5" in sig:
-        weak.append(f"Weak signature ({cert.signature_algorithm_oid._name})")
+    sig_name = _oid_name(cert.signature_algorithm_oid, _SIGNATURE_ALGORITHM_NAMES)
+    if "sha1" in sig_name.lower() or "md5" in sig_name.lower():
+        weak.append(f"Weak signature ({sig_name})")
 
     return {
         "subject": cert.subject.rfc4514_string(),
@@ -317,7 +361,7 @@ def analyze(cert: x509.Certificate) -> dict:
         "not_valid_before": cert.not_valid_before_utc,
         "not_valid_after": cert.not_valid_after_utc,
         "serial_number": cert.serial_number,
-        "signature_algorithm": cert.signature_algorithm_oid._name,
+        "signature_algorithm": sig_name,
         "days_to_expire": days_to_expire,
         "validity_days": validity_days,
         "key_size": cert.public_key().key_size,
