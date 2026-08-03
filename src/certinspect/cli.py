@@ -43,6 +43,7 @@ from certinspect.formatter import (
     format_fields,
     format_human,
     format_json,
+    format_json_v2,
     format_nagios,
     format_prometheus,
     format_summary,
@@ -78,7 +79,7 @@ class InspectOptions:
     connect_timeout: float | None = None
     read_timeout: float | None = None
     retries: int = 0
-    verify: bool = False
+    verify: bool = True
     chain: bool = False
     pin: str | None = None
     starttls: str | None = None
@@ -222,12 +223,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only print certificates that have a problem.",
     )
     parser.add_argument(
-        "--verify",
-        action="store_true",
+        "--schema",
+        type=int,
+        choices=[1, 2],
+        default=2,
         help=(
-            "Verify the certificate chain against the system trust store. For a "
-            "host it opens a verified handshake; for --file it validates the "
-            "chain contained in the bundle offline."
+            "JSON schema version for --json (default: 2). Version 2 nests fields "
+            "by domain, uses ISO 8601 dates, stringifies the serial number and "
+            "wraps results in a versioned object; version 1 is the legacy flat "
+            "array."
+        ),
+    )
+    verify_group = parser.add_mutually_exclusive_group()
+    verify_group.add_argument(
+        "--verify",
+        dest="verify",
+        action="store_true",
+        default=True,
+        help=(
+            "Verify the certificate chain against the system trust store "
+            "(the default): a verified handshake plus OCSP/CRL revocation for a "
+            "host, or the bundle validated offline for --file. Kept for "
+            "explicitness; verification is on unless --no-verify is given."
+        ),
+    )
+    verify_group.add_argument(
+        "--no-verify",
+        dest="verify",
+        action="store_false",
+        help=(
+            "Skip chain verification (and revocation for hosts); only inspect "
+            "the certificate itself."
         ),
     )
     parser.add_argument(
@@ -235,8 +261,8 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help=(
             "Verify the chain against this CA bundle (PEM) instead of the "
-            "system trust store. Requires --verify; useful behind an "
-            "internal/private PKI."
+            "system trust store; useful behind an internal/private PKI. "
+            "Incompatible with --no-verify."
         ),
     )
     parser.add_argument(
@@ -245,7 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Verify the chain against the hashed CA certificates in this "
             "directory (OpenSSL c_rehash layout) instead of the system trust "
-            "store. Requires --verify; may be combined with --cafile."
+            "store. Incompatible with --no-verify; may be combined with --cafile."
         ),
     )
     parser.add_argument(
@@ -724,6 +750,7 @@ def _render(
     summary: bool = False,
     exporter: str | None = None,
     fields: list[str] | None = None,
+    schema: int = 2,
     errors: list[tuple[str | None, str]] = (),
 ) -> int | None:
     """Print the collected results and return an optional exit-code override.
@@ -778,7 +805,10 @@ def _render(
             end="",
         )
     elif as_json:
-        print(format_json([info for _, info, _ in results]))
+        if schema == 1:
+            print(format_json([info for _, info, _ in results]))
+        else:
+            print(format_json_v2(results, version=__version__))
     else:
         blocks = []
         for target, info, _ in results:
@@ -845,7 +875,7 @@ def main() -> None:
     if args.critical_days is not None and args.critical_days > args.days:
         parser.error("--critical-days must be less than or equal to --days.")
     if (args.cafile or args.capath) and not args.verify:
-        parser.error("--cafile/--capath require --verify.")
+        parser.error("--cafile/--capath cannot be combined with --no-verify.")
     if args.servername and args.file:
         parser.error("--servername applies to host targets, not --file.")
     if args.min_tls_version and args.file:
@@ -937,6 +967,7 @@ def main() -> None:
         summary=args.summary,
         exporter=args.exporter,
         fields=args.field,
+        schema=args.schema,
         errors=errors,
     )
     if args.exit_zero:

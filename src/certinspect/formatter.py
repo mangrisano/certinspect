@@ -138,9 +138,105 @@ def format_json(data: dict | list) -> str:
     """Return an indented JSON representation of an analyzed result.
 
     Accepts either a single ``info`` dict or a list of them (batch mode);
-    datetime and other non-JSON values are rendered via ``default=str``.
+    datetime and other non-JSON values are rendered via ``default=str``. This
+    is the legacy schema (version 1): a flat array with no envelope.
     """
     return json.dumps(data, indent=2, default=str, ensure_ascii=False)
+
+
+def _isoformat(value: object) -> object:
+    """Render a datetime as an ISO 8601 string, pass other values through."""
+    return value.isoformat() if hasattr(value, "isoformat") else value
+
+
+def _chain_certificate_v2(link: dict) -> dict:
+    """Shape one chain-summary entry for the version-2 schema."""
+    return {
+        "subject": link["subject"],
+        "issuer": link["issuer"],
+        "not_after": _isoformat(link["not_valid_after"]),
+        "serial_number": str(link["serial_number"]),
+        "is_ca": link["is_ca"],
+    }
+
+
+def _result_to_v2(target: str | None, info: dict) -> dict:
+    """Transform an analyzed ``info`` dict into a version-2 result object.
+
+    Groups related fields (``validity``, ``key``, ``connection``, ``chain``,
+    ``revocation``, ``policy``), renders dates as ISO 8601, stringifies the
+    serial number to avoid precision loss, and adds the inspected ``target``.
+    Optional sections appear only when the corresponding check ran.
+    """
+    result: dict = {
+        "target": target,
+        "status": info.get("status"),
+        "subject": info["subject"],
+        "issuer": info["issuer"],
+        "serial_number": str(info["serial_number"]),
+        "fingerprint_sha256": info["fingerprint_sha256"],
+        "self_signed": info["self_signed"],
+        "is_ca": info["is_ca"],
+        "san": info["san"],
+        "key": {
+            "size": info["key_size"],
+            "signature_algorithm": info["signature_algorithm"],
+            "usage": info["key_usage"],
+            "extended_usage": info["extended_key_usage"],
+            "weak": info["weak"],
+        },
+        "validity": {
+            "not_before": _isoformat(info["not_valid_before"]),
+            "not_after": _isoformat(info["not_valid_after"]),
+            "days_to_expiry": info["days_to_expire"],
+            "total_days": info["validity_days"],
+        },
+        "sct_count": info.get("sct_count"),
+        "must_staple": info.get("must_staple"),
+        "hostname_match": info.get("hostname_match"),
+    }
+    if info.get("tls_version"):
+        result["connection"] = {
+            "tls_version": info.get("tls_version"),
+            "cipher": info.get("cipher"),
+        }
+    if "chain_trusted" in info or "chain" in info or "chain_warnings" in info:
+        chain: dict = {}
+        if "chain_trusted" in info:
+            chain["trusted"] = info["chain_trusted"]
+            chain["error"] = info.get("chain_error")
+            chain["diagnosis"] = info.get("chain_diagnosis")
+        chain["warnings"] = info.get("chain_warnings", [])
+        if "chain" in info:
+            chain["certificates"] = [_chain_certificate_v2(c) for c in info["chain"]]
+        result["chain"] = chain
+    if info.get("revocation_status"):
+        result["revocation"] = {
+            "status": info["revocation_status"],
+            "detail": info.get("revocation_detail"),
+        }
+    if "policy_violations" in info:
+        result["policy"] = {"violations": info["policy_violations"]}
+    if "pin_match" in info:
+        result["pin_match"] = info["pin_match"]
+    if "expected_san_missing" in info:
+        result["expected_san_missing"] = info["expected_san_missing"]
+    return result
+
+
+def format_json_v2(results: list[tuple[str | None, dict, int]], *, version: str) -> str:
+    """Return the version-2 JSON document for a batch of results.
+
+    Wraps the per-target results in a versioned envelope
+    (``{"schema_version": 2, "certinspect_version": ..., "results": [...]}``)
+    so consumers can detect the schema and evolve safely.
+    """
+    document = {
+        "schema_version": 2,
+        "certinspect_version": version,
+        "results": [_result_to_v2(target, info) for target, info, _ in results],
+    }
+    return json.dumps(document, indent=2, default=str, ensure_ascii=False)
 
 
 def _field_value(target: str | None, info: dict, name: str) -> str:

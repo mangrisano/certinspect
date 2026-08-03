@@ -98,7 +98,7 @@ def test_main_file_human_output(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert())
 
-    code = _run_main(monkeypatch, ["--file", str(cert_path)])
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--no-verify"])
 
     out = capsys.readouterr().out
     assert code == 0
@@ -110,11 +110,11 @@ def test_main_file_json_output(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert())
 
-    code = _run_main(monkeypatch, ["--file", str(cert_path), "--json"])
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--no-verify", "--json"])
 
     assert code == 0
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["subject"] == "CN=example.com"
+    assert data["results"][0]["subject"] == "CN=example.com"
 
 
 def test_apply_profile_fills_unset_policy_options():
@@ -160,7 +160,9 @@ def test_main_profile_lenient_passes_strong_cert(monkeypatch, tmp_path, make_cer
     cert_path = tmp_path / "ok.der"
     cert_path.write_bytes(make_cert())
 
-    code = _run_main(monkeypatch, ["--file", str(cert_path), "--profile", "lenient"])
+    code = _run_main(
+        monkeypatch, ["--file", str(cert_path), "--no-verify", "--profile", "lenient"]
+    )
     assert code == 0
 
 
@@ -171,7 +173,7 @@ def test_main_json_includes_status(monkeypatch, capsys, make_cert):
     )
     _run_main(monkeypatch, ["example.com", "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["status"] == "VALID"
+    assert data["results"][0]["status"] == "VALID"
 
 
 def test_main_json_status_reflects_thresholds(monkeypatch, capsys, make_cert):
@@ -185,7 +187,7 @@ def test_main_json_status_reflects_thresholds(monkeypatch, capsys, make_cert):
         ["example.com", "--days", "30", "--critical-days", "7", "--json"],
     )
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["status"] == "CRITICAL"
+    assert data["results"][0]["status"] == "CRITICAL"
 
 
 def test_main_no_target_and_no_file_exits(monkeypatch, capsys):
@@ -211,21 +213,23 @@ def test_main_invalid_certificate_file_exits(monkeypatch, capsys, tmp_path):
 def test_main_exit_code_valid(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(days_valid=90))
-    code = _run_main(monkeypatch, ["--file", str(cert_path)])
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--no-verify"])
     assert code == 0
 
 
 def test_main_exit_code_expiring(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(days_valid=10))
-    code = _run_main(monkeypatch, ["--file", str(cert_path), "--days", "30"])
+    code = _run_main(
+        monkeypatch, ["--file", str(cert_path), "--no-verify", "--days", "30"]
+    )
     assert code == 3
 
 
 def test_main_exit_code_expired(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(days_valid=-5, days_ago_start=365))
-    code = _run_main(monkeypatch, ["--file", str(cert_path)])
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--no-verify"])
     assert code == 4
 
 
@@ -233,7 +237,7 @@ def test_main_exit_code_not_yet_valid(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     # Validity starts in the future: not usable yet -> exit code 4.
     cert_path.write_bytes(make_cert(days_ago_start=-5, days_valid=90))
-    code = _run_main(monkeypatch, ["--file", str(cert_path)])
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--no-verify"])
     out = capsys.readouterr().out
     assert code == 4
     assert "NOT YET VALID" in out
@@ -247,7 +251,7 @@ def test_main_file_reads_stdin(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
         "sys.stdin", types.SimpleNamespace(buffer=io.BytesIO(cert_bytes))
     )
-    code = _run_main(monkeypatch, ["--file", "-"])
+    code = _run_main(monkeypatch, ["--file", "-", "--no-verify"])
     out = capsys.readouterr().out
     assert code == 0
     assert "CN=example.com" in out
@@ -277,7 +281,7 @@ def test_main_file_verify_trusts_bundled_chain(
 
     assert code == 0
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["chain_trusted"] is True
+    assert data["results"][0]["chain"]["trusted"] is True
 
 
 def test_main_file_verify_untrusted_chain_exits_six(
@@ -292,8 +296,8 @@ def test_main_file_verify_untrusted_chain_exits_six(
 
     assert code == 6
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["chain_trusted"] is False
-    assert "chain_diagnosis" in data[0]
+    assert data["results"][0]["chain"]["trusted"] is False
+    assert data["results"][0]["chain"]["diagnosis"] is not None
 
 
 def test_main_file_chain_lists_every_certificate(
@@ -303,11 +307,13 @@ def test_main_file_chain_lists_every_certificate(
     bundle = tmp_path / "bundle.pem"
     _write_bundle(bundle, [leaf, intermediate, root])
 
-    code = _run_main(monkeypatch, ["--file", str(bundle), "--chain", "--json"])
+    code = _run_main(
+        monkeypatch, ["--file", str(bundle), "--no-verify", "--chain", "--json"]
+    )
 
     assert code == 0
     data = json.loads(capsys.readouterr().out)
-    assert len(data[0]["chain"]) == 3
+    assert len(data["results"][0]["chain"]["certificates"]) == 3
 
 
 def test_main_hostname_match_exit_zero(monkeypatch, capsys, make_cert):
@@ -428,7 +434,7 @@ def test_main_expect_san_in_json(monkeypatch, capsys, make_cert):
     )
     _run_main(monkeypatch, ["example.com", "--expect-san", "api.example.com", "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["expected_san_missing"] == ["api.example.com"]
+    assert data["results"][0]["expected_san_missing"] == ["api.example.com"]
 
 
 def test_main_not_after_max_flags_long_validity(monkeypatch, capsys, make_cert):
@@ -705,13 +711,15 @@ def test_main_policy_violations_in_json(monkeypatch, capsys, make_cert):
     )
     _run_main(monkeypatch, ["example.com", "--min-key-size", "2048", "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert len(data[0]["policy_violations"]) == 1
+    assert len(data["results"][0]["policy"]["violations"]) == 1
 
 
 def test_main_field_prints_selected_value(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(san=["example.com"], key_size=2048))
-    code = _run_main(monkeypatch, ["--file", str(cert_path), "--field", "key_size"])
+    code = _run_main(
+        monkeypatch, ["--file", str(cert_path), "--no-verify", "--field", "key_size"]
+    )
     out = capsys.readouterr().out
     assert code == 0
     assert out.strip() == "2048"
@@ -776,7 +784,7 @@ def test_main_hostname_match_in_json(monkeypatch, capsys, make_cert):
     )
     _run_main(monkeypatch, ["example.com", "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["hostname_match"] is True
+    assert data["results"][0]["hostname_match"] is True
 
 
 def test_main_file_hostname_match_is_null(monkeypatch, capsys, tmp_path, make_cert):
@@ -784,14 +792,17 @@ def test_main_file_hostname_match_is_null(monkeypatch, capsys, tmp_path, make_ce
     cert_path.write_bytes(make_cert())
     _run_main(monkeypatch, ["--file", str(cert_path), "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["hostname_match"] is None
+    assert data["results"][0]["hostname_match"] is None
 
 
 def test_main_export_writes_pem(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert())
     out_path = tmp_path / "exported.pem"
-    code = _run_main(monkeypatch, ["--file", str(cert_path), "--export", str(out_path)])
+    code = _run_main(
+        monkeypatch,
+        ["--file", str(cert_path), "--no-verify", "--export", str(out_path)],
+    )
     assert code == 0
     content = out_path.read_bytes()
     assert content.startswith(b"-----BEGIN CERTIFICATE-----")
@@ -827,8 +838,39 @@ def test_main_batch_json_is_list(monkeypatch, capsys, make_cert):
     monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
     _run_main(monkeypatch, ["a.com", "b.com", "--json"])
     data = json.loads(capsys.readouterr().out)
+    assert data["schema_version"] == 2
+    assert {item["subject"] for item in data["results"]} == {"CN=a.com", "CN=b.com"}
+
+
+def test_main_json_v2_envelope_and_iso_dates(monkeypatch, capsys, make_cert):
+    from certinspect import __version__
+
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    _run_main(monkeypatch, ["example.com", "--no-verify", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    assert data["schema_version"] == 2
+    assert data["certinspect_version"] == __version__
+    result = data["results"][0]
+    assert result["target"] == "example.com"
+    # ISO 8601 dates use a "T" separator, and the serial number is a string.
+    assert "T" in result["validity"]["not_before"]
+    assert isinstance(result["serial_number"], str)
+
+
+def test_main_json_schema_1_is_legacy_flat_array(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    _run_main(monkeypatch, ["example.com", "--no-verify", "--json", "--schema", "1"])
+    data = json.loads(capsys.readouterr().out)
     assert isinstance(data, list)
-    assert {item["subject"] for item in data} == {"CN=a.com", "CN=b.com"}
+    assert data[0]["subject"] == "CN=example.com"
+    # Legacy dates keep the space separator produced by ``str(datetime)``.
+    assert " " in data[0]["not_valid_before"]
 
 
 def test_main_batch_worst_exit_code(monkeypatch, capsys, make_cert):
@@ -885,8 +927,8 @@ def test_main_tls_info_in_json(monkeypatch, capsys, make_cert):
     )
     _run_main(monkeypatch, ["example.com", "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["tls_version"] == "TLSv1.3"
-    assert data[0]["cipher"] == "TLS_AES_256_GCM_SHA384"
+    assert data["results"][0]["connection"]["tls_version"] == "TLSv1.3"
+    assert data["results"][0]["connection"]["cipher"] == "TLS_AES_256_GCM_SHA384"
 
 
 def test_main_file_has_no_tls_info(monkeypatch, capsys, tmp_path, make_cert):
@@ -894,13 +936,13 @@ def test_main_file_has_no_tls_info(monkeypatch, capsys, tmp_path, make_cert):
     cert_path.write_bytes(make_cert())
     _run_main(monkeypatch, ["--file", str(cert_path), "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert "tls_version" not in data[0]
+    assert "connection" not in data["results"][0]
 
 
 def test_main_quiet_suppresses_valid(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(days_valid=200))
-    code = _run_main(monkeypatch, ["--file", str(cert_path), "--quiet"])
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--no-verify", "--quiet"])
     assert code == 0
     assert capsys.readouterr().out == ""
 
@@ -908,7 +950,10 @@ def test_main_quiet_suppresses_valid(monkeypatch, capsys, tmp_path, make_cert):
 def test_main_quiet_shows_problem(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(days_valid=10))
-    code = _run_main(monkeypatch, ["--file", str(cert_path), "--quiet", "--days", "30"])
+    code = _run_main(
+        monkeypatch,
+        ["--file", str(cert_path), "--no-verify", "--quiet", "--days", "30"],
+    )
     assert code == 3
     assert "Status:" in capsys.readouterr().out
 
@@ -983,8 +1028,8 @@ def test_main_verify_in_json(monkeypatch, capsys, make_cert):
     )
     _run_main(monkeypatch, ["example.com", "--verify", "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["chain_trusted"] is True
-    assert data[0]["revocation_status"] == "GOOD"
+    assert data["results"][0]["chain"]["trusted"] is True
+    assert data["results"][0]["revocation"]["status"] == "GOOD"
 
 
 def test_main_verify_revoked_exit_six(monkeypatch, capsys, make_cert):
@@ -1047,7 +1092,7 @@ def test_main_file_verify_reports_untrusted_self_signed(
     code = _run_main(monkeypatch, ["--file", str(cert_path), "--verify", "--json"])
     data = json.loads(capsys.readouterr().out)
     assert code == 6
-    assert data[0]["chain_trusted"] is False
+    assert data["results"][0]["chain"]["trusted"] is False
 
 
 def _fingerprint(cert_bytes):
@@ -1097,7 +1142,7 @@ def test_main_chain_in_json(monkeypatch, capsys, make_cert):
     monkeypatch.setattr("certinspect.cli.get_server_cert", _const_fetch(cert))
     _run_main(monkeypatch, ["example.com", "--chain", "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert data[0]["chain"][0]["subject"] == "CN=example.com"
+    assert data["results"][0]["chain"]["certificates"][0]["subject"] == "CN=example.com"
 
 
 def test_main_input_reads_targets_from_file(monkeypatch, capsys, tmp_path, make_cert):
@@ -1335,16 +1380,20 @@ def test_main_csv_rejects_exporter(monkeypatch, capsys, make_cert):
     assert "not allowed with" in capsys.readouterr().err
 
 
-def test_main_cafile_requires_verify(monkeypatch, capsys):
-    code = _run_main(monkeypatch, ["example.com", "--cafile", "/tmp/ca.pem"])
+def test_main_cafile_incompatible_with_no_verify(monkeypatch, capsys):
+    code = _run_main(
+        monkeypatch, ["example.com", "--cafile", "/tmp/ca.pem", "--no-verify"]
+    )
     assert code == 2
-    assert "require --verify" in capsys.readouterr().err
+    assert "cannot be combined with --no-verify" in capsys.readouterr().err
 
 
-def test_main_capath_requires_verify(monkeypatch, capsys):
-    code = _run_main(monkeypatch, ["example.com", "--capath", "/tmp/certs"])
+def test_main_capath_incompatible_with_no_verify(monkeypatch, capsys):
+    code = _run_main(
+        monkeypatch, ["example.com", "--capath", "/tmp/certs", "--no-verify"]
+    )
     assert code == 2
-    assert "require --verify" in capsys.readouterr().err
+    assert "cannot be combined with --no-verify" in capsys.readouterr().err
 
 
 def test_main_cafile_forwarded_to_verify_chain(monkeypatch, capsys, make_cert):

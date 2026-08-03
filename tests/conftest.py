@@ -249,3 +249,20 @@ def build_chain(
 def make_chain():
     """Fixture returning the chain builder helper."""
     return build_chain
+
+
+@pytest.fixture(autouse=True)
+def _isolate_network_verification(monkeypatch):
+    """Keep verify-by-default from touching the network in tests.
+
+    Verification is on by default, so a plain host inspection would otherwise
+    open a real handshake and query OCSP/CRL. Stub the two network-bound calls
+    with harmless defaults; tests that exercise verification override them.
+    Offline (`--file`) chain verification is left real — it needs no network.
+    """
+    import certinspect.cli as cli
+
+    monkeypatch.setattr(cli, "verify_chain", lambda *a, **k: (True, None, []))
+    monkeypatch.setattr(
+        cli, "check_revocation", lambda *a, **k: ("UNAVAILABLE", "no responder")
+    )
