@@ -120,7 +120,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN (DNS and IP), SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage, embedded Certificate Transparency SCT count, OCSP Must-Staple flag                                                                                                                                                                                                             |
 | Crypto health      | Signature algorithm & key size, weak-crypto warnings, negotiated TLS version & cipher                                                                                                                                                                                                                                                                                                                                                             |
-| Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); show the server-presented chain (`--chain`)                                                                                                                                                                                                                                                        |
+| Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); offline chain validation of a local bundle with `--file --verify`; show the chain (`--chain`)                                                                                                                                                                                                      |
 | Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain; diagnose _why_ an untrusted chain failed (incomplete / mismatched / untrusted-root / expired) with a fix suggestion                                                                                                                                                                                                                                          |
 | Identity checks    | Hostname match against the certificate, SHA-256 fingerprint pinning (`--pin`), SAN coverage assertions (`--expect-san`), SNI override for backends behind a load balancer (`--servername`)                                                                                                                                                                                                                                                        |
 | Policy enforcement | Opt-in checks that fail (exit code 9): maximum total validity (`--not-after-max`, or `--cab-forum` for the date-aware CA/Browser Forum cap), minimum key size (`--min-key-size`), promote weak-crypto warnings to failures (`--fail-weak`), require embedded Certificate Transparency SCTs (`--require-sct`), require the OCSP Must-Staple extension (`--require-must-staple`), or enforce a minimum negotiated TLS version (`--min-tls-version`) |
@@ -399,6 +399,31 @@ certinspect --file ./new-cert.pem \
   || { echo "cert incomplete, blocking deploy"; exit 1; }
 ```
 
+When the file is a full bundle (leaf + intermediates + root, e.g. exported from
+a PKCS#12), add `--verify` to validate the whole chain **offline** — the same
+check `openssl verify` performs, without a live handshake:
+
+```console
+$ certinspect --file ./bundle.pem --verify
+Subject:        CN=example.com
+Status:         VALID
+...
+Chain trusted:  True
+```
+
+A bundle missing its intermediate fails with exit `6` and an actionable
+diagnosis instead of a cryptic error:
+
+```console
+$ certinspect --file ./leaf-only.pem --verify
+...
+Chain trusted:  False
+WARNING: chain not trusted (validation failed: candidates exhausted: ...)
+Chain diagnosis:INCOMPLETE_CHAIN
+  -> the server sent only the leaf; the intermediate 'GeoTrust TLS RSA CA G1'
+     is missing and is published at http://cacerts.geotrust.com/...crt
+```
+
 ### Check one node behind a load balancer / anycast IP
 
 Connect to a specific backend by IP but present the virtual host via SNI; the
@@ -552,10 +577,10 @@ certinspect example.com --export ./example.com.pem
 | `--csv`                               | Print the results as CSV (one row per target, with a header).                                                                                                                                                                    |
 | `--csv-delimiter SEP`                 | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.                                                                                                                                  |
 | `--quiet`                             | Only print certificates that have a problem.                                                                                                                                                                                     |
-| `--verify`                            | Verify the chain + OCSP/CRL revocation, system trust store (hosts only).                                                                                                                                                         |
+| `--verify`                            | Verify the chain against the system trust store: a verified handshake for a host (plus OCSP/CRL revocation), or the bundle validated offline for `--file`.                                                                       |
 | `--cafile PATH`                       | Verify the chain against this CA bundle (PEM) instead of the system trust store. Requires `--verify`; for internal/private PKI.                                                                                                  |
 | `--capath DIR`                        | Verify the chain against the hashed CA certificates in this directory (OpenSSL `c_rehash` layout). Requires `--verify`; may be combined with `--cafile`.                                                                         |
-| `--chain`                             | Show the certificate chain presented by the server.                                                                                                                                                                              |
+| `--chain`                             | Show the certificate chain: presented by the server for a host, or every certificate in the bundle for `--file`.                                                                                                                 |
 | `--client-cert PATH`                  | Present a client certificate (PEM) for mutual-TLS endpoints (host targets only). Use `--client-key` when the key is stored separately.                                                                                           |
 | `--client-key PATH`                   | Private key (PEM) for `--client-cert` when stored separately from the certificate.                                                                                                                                               |
 | `--proxy URL`                         | Tunnel the connection through an HTTP CONNECT proxy, e.g. `http://proxy:8080` or `http://user:pass@proxy:8080` (host targets only). Without it, the environment proxy (`HTTPS_PROXY`, honouring `NO_PROXY`) is used, like curl.  |
@@ -638,6 +663,11 @@ Valid from:     2026-05-31 21:39:12+00:00
 Valid until:    2026-08-29 21:41:26+00:00
 ...
 ```
+
+When the file is a bundle carrying the whole chain (leaf, intermediates and
+root — for example a PEM exported from a PKCS#12), `--verify` validates that
+chain **offline** and `--chain` lists every certificate in it (see
+[`--verify`](#--verify----cafile-path----capath-dir) and [`--chain`](#--chain)).
 
 ### `--port N` / `--timeout N` — connection tuning
 
@@ -738,6 +768,17 @@ $ certinspect example.com --verify --cafile /path/to/ca-bundle.pem
 ...
 Chain trusted:  True
 Revocation:     GOOD
+```
+
+With `--file`, `--verify` validates the chain contained in the bundle
+**offline** (no network): the leaf is checked against the system trust store —
+or `--cafile`/`--capath` for an internal PKI — using the bundle's own
+intermediates, exactly like `openssl verify`. Revocation is not queried offline.
+
+```console
+$ certinspect --file ./bundle.pem --verify
+...
+Chain trusted:  True
 ```
 
 ### `--chain`
