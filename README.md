@@ -120,7 +120,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Certificate facts  | Validity & days to expiry, total validity period, subject & issuer, SAN (DNS and IP), SHA-256 fingerprint, CA / self-signed flags, key usage & extended key usage, embedded Certificate Transparency SCT count, OCSP Must-Staple flag                                                                                                                                                                                                             |
 | Crypto health      | Signature algorithm & key size, weak-crypto warnings, negotiated TLS version & cipher                                                                                                                                                                                                                                                                                                                                                             |
-| Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (`--verify`), or a private/internal CA bundle (`--cafile`/`--capath`); offline chain validation of a local bundle with `--file --verify`; show the chain (`--chain`)                                                                                                                                                                                                      |
+| Trust & revocation | Chain verification + OCSP/CRL revocation against the system trust store (on by default; `--no-verify` to skip), or a private/internal CA bundle (`--cafile`/`--capath`); offline chain validation of a local bundle with `--file`; show the chain (`--chain`)                                                                                                                                                                                     |
 | Chain hygiene      | Warn about expired or soon-to-expire intermediate/root CA certificates in the chain; diagnose _why_ an untrusted chain failed (incomplete / mismatched / untrusted-root / expired) with a fix suggestion                                                                                                                                                                                                                                          |
 | Identity checks    | Hostname match against the certificate, SHA-256 fingerprint pinning (`--pin`), SAN coverage assertions (`--expect-san`), SNI override for backends behind a load balancer (`--servername`)                                                                                                                                                                                                                                                        |
 | Policy enforcement | Opt-in checks that fail (exit code 9): maximum total validity (`--not-after-max`, or `--cab-forum` for the date-aware CA/Browser Forum cap), minimum key size (`--min-key-size`), promote weak-crypto warnings to failures (`--fail-weak`), require embedded Certificate Transparency SCTs (`--require-sct`), require the OCSP Must-Staple extension (`--require-must-staple`), or enforce a minimum negotiated TLS version (`--min-tls-version`) |
@@ -134,7 +134,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 
 ## Requirements
 
-- Python >= 3.10
+- Python >= 3.12
 
 ## Installation
 
@@ -292,7 +292,7 @@ SAN:
   - donate.pypi.org
 ```
 
-With `--verify`, certinspect opens a fully verified TLS handshake (chain +
+By default certinspect opens a fully verified TLS handshake (chain +
 hostname against the Python/OpenSSL trust store) and, when the certificate
 advertises an OCSP responder, queries it for the revocation status. If OCSP is
 unavailable, certinspect falls back to the certificate's CRL distribution
@@ -577,9 +577,11 @@ certinspect example.com --export ./example.com.pem
 | `--csv`                               | Print the results as CSV (one row per target, with a header).                                                                                                                                                                    |
 | `--csv-delimiter SEP`                 | Field separator for `--csv` (default `,`). Use `;` for Numbers/Excel in locales that expect it.                                                                                                                                  |
 | `--quiet`                             | Only print certificates that have a problem.                                                                                                                                                                                     |
-| `--verify`                            | Verify the chain against the system trust store: a verified handshake for a host (plus OCSP/CRL revocation), or the bundle validated offline for `--file`.                                                                       |
-| `--cafile PATH`                       | Verify the chain against this CA bundle (PEM) instead of the system trust store. Requires `--verify`; for internal/private PKI.                                                                                                  |
-| `--capath DIR`                        | Verify the chain against the hashed CA certificates in this directory (OpenSSL `c_rehash` layout). Requires `--verify`; may be combined with `--cafile`.                                                                         |
+| `--schema {1,2}`                      | JSON schema version for `--json` (default `2`, the nested/versioned document). `--schema 1` is the legacy flat array.                                                                                                            |
+| `--verify`                            | Force chain verification (already the default). A verified handshake plus OCSP/CRL revocation for a host, or the bundle validated offline for `--file`.                                                                          |
+| `--no-verify`                         | Skip chain verification (and revocation for hosts); only inspect the certificate itself.                                                                                                                                         |
+| `--cafile PATH`                       | Verify the chain against this CA bundle (PEM) instead of the system trust store; for internal/private PKI. Incompatible with `--no-verify`.                                                                                      |
+| `--capath DIR`                        | Verify the chain against the hashed CA certificates in this directory (OpenSSL `c_rehash` layout). Incompatible with `--no-verify`; may be combined with `--cafile`.                                                             |
 | `--chain`                             | Show the certificate chain: presented by the server for a host, or every certificate in the bundle for `--file`.                                                                                                                 |
 | `--client-cert PATH`                  | Present a client certificate (PEM) for mutual-TLS endpoints (host targets only). Use `--client-key` when the key is stored separately.                                                                                           |
 | `--client-key PATH`                   | Private key (PEM) for `--client-cert` when stored separately from the certificate.                                                                                                                                               |
@@ -687,38 +689,70 @@ Status:         VALID
 
 ### `--json`
 
+The JSON output is a versioned document: an envelope with `schema_version`,
+the producing `certinspect_version`, and a `results` array (one object per
+target). Fields are grouped by domain, dates are ISO 8601 and the serial
+number is a string to avoid precision loss. Since verification is on by
+default, `chain` and `revocation` appear unless you pass `--no-verify`.
+
 ```console
 $ certinspect example.com --json
-[
-  {
-    "subject": "CN=example.com",
-    "issuer": "CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US",
-    "not_valid_before": "2026-05-31 21:39:12+00:00",
-    "not_valid_after": "2026-08-29 21:41:26+00:00",
-    "serial_number": 35428337808578903465180920265426569102,
-    "signature_algorithm": "ecdsa-with-SHA256",
-    "days_to_expire": 64,
-    "validity_days": 90,
-    "key_size": 256,
-    "san": ["example.com", "*.example.com"],
-    "fingerprint_sha256": "BE:AB:14:CF:39:67:8F:DA:...",
-    "is_ca": false,
-    "self_signed": false,
-    "key_usage": ["digital_signature"],
-    "extended_key_usage": ["serverAuth"],
-    "weak": [],
-    "tls_version": "TLSv1.3",
-    "cipher": "TLS_AES_256_GCM_SHA384",
-    "hostname_match": true,
-    "status": "VALID"
-  }
-]
+{
+  "schema_version": 2,
+  "certinspect_version": "2.0.0",
+  "results": [
+    {
+      "target": "example.com",
+      "status": "VALID",
+      "subject": "CN=example.com",
+      "issuer": "CN=Cloudflare TLS Issuing ECC CA 3,O=SSL Corporation,C=US",
+      "serial_number": "35428337808578903465180920265426569102",
+      "fingerprint_sha256": "BE:AB:14:CF:39:67:8F:DA:...",
+      "self_signed": false,
+      "is_ca": false,
+      "san": ["example.com", "*.example.com"],
+      "key": {
+        "size": 256,
+        "signature_algorithm": "ecdsa-with-SHA256",
+        "usage": ["digital_signature"],
+        "extended_usage": ["serverAuth"],
+        "weak": []
+      },
+      "validity": {
+        "not_before": "2026-05-31T21:39:12+00:00",
+        "not_after": "2026-08-29T21:41:26+00:00",
+        "days_to_expiry": 64,
+        "total_days": 90
+      },
+      "sct_count": 2,
+      "must_staple": false,
+      "hostname_match": true,
+      "connection": {"tls_version": "TLSv1.3", "cipher": "TLS_AES_256_GCM_SHA384"},
+      "chain": {"trusted": true, "error": null, "diagnosis": null, "warnings": []},
+      "revocation": {"status": "GOOD", "detail": null}
+    }
+  ]
+}
 ```
 
 The `status` field mirrors the human report's `Status` line (`VALID`,
 `EXPIRING`, `CRITICAL`, `EXPIRED`, `NOT YET VALID` or `INVALID DATES`) and
 honors `--days` / `--critical-days`, so a JSON consumer gets the verdict
 without re-deriving it from the dates.
+
+Need the pre-2.0 flat array (no envelope, dates via `str()`, integer serial)?
+Pass `--schema 1`:
+
+```console
+$ certinspect example.com --json --schema 1
+[
+  {
+    "subject": "CN=example.com",
+    "not_valid_before": "2026-05-31 21:39:12+00:00",
+    "status": "VALID"
+  }
+]
+```
 
 ### `--csv` / `--csv-delimiter SEP`
 
@@ -744,12 +778,13 @@ $ echo $?
 0
 ```
 
-### `--verify` (+ `--cafile PATH` / `--capath DIR`)
+### `--verify` / `--no-verify` (+ `--cafile PATH` / `--capath DIR`)
 
-Adds `Chain trusted` and `Revocation` to the report.
+Verification is on by default, adding `Chain trusted` and `Revocation` to the
+report. Pass `--no-verify` to skip it and only inspect the certificate itself.
 
 ```console
-$ certinspect example.com --verify
+$ certinspect example.com
 ...
 Hostname match: True
 Chain trusted:  True
