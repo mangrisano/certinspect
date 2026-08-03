@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-03
+
+This is a major release with **breaking changes** to the default JSON output,
+the verification default and the supported Python versions. See the migration
+notes under each item.
+
+### Changed
+
+- **Verification is now on by default.** A plain host inspection opens a
+  verified handshake and queries OCSP/CRL, and `--file` validates the bundled
+  chain offline — the `Chain trusted`/`Revocation` rows (and exit code 6 on an
+  untrusted or revoked certificate) now appear without `--verify`. Pass
+  `--no-verify` to restore the old inspect-only behavior. `--verify` is kept as
+  an explicit no-op. `--cafile`/`--capath` are now incompatible with
+  `--no-verify` (previously they required `--verify`).
+- **`--json` emits a new, versioned schema (version 2) by default.** The output
+  is now an envelope — `{"schema_version": 2, "certinspect_version": ...,
+"results": [...]}` — where each result carries the inspected `target`, groups
+  related fields under `validity`, `key`, `connection`, `chain`, `revocation`
+  and `policy`, renders dates as ISO 8601 (`T` separator) and stringifies the
+  serial number to avoid precision loss. Pass `--schema 1` to keep the legacy
+  flat array (unchanged from 1.x) while you migrate.
+- **Dropped Python 3.10 and 3.11.** The minimum supported version is now
+  Python 3.12.
+
+### Added
+
+- `--no-verify` flag to skip chain verification (and revocation for hosts).
+- `--schema {1,2}` flag to select the `--json` schema version (default `2`).
+
 ## [1.13.0] - 2026-08-03
 
 ### Added
@@ -396,7 +426,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.13.0...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/mangrisano/certinspect/compare/v1.13.0...v2.0.0
 [1.13.0]: https://github.com/mangrisano/certinspect/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/mangrisano/certinspect/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/mangrisano/certinspect/compare/v1.10.0...v1.11.0
