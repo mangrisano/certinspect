@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-08-03
+
+### Added
+
+- `--file --verify` now validates the certificate chain **offline**: when the
+  file is a bundle carrying the leaf, its intermediates and (optionally) the
+  root, the leaf is verified against the system trust store — or
+  `--cafile`/`--capath` for an internal PKI — using the bundled intermediates,
+  exactly like `openssl verify`. Sets `chain_trusted` (exit code 6 on failure)
+  and, when it fails, the same `chain_diagnosis` hint as host verification.
+  Revocation is not queried offline.
+- `--file --chain` now lists every certificate in the bundle instead of only
+  the leaf.
+
 ## [1.12.0] - 2026-07-31
 
 ### Added
@@ -382,7 +396,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.12.0...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v1.13.0...HEAD
+[1.13.0]: https://github.com/mangrisano/certinspect/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/mangrisano/certinspect/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/mangrisano/certinspect/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/mangrisano/certinspect/compare/v1.9.2...v1.10.0
