@@ -760,3 +760,79 @@ def test_check_ocsp_soft_fails_on_stale_response(monkeypatch):
     status, detail = fetch._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "UNAVAILABLE"
     assert "stale" in detail
+
+
+# --- offline chain verification --------------------------------------------
+
+
+def _pem(cert):
+    from cryptography.hazmat.primitives import serialization
+
+    return cert.public_bytes(serialization.Encoding.PEM)
+
+
+def test_verify_chain_offline_trusts_a_bundled_chain(make_chain, tmp_path):
+    from certinspect.fetch import verify_chain_offline
+
+    leaf, intermediate, root = make_chain()
+    ca = tmp_path / "root.pem"
+    ca.write_bytes(_pem(root))
+
+    trusted, reason, chain = verify_chain_offline(
+        [leaf, intermediate, root], cafile=str(ca)
+    )
+
+    assert trusted is True
+    assert reason is None
+    assert chain[0].subject == leaf.subject
+    assert len(chain) >= 2
+
+
+def test_verify_chain_offline_rejects_an_untrusted_root(make_chain):
+    from certinspect.fetch import verify_chain_offline
+
+    leaf, intermediate, root = make_chain()
+    # No cafile: the private test root is not in the system trust store.
+    trusted, reason, chain = verify_chain_offline([leaf, intermediate, root])
+
+    assert trusted is False
+    assert reason
+    assert chain == []
+
+
+def test_verify_chain_offline_rejects_an_incomplete_chain(make_chain, tmp_path):
+    from certinspect.fetch import verify_chain_offline
+
+    leaf, _intermediate, root = make_chain()
+    ca = tmp_path / "root.pem"
+    ca.write_bytes(_pem(root))
+
+    # Leaf only, missing the intermediate: no path can be built to the root.
+    trusted, reason, chain = verify_chain_offline([leaf], cafile=str(ca))
+
+    assert trusted is False
+    assert reason
+    assert chain == []
+
+
+def test_verify_chain_offline_needs_a_name(make_cert):
+    from certinspect.fetch import verify_chain_offline
+    from certinspect.parser import load_certificates
+
+    # No SAN and a Common Name that is not a valid hostname: nothing to anchor.
+    certs = load_certificates(make_cert(san=None, common_name="Internal Root"))
+    trusted, reason, chain = verify_chain_offline(certs)
+
+    assert trusted is False
+    assert "name" in reason
+    assert chain == []
+
+
+def test_verify_chain_offline_empty_bundle():
+    from certinspect.fetch import verify_chain_offline
+
+    trusted, reason, chain = verify_chain_offline([])
+
+    assert trusted is False
+    assert reason
+    assert chain == []

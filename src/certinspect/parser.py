@@ -265,6 +265,30 @@ def load_certificate(data: bytes) -> x509.Certificate:
         return x509.load_pem_x509_certificate(data)
 
 
+def load_certificates(data: bytes) -> list[x509.Certificate]:
+    """Load every certificate from a bundle (leaf first), or a single DER cert.
+
+    A ``--file`` source may hold the full chain — leaf, intermediates and root —
+    concatenated in PEM form, optionally wrapped with the ``Bag Attributes``
+    preamble that OpenSSL writes when exporting a PKCS#12. A lone DER file
+    carries a single certificate. Certificates are returned in file order.
+    """
+    if not data:
+        raise CertificateLoadError("There is no certificate to load.")
+    try:
+        return [x509.load_der_x509_certificate(data)]
+    except ValueError:
+        pass
+    try:
+        certs = x509.load_pem_x509_certificates(data)
+    except ValueError as exc:
+        message = f"The certificate could not be parsed: {exc}"
+        raise CertificateLoadError(message) from exc
+    if not certs:
+        raise CertificateLoadError("There is no certificate to load.")
+    return certs
+
+
 def _key_usage(cert: x509.Certificate) -> list[str]:
     """Return the enabled KeyUsage names, or [] if the extension is absent."""
     try:

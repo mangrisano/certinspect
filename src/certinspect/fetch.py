@@ -15,13 +15,14 @@ import socket
 import ssl
 import time
 import urllib.request
+import warnings
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.x509 import ocsp
-from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
+from cryptography.x509 import ocsp, verification
+from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID, NameOID
 
 
 # Standard plaintext ports for the STARTTLS-capable protocols, used as the
@@ -396,6 +397,103 @@ def _verified_chain(ssock: ssl.SSLSocket) -> list[x509.Certificate]:
         return [x509.load_der_x509_certificate(der) for der in getter()]
     except (TypeError, ValueError, ssl.SSLError):
         return []
+
+
+def _trust_anchors(cafile: str | None, capath: str | None) -> list[x509.Certificate]:
+    """Return the trusted root certificates for offline verification.
+
+    Mirror the trust decision of the live ``verify_chain``: use ``cafile`` /
+    ``capath`` when given (an internal/private PKI), otherwise the system trust
+    store. A root the current OpenSSL/cryptography cannot parse (e.g. a legacy
+    certificate with a non-positive serial) is skipped rather than aborting.
+    """
+    if cafile or capath:
+        context = ssl.create_default_context(cafile=cafile, capath=capath)
+    else:
+        context = ssl.create_default_context()
+    anchors: list[x509.Certificate] = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for der in context.get_ca_certs(binary_form=True):
+            try:
+                anchors.append(x509.load_der_x509_certificate(der))
+            except ValueError:
+                continue
+    return anchors
+
+
+def _offline_verification_subject(
+    leaf: x509.Certificate,
+) -> "verification.Subject | None":
+    """Return a verification subject (DNS/IP) taken from the leaf itself.
+
+    Chain trust is name-independent here — hostname matching is reported
+    separately — so the leaf's own first SAN entry (falling back to its Common
+    Name) is used. That turns the verifier's mandatory name check into a no-op
+    while its signature, validity and trust-anchor checks still run. Returns
+    None when the leaf carries no usable name.
+    """
+    try:
+        san = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        san = None
+    if san is not None:
+        dns = san.get_values_for_type(x509.DNSName)
+        if dns:
+            return verification.DNSName(dns[0])
+        ips = san.get_values_for_type(x509.IPAddress)
+        if ips:
+            return verification.IPAddress(ips[0])
+    cn = leaf.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+    if cn:
+        try:
+            return verification.DNSName(cn[0].value)
+        except ValueError:
+            return None
+    return None
+
+
+def verify_chain_offline(
+    certs: list[x509.Certificate],
+    *,
+    cafile: str | None = None,
+    capath: str | None = None,
+) -> tuple[bool, str | None, list[x509.Certificate]]:
+    """Verify a certificate chain held in a local bundle, without a network.
+
+    ``certs`` is the bundle in file order (leaf first, then its intermediates
+    and — optionally — the root). The leaf is validated against the system
+    trust store (or ``cafile``/``capath`` for an internal PKI) using the other
+    certificates as untrusted intermediates, exactly like ``openssl verify``:
+    signatures, validity windows and basic constraints are all checked. Return
+    ``(trusted, reason, chain)`` where ``chain`` is the built path (leaf first)
+    on success and ``reason`` is the failure message otherwise.
+    """
+    if not certs:
+        return False, "there is no certificate to verify", []
+    leaf, intermediates = certs[0], certs[1:]
+    subject = _offline_verification_subject(leaf)
+    if subject is None:
+        return (
+            False,
+            "the certificate has no DNS name or IP address to anchor verification",
+            [],
+        )
+    anchors = _trust_anchors(cafile, capath)
+    if not anchors:
+        return False, "no trusted CA certificates were available", []
+    store = verification.Store(anchors)
+    try:
+        verifier = (
+            verification.PolicyBuilder().store(store).build_server_verifier(subject)
+        )
+    except ValueError:
+        return False, "the certificate has no valid name to anchor verification", []
+    try:
+        verified = verifier.verify(leaf, intermediates)
+    except verification.VerificationError as err:
+        return False, str(err), []
+    return True, None, list(verified)
 
 
 def _aia_urls(cert: x509.Certificate) -> tuple[list[str], list[str]]:

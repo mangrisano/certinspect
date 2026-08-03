@@ -14,6 +14,7 @@ from certinspect.parser import (
     diagnose_chain,
     hostname_matches,
     load_certificate,
+    load_certificates,
     missing_san_names,
     pin_matches,
     policy_violations,
@@ -40,6 +41,34 @@ def test_load_empty_raises_certificate_load_error():
 def test_load_garbage_raises_value_error():
     with pytest.raises(ValueError):
         load_certificate(b"not a certificate")
+
+
+def test_load_certificates_reads_a_pem_bundle(make_cert):
+    from cryptography.hazmat.primitives.serialization import Encoding
+
+    a = make_cert(common_name="a.example.com", encoding=Encoding.PEM)
+    b = make_cert(common_name="b.example.com", encoding=Encoding.PEM)
+    certs = load_certificates(a + b)
+    assert [c.subject.rfc4514_string() for c in certs] == [
+        "CN=a.example.com",
+        "CN=b.example.com",
+    ]
+
+
+def test_load_certificates_reads_a_single_der(der_cert):
+    certs = load_certificates(der_cert)
+    assert len(certs) == 1
+    assert certs[0].subject.rfc4514_string() == "CN=example.com"
+
+
+def test_load_certificates_empty_raises(make_cert):
+    with pytest.raises(CertificateLoadError):
+        load_certificates(b"")
+
+
+def test_load_certificates_garbage_raises():
+    with pytest.raises(CertificateLoadError):
+        load_certificates(b"not a certificate")
 
 
 def test_certificate_load_error_is_value_error():

@@ -253,6 +253,63 @@ def test_main_file_reads_stdin(monkeypatch, capsys, make_cert):
     assert "CN=example.com" in out
 
 
+def _write_bundle(path, certs):
+    from cryptography.hazmat.primitives import serialization
+
+    path.write_bytes(
+        b"".join(c.public_bytes(serialization.Encoding.PEM) for c in certs)
+    )
+
+
+def test_main_file_verify_trusts_bundled_chain(
+    monkeypatch, capsys, tmp_path, make_chain
+):
+    leaf, intermediate, root = make_chain()
+    bundle = tmp_path / "bundle.pem"
+    _write_bundle(bundle, [leaf, intermediate, root])
+    ca = tmp_path / "root.pem"
+    _write_bundle(ca, [root])
+
+    code = _run_main(
+        monkeypatch,
+        ["--file", str(bundle), "--verify", "--cafile", str(ca), "--json"],
+    )
+
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["chain_trusted"] is True
+
+
+def test_main_file_verify_untrusted_chain_exits_six(
+    monkeypatch, capsys, tmp_path, make_chain
+):
+    leaf, intermediate, root = make_chain()
+    bundle = tmp_path / "bundle.pem"
+    _write_bundle(bundle, [leaf, intermediate, root])
+
+    # No --cafile: the private test root is not trusted by the system store.
+    code = _run_main(monkeypatch, ["--file", str(bundle), "--verify", "--json"])
+
+    assert code == 6
+    data = json.loads(capsys.readouterr().out)
+    assert data[0]["chain_trusted"] is False
+    assert "chain_diagnosis" in data[0]
+
+
+def test_main_file_chain_lists_every_certificate(
+    monkeypatch, capsys, tmp_path, make_chain
+):
+    leaf, intermediate, root = make_chain()
+    bundle = tmp_path / "bundle.pem"
+    _write_bundle(bundle, [leaf, intermediate, root])
+
+    code = _run_main(monkeypatch, ["--file", str(bundle), "--chain", "--json"])
+
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert len(data[0]["chain"]) == 3
+
+
 def test_main_hostname_match_exit_zero(monkeypatch, capsys, make_cert):
     monkeypatch.setattr(
         "certinspect.cli.get_server_cert",
@@ -980,12 +1037,17 @@ def test_main_verify_revocation_unavailable_is_soft_fail(
     assert code == 0
 
 
-def test_main_file_verify_is_skipped(monkeypatch, capsys, tmp_path, make_cert):
+def test_main_file_verify_reports_untrusted_self_signed(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    # --file --verify now validates the bundle offline; a self-signed leaf is
+    # not anchored to the system trust store, so it is reported untrusted.
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert())
-    _run_main(monkeypatch, ["--file", str(cert_path), "--verify", "--json"])
+    code = _run_main(monkeypatch, ["--file", str(cert_path), "--verify", "--json"])
     data = json.loads(capsys.readouterr().out)
-    assert "chain_trusted" not in data[0]
+    assert code == 6
+    assert data[0]["chain_trusted"] is False
 
 
 def _fingerprint(cert_bytes):

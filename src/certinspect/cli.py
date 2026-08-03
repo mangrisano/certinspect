@@ -20,9 +20,11 @@ from certinspect.fetch import (
     get_server_cert,
     retry_network,
     verify_chain,
+    verify_chain_offline,
 )
 from certinspect.parser import (
     load_certificate,
+    load_certificates,
     analyze,
     cab_forum_max_validity,
     certificate_status,
@@ -223,8 +225,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--verify",
         action="store_true",
         help=(
-            "Verify the certificate chain against the system trust store "
-            "(host targets only)."
+            "Verify the certificate chain against the system trust store. For a "
+            "host it opens a verified handshake; for --file it validates the "
+            "chain contained in the bundle offline."
         ),
     )
     parser.add_argument(
@@ -248,7 +251,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--chain",
         action="store_true",
-        help="Show the certificate chain presented by the server.",
+        help=(
+            "Show the certificate chain: the one presented by the server for a "
+            "host, or every certificate in the bundle for --file."
+        ),
     )
     parser.add_argument(
         "--client-cert",
@@ -564,8 +570,9 @@ def _inspect(
     The hostname match (and its exit code 5) only applies to host targets;
     with --file it is left as None. When ``servername`` is set it overrides
     both the SNI hostname and the name the hostname match is checked against.
-    Chain verification (exit code 6) is only performed for host targets when
-    ``verify`` is set. A failed ``pin`` check yields exit code 7. When
+    Chain verification (exit code 6) runs for host targets over a verified
+    handshake and, with --file, offline against the certificates bundled in the
+    file. A failed ``pin`` check yields exit code 7. When
     ``expect_san`` names are not all covered by the certificate's SAN the exit
     code is 8. The opt-in policy checks (``not_after_max``/``cab_forum``,
     ``min_key_size``, ``fail_weak``, ``require_sct``, ``require_must_staple``,
@@ -593,7 +600,24 @@ def _inspect(
     # server. Either way the leaf is skipped by chain_expiry_warnings.
     chain_certs: list = []
 
-    if opts.verify and target:
+    # A --file bundle may carry the whole chain; parse it once when it is needed.
+    file_bundle: list | None = None
+    if opts.file and (opts.verify or opts.chain):
+        file_bundle = load_certificates(der)
+
+    if opts.verify and opts.file:
+        trusted, reason, verified = verify_chain_offline(
+            file_bundle, cafile=opts.cafile, capath=opts.capath
+        )
+        info["chain_trusted"] = trusted
+        info["chain_error"] = reason
+        if not trusted:
+            code = 6
+            diagnosis = diagnose_chain(file_bundle)
+            if diagnosis:
+                info["chain_diagnosis"] = diagnosis
+        chain_certs = verified or file_bundle
+    elif opts.verify and target:
         verify_kwargs: dict = {
             "starttls": opts.starttls,
             "cafile": opts.cafile,
@@ -631,15 +655,21 @@ def _inspect(
             code = 6
         chain_certs = verified
 
-    if not chain_certs and conn:
-        chain_certs = conn.get("chain") or []
+    if not chain_certs:
+        if conn:
+            chain_certs = conn.get("chain") or []
+        elif file_bundle is not None:
+            chain_certs = file_bundle
 
     chain_warnings = chain_expiry_warnings(chain_certs, opts.days)
     if chain_warnings:
         info["chain_warnings"] = chain_warnings
 
     if opts.chain:
-        presented = (conn.get("chain") if conn else None) or [cert]
+        if conn:
+            presented = conn.get("chain") or [cert]
+        else:
+            presented = file_bundle or [cert]
         info["chain"] = [chain_summary(c) for c in presented]
 
     if opts.pin:
