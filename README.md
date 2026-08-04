@@ -516,15 +516,16 @@ certinspect --input fleet.txt --max-days 30 --sort expiry --summary \
 ### Pipe results into other tooling
 
 The JSON is a versioned envelope; the per-target objects live under `.results`
-— feed it to `jq`, a dashboard or a script:
+— feed it to [`jpick`](https://github.com/mangrisano/jpick) (a jq-like JSON
+tool), a dashboard or a script:
 
 ```bash
-# Every host sorted by days left
-certinspect --input fleet.txt --concurrency 20 --json \
-  | jq -r '.results | sort_by(.validity.days_to_expiry)[] | "\(.validity.days_to_expiry)d  \(.subject)"'
+# Every host, soonest expiry first (certinspect sorts, jpick formats)
+certinspect --input fleet.txt --concurrency 20 --sort expiry --json \
+  | jpick -r '.results[] | "\(.validity.days_to_expiry)d  \(.subject)"'
 
 # Grab just the SHA-256 fingerprint (e.g. to pin it later)
-certinspect example.com --json | jq -r '.results[0].fingerprint_sha256'
+certinspect example.com --json | jpick -r '.results[0].fingerprint_sha256'
 ```
 
 ### Inspect a service on a non-standard TLS port
@@ -1424,9 +1425,9 @@ esac
 A few one-liners for the terminally curious.
 
 ```bash
-# Sort a whole fleet by soonest expiry, JSON straight into jq
-certinspect --input fleet.txt --concurrency 20 --json \
-  | jq -r '.results | sort_by(.validity.days_to_expiry)[] | "\(.validity.days_to_expiry)d  \(.subject)"'
+# Sort a whole fleet by soonest expiry, JSON straight into jpick
+certinspect --input fleet.txt --concurrency 20 --sort expiry --json \
+  | jpick -r '.results[] | "\(.validity.days_to_expiry)d  \(.subject)"'
 
 # Fail a CI job if anything expires within 14 days (exit 3) or worse
 certinspect --input fleet.txt --days 14 --quiet || exit 1
@@ -1439,7 +1440,7 @@ certinspect --file ./new-cert.pem \
 certinspect 10.0.0.5 --servername api.example.com --verify
 
 # Grab just the SHA-256 fingerprint to pin it later
-certinspect example.com --json | jq -r '.results[0].fingerprint_sha256'
+certinspect example.com --json | jpick -r '.results[0].fingerprint_sha256'
 
 # Daily cron: refresh Prometheus textfile metrics for node_exporter
 certinspect --input fleet.txt --concurrency 20 --exporter prometheus \
