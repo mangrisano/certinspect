@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785829400552,
+  "lastUpdate": 1785829574660,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -225,6 +225,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000014033196421592565",
             "extra": "mean: 10.229261325619024 usec\nrounds: 24215"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "37e64a5e36824a5657704cc72eaee454fafd10e9",
+          "message": "docs: use jpick instead of jq in the pipe examples\n\nReplace the jq one-liners with jpick equivalents; since jpick has no sort_by, let certinspect sort the fleet upstream with --sort expiry and jpick handle the iteration and interpolation.",
+          "timestamp": "2026-08-04T09:45:40+02:00",
+          "tree_id": "0b7401f1c4b424e0ba830bd0b8643cb39347f2f2",
+          "url": "https://github.com/mangrisano/certinspect/commit/37e64a5e36824a5657704cc72eaee454fafd10e9"
+        },
+        "date": 1785829573874,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 102323.54323247836,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000015255973405529297",
+            "extra": "mean: 9.772921933791983 usec\nrounds: 10363"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 17461.63862369735,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000007738811901017899",
+            "extra": "mean: 57.26839396635382 usec\nrounds: 1127"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 99683.2027769346,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001411029310662694",
+            "extra": "mean: 10.03178040173672 usec\nrounds: 22104"
           }
         ]
       }
