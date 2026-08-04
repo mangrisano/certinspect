@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1785780172724,
+  "lastUpdate": 1785829400552,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -180,6 +180,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000014437648843156396",
             "extra": "mean: 10.008657620899621 usec\nrounds: 21815"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "0aeed98fcb4900dc87508767dd61ab3ab860a13f",
+          "message": "docs: update jq examples for schema-2 and vary duplicated examples\n\nThe default --json output is the schema-2 envelope, so the jq recipes now read the per-target objects from .results and use validity.days_to_expiry. Also diversify repeated example commands (revoked/broken hosts, --no-verify contrast) so each occurrence shows something distinct.",
+          "timestamp": "2026-08-04T09:42:52+02:00",
+          "tree_id": "5f8f61d0a243c51396fb457b394ac7e846fb789a",
+          "url": "https://github.com/mangrisano/certinspect/commit/0aeed98fcb4900dc87508767dd61ab3ab860a13f"
+        },
+        "date": 1785829399751,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 96321.33883924133,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014820738948254477",
+            "extra": "mean: 10.381915492983158 usec\nrounds: 11289"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 15793.776101550762,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001945223528769841",
+            "extra": "mean: 63.31608056048178 usec\nrounds: 1142"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 97758.7694915483,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014033196421592565",
+            "extra": "mean: 10.229261325619024 usec\nrounds: 24215"
           }
         ]
       }
