@@ -172,7 +172,7 @@ certinspect example.com --port 8443
 # Custom connection timeout in seconds (default: 5)
 certinspect example.com --timeout 10
 
-# JSON output (always a list of objects)
+# JSON output (schema-2 envelope; per-target objects under .results)
 certinspect example.com --json
 
 # CSV output (one row per target, with a header) for spreadsheets
@@ -447,7 +447,7 @@ certinspect internal.example.lan --verify --cafile ./internal-ca.pem
 exit `6`:
 
 ```bash
-certinspect example.com --verify
+certinspect revoked.example.com --verify
 ```
 
 ### Spot an expired intermediate before it breaks the chain
@@ -515,15 +515,16 @@ certinspect --input fleet.txt --max-days 30 --sort expiry --summary \
 
 ### Pipe results into other tooling
 
-JSON is always a list of objects — feed it to `jq`, a dashboard or a script:
+The JSON is a versioned envelope; the per-target objects live under `.results`
+— feed it to `jq`, a dashboard or a script:
 
 ```bash
 # Every host sorted by days left
 certinspect --input fleet.txt --concurrency 20 --json \
-  | jq -r 'sort_by(.days_to_expire)[] | "\(.days_to_expire)d  \(.subject)"'
+  | jq -r '.results | sort_by(.validity.days_to_expiry)[] | "\(.validity.days_to_expiry)d  \(.subject)"'
 
 # Grab just the SHA-256 fingerprint (e.g. to pin it later)
-certinspect example.com --json | jq -r '.[0].fingerprint_sha256'
+certinspect example.com --json | jq -r '.results[0].fingerprint_sha256'
 ```
 
 ### Inspect a service on a non-standard TLS port
@@ -551,7 +552,7 @@ See every certificate the server sends (leaf → intermediates), to diagnose a
 missing or mis-ordered intermediate:
 
 ```bash
-certinspect example.com --chain
+certinspect broken.example.com --chain
 ```
 
 ### Archive the served certificate
@@ -642,6 +643,8 @@ Cipher:         TLS_AES_256_GCM_SHA384
 Key usage:      digital_signature
 Ext. key usage: serverAuth
 Hostname match: True
+Chain trusted:  True
+Revocation:     GOOD
 
 SAN:
   - example.com
@@ -780,15 +783,15 @@ $ echo $?
 
 ### `--verify` / `--no-verify` (+ `--cafile PATH` / `--capath DIR`)
 
-Verification is on by default, adding `Chain trusted` and `Revocation` to the
-report. Pass `--no-verify` to skip it and only inspect the certificate itself.
+Verification is on by default: a plain inspection already reports `Chain
+trusted` and `Revocation` (see [`target`](#target--inspect-a-host) above). Pass
+`--no-verify` to skip it and inspect only the certificate itself — the two rows
+disappear:
 
 ```console
-$ certinspect example.com
+$ certinspect example.com --no-verify
 ...
 Hostname match: True
-Chain trusted:  True
-Revocation:     GOOD
 
 SAN:
   - example.com
@@ -1423,7 +1426,7 @@ A few one-liners for the terminally curious.
 ```bash
 # Sort a whole fleet by soonest expiry, JSON straight into jq
 certinspect --input fleet.txt --concurrency 20 --json \
-  | jq -r 'sort_by(.days_to_expire)[] | "\(.days_to_expire)d  \(.subject)"'
+  | jq -r '.results | sort_by(.validity.days_to_expiry)[] | "\(.validity.days_to_expiry)d  \(.subject)"'
 
 # Fail a CI job if anything expires within 14 days (exit 3) or worse
 certinspect --input fleet.txt --days 14 --quiet || exit 1
@@ -1436,7 +1439,7 @@ certinspect --file ./new-cert.pem \
 certinspect 10.0.0.5 --servername api.example.com --verify
 
 # Grab just the SHA-256 fingerprint to pin it later
-certinspect example.com --json | jq -r '.[0].fingerprint_sha256'
+certinspect example.com --json | jq -r '.results[0].fingerprint_sha256'
 
 # Daily cron: refresh Prometheus textfile metrics for node_exporter
 certinspect --input fleet.txt --concurrency 20 --exporter prometheus \
