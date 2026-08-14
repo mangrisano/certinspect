@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-08-15
+
+### Fixed
+
+- Package metadata now includes the author email address, so PyPI and package
+  tools expose `Michele Angrisano <michele.angrisano@gmail.com>` instead of an
+  empty author-email field.
+
 ## [2.1.0] - 2026-08-15
 
 ### Added
@@ -441,7 +449,8 @@ notes under each item.
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/mangrisano/certinspect/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/mangrisano/certinspect/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/mangrisano/certinspect/compare/v1.13.0...v2.0.0
 [1.13.0]: https://github.com/mangrisano/certinspect/compare/v1.12.0...v1.13.0
