@@ -371,7 +371,12 @@ def test_verify_chain_ignores_hostname(monkeypatch):
 CRL_URL = "http://crl.example.com/ca.crl"
 
 
-def _build_crl_pki(revoked_serials=()):
+def _build_crl_pki(
+    revoked_serials=(),
+    *,
+    crl_last_update_delta=None,
+    crl_next_update_delta=None,
+):
     """Build a (issuer_cert, leaf_cert, crl) triple for CRL tests.
 
     The issuer is a self-signed CA; the leaf carries a CRLDistributionPoints
@@ -386,6 +391,10 @@ def _build_crl_pki(revoked_serials=()):
     from cryptography.x509.oid import NameOID
 
     now = datetime.now(timezone.utc)
+    if crl_last_update_delta is None:
+        crl_last_update_delta = -timedelta(hours=1)
+    if crl_next_update_delta is None:
+        crl_next_update_delta = timedelta(days=1)
     issuer_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     issuer_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test CA")])
     issuer_cert = (
@@ -428,8 +437,8 @@ def _build_crl_pki(revoked_serials=()):
     crl_builder = (
         x509.CertificateRevocationListBuilder()
         .issuer_name(issuer_name)
-        .last_update(now - timedelta(hours=1))
-        .next_update(now + timedelta(days=1))
+        .last_update(now + crl_last_update_delta)
+        .next_update(now + crl_next_update_delta)
     )
     for serial in revoked_serials:
         crl_builder = crl_builder.add_revoked_certificate(
@@ -478,6 +487,66 @@ def test_check_crl_reports_revoked_when_serial_listed(monkeypatch):
     status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "REVOKED"
     assert "via CRL" in detail
+
+
+def test_check_crl_soft_fails_stale_crl_when_serial_absent(monkeypatch):
+    from datetime import timedelta
+
+    from cryptography.hazmat.primitives import serialization
+
+    from certinspect import fetch
+
+    issuer_cert, leaf_cert, crl = _build_crl_pki(
+        revoked_serials=(),
+        crl_last_update_delta=-timedelta(days=2),
+        crl_next_update_delta=-timedelta(days=1),
+    )
+    der_crl = crl.public_bytes(serialization.Encoding.DER)
+    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+
+    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    assert status == "UNAVAILABLE"
+    assert "stale" in detail
+
+
+def test_check_crl_reports_revoked_even_when_crl_is_stale(monkeypatch):
+    from datetime import timedelta
+
+    from cryptography.hazmat.primitives import serialization
+
+    from certinspect import fetch
+
+    issuer_cert, leaf_cert, crl = _build_crl_pki(
+        revoked_serials=(4242,),
+        crl_last_update_delta=-timedelta(days=2),
+        crl_next_update_delta=-timedelta(days=1),
+    )
+    der_crl = crl.public_bytes(serialization.Encoding.DER)
+    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+
+    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    assert status == "REVOKED"
+    assert "via CRL" in detail
+
+
+def test_check_crl_soft_fails_not_yet_valid_crl_when_serial_absent(monkeypatch):
+    from datetime import timedelta
+
+    from cryptography.hazmat.primitives import serialization
+
+    from certinspect import fetch
+
+    issuer_cert, leaf_cert, crl = _build_crl_pki(
+        revoked_serials=(),
+        crl_last_update_delta=timedelta(days=1),
+        crl_next_update_delta=timedelta(days=2),
+    )
+    der_crl = crl.public_bytes(serialization.Encoding.DER)
+    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+
+    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    assert status == "UNAVAILABLE"
+    assert "not yet valid" in detail
 
 
 def test_check_crl_skips_crl_with_bad_signature(monkeypatch):

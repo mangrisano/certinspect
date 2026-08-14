@@ -571,6 +571,74 @@ def test_main_require_must_staple_passes_when_present(monkeypatch, capsys, make_
     assert code == 0
 
 
+def test_main_require_revocation_check_fails_when_unavailable(
+    monkeypatch, capsys, make_cert
+):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    monkeypatch.setattr(
+        "certinspect.cli.check_revocation",
+        lambda cert, timeout, issuer=None: ("UNAVAILABLE", "OCSP request failed"),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--require-revocation-check"])
+    out = capsys.readouterr().out
+    assert code == 9
+    assert "revocation check did not return GOOD" in out
+
+
+def test_main_require_revocation_check_passes_when_good(monkeypatch, capsys, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    monkeypatch.setattr(
+        "certinspect.cli.check_revocation",
+        lambda cert, timeout, issuer=None: ("GOOD", None),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--require-revocation-check"])
+    assert code == 0
+
+
+def test_main_require_revocation_check_keeps_revoked_exit_six(
+    monkeypatch, capsys, make_cert
+):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    monkeypatch.setattr(
+        "certinspect.cli.check_revocation",
+        lambda cert, timeout, issuer=None: ("REVOKED", "revoked"),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--require-revocation-check"])
+    out = capsys.readouterr().out
+    assert code == 6
+    assert "Policy:         FAIL" in out
+    assert "certificate revoked" in out
+
+
+def test_main_require_revocation_check_rejected_with_file(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    cert_path = tmp_path / "cert.der"
+    cert_path.write_bytes(make_cert())
+    code = _run_main(
+        monkeypatch, ["--file", str(cert_path), "--require-revocation-check"]
+    )
+    assert code == 2
+    assert "host targets" in capsys.readouterr().err
+
+
+def test_main_require_revocation_check_rejected_with_no_verify(monkeypatch, capsys):
+    code = _run_main(
+        monkeypatch, ["example.com", "--no-verify", "--require-revocation-check"]
+    )
+    assert code == 2
+    assert "--no-verify" in capsys.readouterr().err
+
+
 def _fetch_with_tls(cert_bytes, tls_version):
     """Return a get_server_cert replacement negotiating a given TLS version."""
     conn = {"tls_version": tls_version, "cipher": "TLS_AES_256_GCM_SHA384"}
@@ -712,6 +780,25 @@ def test_main_policy_violations_in_json(monkeypatch, capsys, make_cert):
     _run_main(monkeypatch, ["example.com", "--min-key-size", "2048", "--json"])
     data = json.loads(capsys.readouterr().out)
     assert len(data["results"][0]["policy"]["violations"]) == 1
+
+
+def test_main_require_revocation_check_violation_in_json(
+    monkeypatch, capsys, make_cert
+):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"])),
+    )
+    monkeypatch.setattr(
+        "certinspect.cli.check_revocation",
+        lambda cert, timeout, issuer=None: ("UNKNOWN", "responder does not know it"),
+    )
+    _run_main(monkeypatch, ["example.com", "--require-revocation-check", "--json"])
+    data = json.loads(capsys.readouterr().out)
+    violations = data["results"][0]["policy"]["violations"]
+    assert violations == [
+        "revocation check did not return GOOD (UNKNOWN: responder does not know it)"
+    ]
 
 
 def test_main_field_prints_selected_value(monkeypatch, capsys, tmp_path, make_cert):

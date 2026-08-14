@@ -662,6 +662,21 @@ def _load_crl(raw: bytes) -> x509.CertificateRevocationList | None:
             return None
 
 
+def _crl_stale(crl: x509.CertificateRevocationList) -> str | None:
+    """Return a reason when a CRL is outside its validity window."""
+    now = datetime.now(timezone.utc)
+    try:
+        last_update = crl.last_update_utc
+        next_update = crl.next_update_utc
+    except (ValueError, AttributeError):
+        return None
+    if last_update is not None and last_update - _OCSP_CLOCK_SKEW > now:
+        return f"CRL is not yet valid (lastUpdate {last_update})"
+    if next_update is not None and next_update + _OCSP_CLOCK_SKEW < now:
+        return f"CRL is stale (nextUpdate {next_update})"
+    return None
+
+
 def _check_crl(
     cert: x509.Certificate,
     issuer: x509.Certificate | None,
@@ -694,6 +709,9 @@ def _check_crl(
             when = getattr(revoked, "revocation_date_utc", None)
             detail = f"revoked at {when}" if when else "revoked"
             return "REVOKED", f"{detail} (via CRL)"
+        stale = _crl_stale(crl)
+        if stale is not None:
+            return "UNAVAILABLE", stale
         return "GOOD", "via CRL"
 
     return "UNAVAILABLE", "CRL could not be retrieved"

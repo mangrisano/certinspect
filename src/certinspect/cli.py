@@ -93,6 +93,7 @@ class InspectOptions:
     fail_weak: bool = False
     require_sct: bool = False
     require_must_staple: bool = False
+    require_revocation_check: bool = False
     min_tls_version: str | None = None
     client_cert: str | None = None
     client_key: str | None = None
@@ -457,6 +458,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--require-revocation-check",
+        action="store_true",
+        dest="require_revocation_check",
+        help=(
+            "Fail (exit code 9) unless OCSP or CRL returns a definitive GOOD "
+            "revocation verdict. Host targets only; opt-in policy check."
+        ),
+    )
+    parser.add_argument(
         "--min-tls-version",
         choices=("TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"),
         default=None,
@@ -716,6 +726,7 @@ def _inspect(
         or opts.fail_weak
         or opts.require_sct
         or opts.require_must_staple
+        or opts.require_revocation_check
         or opts.min_tls_version is not None
     ):
         not_after_max = opts.not_after_max
@@ -730,10 +741,25 @@ def _inspect(
             require_must_staple=opts.require_must_staple,
             min_tls_version=opts.min_tls_version,
         )
+        if opts.require_revocation_check:
+            violation = _revocation_policy_violation(info)
+            if violation is not None:
+                violations.append(violation)
         info["policy_violations"] = violations
-        if violations:
+        if violations and info.get("revocation_status") != "REVOKED":
             code = 9
     return info, code
+
+
+def _revocation_policy_violation(info: dict) -> str | None:
+    """Return a policy violation when revocation was not proven GOOD."""
+    status = info.get("revocation_status")
+    if status == "GOOD":
+        return None
+    detail = info.get("revocation_detail")
+    if detail:
+        return f"revocation check did not return GOOD ({status}: {detail})"
+    return f"revocation check did not return GOOD ({status or 'not run'})"
 
 
 def _render(
@@ -880,6 +906,10 @@ def main() -> None:
         parser.error("--servername applies to host targets, not --file.")
     if args.min_tls_version and args.file:
         parser.error("--min-tls-version applies to host targets, not --file.")
+    if args.require_revocation_check and args.file:
+        parser.error("--require-revocation-check applies to host targets, not --file.")
+    if args.require_revocation_check and not args.verify:
+        parser.error("--require-revocation-check cannot be combined with --no-verify.")
     if args.client_key and not args.client_cert:
         parser.error("--client-key requires --client-cert.")
     if args.proxy and args.no_proxy:

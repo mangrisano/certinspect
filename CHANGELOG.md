@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-15
+
+### Added
+
+- `--require-revocation-check`, an opt-in policy check for strict CI/audit use
+  cases that fails with exit code 9 unless OCSP or CRL returns a definitive
+  `GOOD` verdict. The default remains browser-like soft-fail behavior.
+
+### Fixed
+
+- CRL fallback now checks the CRL `lastUpdate`/`nextUpdate` freshness before
+  treating an absent serial number as a `GOOD` revocation verdict; stale or
+  not-yet-valid CRLs soft-fail as `UNAVAILABLE`, while an explicit revoked
+  serial still reports `REVOKED`.
+
 ## [2.0.0] - 2026-08-03
 
 This is a major release with **breaking changes** to the default JSON output,
@@ -426,7 +441,8 @@ notes under each item.
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/mangrisano/certinspect/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/mangrisano/certinspect/compare/v1.13.0...v2.0.0
 [1.13.0]: https://github.com/mangrisano/certinspect/compare/v1.12.0...v1.13.0
 [1.12.0]: https://github.com/mangrisano/certinspect/compare/v1.11.0...v1.12.0
