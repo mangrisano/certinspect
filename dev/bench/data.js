@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786745854163,
+  "lastUpdate": 1786746248300,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -315,6 +315,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000016016627533946533",
             "extra": "mean: 9.710419226825294 usec\nrounds: 21418"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "cb3a441dd49deaf110ff5adf957e6108ed41a39c",
+          "message": "chore(release): 2.1.1",
+          "timestamp": "2026-08-15T00:23:50+02:00",
+          "tree_id": "5f4d9bab1117b2e16c399aff4d3a70050113acbd",
+          "url": "https://github.com/mangrisano/certinspect/commit/cb3a441dd49deaf110ff5adf957e6108ed41a39c"
+        },
+        "date": 1786746247792,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 99217.06914472731,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000013193569956476263",
+            "extra": "mean: 10.078910903337674 usec\nrounds: 10483"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 17431.92693742963,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000006747306094331279",
+            "extra": "mean: 57.36600454954935 usec\nrounds: 1099"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 100696.44266873089,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014408292742310652",
+            "extra": "mean: 9.930837410908147 usec\nrounds: 14878"
           }
         ]
       }
