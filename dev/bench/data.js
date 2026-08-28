@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1786746248300,
+  "lastUpdate": 1787943600699,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -360,6 +360,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000014408292742310652",
             "extra": "mean: 9.930837410908147 usec\nrounds: 14878"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "8bca304deb6a2b1e18c06e5e59237dd971d01325",
+          "message": "chore(deps): bump minimum dependency versions\n\nUpdate cryptography, pytest, ruff, and prometheus-client minimum\nversions to their latest releases.\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>",
+          "timestamp": "2026-08-28T20:59:37+02:00",
+          "tree_id": "54fbce37a253b829ca3dc8e67c179aef1bb1edc1",
+          "url": "https://github.com/mangrisano/certinspect/commit/8bca304deb6a2b1e18c06e5e59237dd971d01325"
+        },
+        "date": 1787943600067,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 105811.16296868707,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001299448830742073",
+            "extra": "mean: 9.450798686485776 usec\nrounds: 10963"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 17462.806633871343,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000056783331850031636",
+            "extra": "mean: 57.26456353587357 usec\nrounds: 1086"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 98301.20883101886,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001701096337568783",
+            "extra": "mean: 10.17281488083238 usec\nrounds: 21894"
           }
         ]
       }
