@@ -17,14 +17,14 @@ classifiers = [
     "Topic :: Security :: Cryptography",
 ]
 dependencies = [
-    "cryptography>=42.0.0",
+    "cryptography>=50.0.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "ruff>=0.4.0",
-    "prometheus-client>=0.20.0",
+    "pytest>=9.1.0",
+    "ruff>=0.16.0",
+    "prometheus-client>=0.26.0",
 ]
 
 [project.urls]
