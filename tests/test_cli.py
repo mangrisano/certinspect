@@ -217,6 +217,69 @@ def test_main_expect_issuer_requires_discover_only(monkeypatch):
     assert code == 2
 
 
+def test_main_discover_only_csv(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "certinspect.cli.discover_certificates",
+        lambda domain, timeout: _discover_only_certs("CN=Test CA"),
+    )
+    code = _run_main(
+        monkeypatch, ["--discover", "example.com", "--discover-only", "--csv"]
+    )
+    out = capsys.readouterr()
+    assert code == 0
+    assert "domain,hostnames,issuer,not_before,not_after" in out.out
+    assert "example.com,h0.example.com,CN=Test CA," in out.out
+
+
+def test_main_discover_only_csv_marks_unexpected_issuer(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "certinspect.cli.discover_certificates",
+        lambda domain, timeout: _discover_only_certs("CN=Sketchy CA"),
+    )
+    code = _run_main(
+        monkeypatch,
+        [
+            "--discover",
+            "example.com",
+            "--discover-only",
+            "--csv",
+            "--expect-issuer",
+            "Let's Encrypt",
+        ],
+    )
+    out = capsys.readouterr()
+    assert code == 9
+    assert "not_after,unexpected_issuer" in out.out
+    assert out.out.rstrip().endswith(",yes")
+
+
+def test_main_discover_only_uses_discover_timeout(monkeypatch):
+    seen = {}
+
+    def _fake(domain, timeout):
+        seen["timeout"] = timeout
+        return []
+
+    monkeypatch.setattr("certinspect.cli.discover_certificates", _fake)
+    _run_main(
+        monkeypatch,
+        ["--discover", "x.com", "--discover-only", "--discover-timeout", "12"],
+    )
+    assert seen["timeout"] == 12.0
+
+
+def test_main_discover_timeout_defaults_to_30(monkeypatch):
+    seen = {}
+
+    def _fake(domain, timeout):
+        seen["timeout"] = timeout
+        return []
+
+    monkeypatch.setattr("certinspect.cli.discover_certificates", _fake)
+    _run_main(monkeypatch, ["--discover", "x.com", "--discover-only"])
+    assert seen["timeout"] == 30.0
+
+
 def test_main_retries_transient_failure(monkeypatch, make_cert):
     monkeypatch.setattr("certinspect.fetch._RETRY_BACKOFF_SECONDS", 0)
     calls = {"n": 0}

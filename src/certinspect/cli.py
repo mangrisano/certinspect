@@ -8,6 +8,8 @@ with a status code reflecting the worst certificate state found.
 """
 
 import argparse
+import csv
+import io
 import json
 import sys
 import ssl
@@ -372,7 +374,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Discover hostnames from Certificate Transparency logs (crt.sh) for "
             "DOMAIN and inspect each one, surfacing forgotten or shadow "
             "certificates. Repeat the flag for several domains. Host targets "
-            "only; uses --timeout for the crt.sh query."
+            "only; the crt.sh query uses --discover-timeout."
         ),
     )
     parser.add_argument(
@@ -397,6 +399,18 @@ def build_parser() -> argparse.ArgumentParser:
             "none of these substrings (case-insensitive) and exit with code 9, "
             "turning the CT inventory into a mis-issuance check. Repeat to "
             'allow several issuers, e.g. --expect-issuer "Let\'s Encrypt".'
+        ),
+    )
+    parser.add_argument(
+        "--discover-timeout",
+        type=float,
+        default=30.0,
+        metavar="N",
+        dest="discover_timeout",
+        help=(
+            "Timeout in seconds for the Certificate Transparency (crt.sh) query "
+            "used by --discover (default: 30). Separate from --timeout, since "
+            "the log search can be slower than a TLS handshake."
         ),
     )
     parser.add_argument(
@@ -954,7 +968,7 @@ def _run_discover_only(args: argparse.Namespace) -> None:
     rows: list[tuple[str, DiscoveredCert, bool]] = []
     for domain in args.discover:
         try:
-            certs = discover_certificates(domain, args.timeout)
+            certs = discover_certificates(domain, args.discover_timeout)
         except (OSError, ValueError) as err:
             print(f"error: discovery for {domain}: {err}", file=sys.stderr)
             sys.exit(1)
@@ -987,6 +1001,25 @@ def _run_discover_only(args: argparse.Namespace) -> None:
                 record["unexpected_issuer"] = unexpected
             payload.append(record)
         print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
+    elif args.csv:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter=args.csv_delimiter, lineterminator="\n")
+        header = ["domain", "hostnames", "issuer", "not_before", "not_after"]
+        if expected:
+            header.append("unexpected_issuer")
+        writer.writerow(header)
+        for domain, cert, unexpected in rows:
+            record = [
+                domain,
+                " ".join(cert.hostnames),
+                cert.issuer,
+                cert.not_before,
+                cert.not_after,
+            ]
+            if expected:
+                record.append("yes" if unexpected else "no")
+            writer.writerow(record)
+        print(buffer.getvalue(), end="")
     else:
         for _, cert, unexpected in rows:
             line = f"{cert.not_after}\t{cert.issuer}\t{', '.join(cert.hostnames)}"
@@ -1055,7 +1088,7 @@ def main() -> None:
     if args.discover:
         for domain in args.discover:
             try:
-                found = discover_hostnames(domain, args.timeout)
+                found = discover_hostnames(domain, args.discover_timeout)
             except (OSError, ValueError) as err:
                 print(f"error: discovery for {domain}: {err}", file=sys.stderr)
                 sys.exit(1)

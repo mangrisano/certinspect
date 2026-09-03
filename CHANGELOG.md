@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--expect-issuer SUBSTRING` (repeatable) turns the `--discover-only` inventory
   into a mis-issuance check: any certificate whose issuer matches none of the
   substrings (case-insensitive) is flagged and the command exits with code 9.
+- `--discover-only` also honors `--csv` (with `--csv-delimiter`), writing the CT
+  inventory as a spreadsheet-friendly table.
+- `--discover-timeout N` sets the timeout for the crt.sh query separately from
+  `--timeout` (default 30 seconds), since a log search can be slower than a TLS
+  handshake.
 
 ## [2.1.1] - 2026-08-15
 
