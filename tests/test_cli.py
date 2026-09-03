@@ -78,6 +78,32 @@ def test_main_separate_timeouts_passed_as_tuple(monkeypatch, make_cert):
     assert seen["timeout"] == (2.0, 8.0)
 
 
+def test_main_discover_inspects_found_hosts(monkeypatch, make_cert, capsys):
+    monkeypatch.setattr(
+        "certinspect.cli.discover_hostnames",
+        lambda domain, timeout: ["a.example.com", "b.example.com"],
+    )
+
+    def _fetch(host, port, timeout, **kwargs):
+        return make_cert(san=[host]), CONN
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    code = _run_main(monkeypatch, ["--discover", "example.com", "--no-verify"])
+    out = capsys.readouterr()
+    assert code == 0
+    assert "=== a.example.com ===" in out.out
+    assert "=== b.example.com ===" in out.out
+    assert "discovered 2 hostname(s) for example.com" in out.err
+
+
+def test_main_discover_requires_a_result(monkeypatch):
+    monkeypatch.setattr(
+        "certinspect.cli.discover_hostnames", lambda domain, timeout: []
+    )
+    code = _run_main(monkeypatch, ["--discover", "example.com"])
+    assert code == 2
+
+
 def test_main_retries_transient_failure(monkeypatch, make_cert):
     monkeypatch.setattr("certinspect.fetch._RETRY_BACKOFF_SECONDS", 0)
     calls = {"n": 0}

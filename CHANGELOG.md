@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--discover DOMAIN` enumerates hostnames from Certificate Transparency logs
+  (crt.sh) for a domain and inspects each one, surfacing forgotten or shadow
+  certificates. Repeat the flag for several domains; host targets only.
+
 ## [2.1.1] - 2026-08-15
 
 ### Fixed

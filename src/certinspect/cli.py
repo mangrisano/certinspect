@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from urllib.parse import urlsplit
 from certinspect import __version__
+from certinspect.discover import discover_hostnames
 from certinspect.fetch import (
     STARTTLS_PORTS,
     check_revocation,
@@ -356,6 +357,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Read additional targets from a file (one per line, '#' comments "
             "allowed); use '-' to read from standard input."
+        ),
+    )
+    parser.add_argument(
+        "--discover",
+        metavar="DOMAIN",
+        action="append",
+        help=(
+            "Discover hostnames from Certificate Transparency logs (crt.sh) for "
+            "DOMAIN and inspect each one, surfacing forgotten or shadow "
+            "certificates. Repeat the flag for several domains. Host targets "
+            "only; uses --timeout for the crt.sh query."
         ),
     )
     parser.add_argument(
@@ -918,6 +930,8 @@ def main() -> None:
         parser.error(
             "--client-cert/--proxy/--no-proxy apply to host targets, not --file."
         )
+    if args.discover and args.file:
+        parser.error("--discover applies to host targets, not --file.")
 
     extra_targets = []
     if args.input:
@@ -929,14 +943,36 @@ def main() -> None:
         except OSError as err:
             print(f"error: {err}", file=sys.stderr)
             sys.exit(1)
-    if not args.target and not extra_targets and not args.file:
+    discovered_targets: list[str] = []
+    if args.discover:
+        for domain in args.discover:
+            try:
+                found = discover_hostnames(domain, args.timeout)
+            except (OSError, ValueError) as err:
+                print(f"error: discovery for {domain}: {err}", file=sys.stderr)
+                sys.exit(1)
+            if found:
+                print(
+                    f"discovered {len(found)} hostname(s) for {domain}",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"warning: no certificates found for {domain}", file=sys.stderr)
+            discovered_targets.extend(found)
+
+    if (
+        not args.target
+        and not extra_targets
+        and not discovered_targets
+        and not args.file
+    ):
         parser.error("There is no target or no file to inspect.")
 
     # A single --file source has no host; otherwise iterate over the targets.
     if args.file:
         targets: list[str | None] = [None]
     else:
-        targets = [*args.target, *extra_targets]
+        targets = [*args.target, *extra_targets, *discovered_targets]
 
     # With STARTTLS, fall back to the protocol's standard port unless the user
     # passed --port explicitly (i.e. it differs from the 443 default).
