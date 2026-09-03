@@ -8,13 +8,18 @@ with a status code reflecting the worst certificate state found.
 """
 
 import argparse
+import json
 import sys
 import ssl
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from urllib.parse import urlsplit
 from certinspect import __version__
-from certinspect.discover import discover_certificates, discover_hostnames
+from certinspect.discover import (
+    DiscoveredCert,
+    discover_certificates,
+    discover_hostnames,
+)
 from certinspect.fetch import (
     STARTTLS_PORTS,
     check_revocation,
@@ -380,6 +385,18 @@ def build_parser() -> argparse.ArgumentParser:
             "tab-separated, soonest expiry first — without connecting to any "
             "host, then exit. Wildcard certificates are included. Handy for a "
             "fast CT inventory or spotting a certificate from an unexpected CA."
+        ),
+    )
+    parser.add_argument(
+        "--expect-issuer",
+        metavar="SUBSTRING",
+        action="append",
+        dest="expect_issuer",
+        help=(
+            "With --discover-only, flag any certificate whose issuer contains "
+            "none of these substrings (case-insensitive) and exit with code 9, "
+            "turning the CT inventory into a mis-issuance check. Repeat to "
+            'allow several issuers, e.g. --expect-issuer "Let\'s Encrypt".'
         ),
     )
     parser.add_argument(
@@ -914,13 +931,27 @@ def _apply_profile(args: argparse.Namespace) -> None:
         args.cab_forum = True
 
 
+def _issuer_is_expected(issuer: str, expected: list[str]) -> bool:
+    """Return True when the issuer matches at least one expected substring.
+
+    Matching is a case-insensitive substring test, so a short brand fragment
+    like "Let's Encrypt" recognizes every CA name that contains it.
+    """
+    lowered = issuer.lower()
+    return any(token.lower() in lowered for token in expected)
+
+
 def _run_discover_only(args: argparse.Namespace) -> None:
     """List the CT inventory for the --discover domains and exit.
 
-    Prints one tab-separated line per certificate (expiry, issuer, hostnames),
-    soonest expiry first, so the whole Certificate Transparency picture — dead
-    hosts and unexpected issuers included — is visible without a live handshake.
+    Prints one certificate per line (expiry, issuer, hostnames), soonest expiry
+    first, so the whole Certificate Transparency picture — dead hosts and
+    unexpected issuers included — is visible without a live handshake. With
+    --expect-issuer, certificates from any other CA are flagged and the exit
+    code becomes 9; with --json the inventory is emitted as a JSON array.
     """
+    expected = args.expect_issuer or []
+    rows: list[tuple[str, DiscoveredCert, bool]] = []
     for domain in args.discover:
         try:
             certs = discover_certificates(domain, args.timeout)
@@ -935,8 +966,41 @@ def _run_discover_only(args: argparse.Namespace) -> None:
         else:
             print(f"warning: no certificates found for {domain}", file=sys.stderr)
         for cert in certs:
-            print(f"{cert.not_after}\t{cert.issuer}\t{', '.join(cert.hostnames)}")
-    sys.exit(0)
+            unexpected = bool(expected) and not _issuer_is_expected(
+                cert.issuer, expected
+            )
+            rows.append((domain, cert, unexpected))
+
+    unexpected_count = sum(1 for _, _, unexpected in rows if unexpected)
+
+    if args.json:
+        payload = []
+        for domain, cert, unexpected in rows:
+            record = {
+                "domain": domain,
+                "hostnames": list(cert.hostnames),
+                "issuer": cert.issuer,
+                "not_before": cert.not_before,
+                "not_after": cert.not_after,
+            }
+            if expected:
+                record["unexpected_issuer"] = unexpected
+            payload.append(record)
+        print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
+    else:
+        for _, cert, unexpected in rows:
+            line = f"{cert.not_after}\t{cert.issuer}\t{', '.join(cert.hostnames)}"
+            print(f"{line}\tUNEXPECTED" if unexpected else line)
+
+    if expected and unexpected_count:
+        print(
+            f"warning: {unexpected_count} certificate(s) from an unexpected issuer",
+            file=sys.stderr,
+        )
+
+    if args.exit_zero:
+        sys.exit(0)
+    sys.exit(9 if unexpected_count else 0)
 
 
 def main() -> None:
@@ -971,6 +1035,8 @@ def main() -> None:
         parser.error("--discover applies to host targets, not --file.")
     if args.discover_only and not args.discover:
         parser.error("--discover-only requires --discover.")
+    if args.expect_issuer and not args.discover_only:
+        parser.error("--expect-issuer requires --discover-only.")
 
     if args.discover_only:
         _run_discover_only(args)

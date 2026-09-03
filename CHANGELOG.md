@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--discover` domain(s) — expiry, issuer and hostnames, tab-separated and
   soonest expiry first, wildcards included — without connecting to any host.
   Useful for a fast audit or spotting a certificate from an unexpected CA.
+- `--discover-only` now honors `--json`, emitting the CT inventory as a JSON
+  array (one object per certificate: domain, hostnames, issuer, validity).
+- `--expect-issuer SUBSTRING` (repeatable) turns the `--discover-only` inventory
+  into a mis-issuance check: any certificate whose issuer matches none of the
+  substrings (case-insensitive) is flagged and the command exits with code 9.
 
 ## [2.1.1] - 2026-08-15
 

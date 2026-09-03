@@ -135,6 +135,88 @@ def test_main_discover_only_requires_discover(monkeypatch):
     assert code == 2
 
 
+def test_issuer_is_expected_matches_case_insensitive_substring():
+    from certinspect.cli import _issuer_is_expected
+
+    assert _issuer_is_expected("C=US, O=Let's Encrypt, CN=R3", ["let's encrypt"])
+    assert not _issuer_is_expected("CN=Some Other CA", ["let's encrypt"])
+
+
+def _discover_only_certs(*issuers):
+    from certinspect.discover import DiscoveredCert
+
+    return [
+        DiscoveredCert(
+            hostnames=(f"h{i}.example.com",),
+            issuer=issuer,
+            not_before="2024-01-01T00:00:00",
+            not_after=f"2024-0{i + 1}-01T00:00:00",
+        )
+        for i, issuer in enumerate(issuers)
+    ]
+
+
+def test_main_discover_only_json_emits_array(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "certinspect.cli.discover_certificates",
+        lambda domain, timeout: _discover_only_certs("CN=Test CA"),
+    )
+    code = _run_main(
+        monkeypatch, ["--discover", "example.com", "--discover-only", "--json"]
+    )
+    out = capsys.readouterr()
+    assert code == 0
+    assert json.loads(out.out) == [
+        {
+            "domain": "example.com",
+            "hostnames": ["h0.example.com"],
+            "issuer": "CN=Test CA",
+            "not_before": "2024-01-01T00:00:00",
+            "not_after": "2024-01-01T00:00:00",
+        }
+    ]
+
+
+def test_main_discover_only_expect_issuer_flags_unexpected(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "certinspect.cli.discover_certificates",
+        lambda domain, timeout: _discover_only_certs(
+            "C=US, O=Let's Encrypt, CN=R3", "CN=Sketchy CA"
+        ),
+    )
+    code = _run_main(
+        monkeypatch,
+        [
+            "--discover",
+            "example.com",
+            "--discover-only",
+            "--expect-issuer",
+            "Let's Encrypt",
+        ],
+    )
+    out = capsys.readouterr()
+    assert code == 9
+    assert "CN=Sketchy CA\th1.example.com\tUNEXPECTED" in out.out
+    assert "1 certificate(s) from an unexpected issuer" in out.err
+
+
+def test_main_discover_only_expect_issuer_all_match_exit_0(monkeypatch):
+    monkeypatch.setattr(
+        "certinspect.cli.discover_certificates",
+        lambda domain, timeout: _discover_only_certs("C=US, O=Let's Encrypt, CN=R3"),
+    )
+    code = _run_main(
+        monkeypatch,
+        ["--discover", "x.com", "--discover-only", "--expect-issuer", "Let's Encrypt"],
+    )
+    assert code == 0
+
+
+def test_main_expect_issuer_requires_discover_only(monkeypatch):
+    code = _run_main(monkeypatch, ["--expect-issuer", "X", "--discover", "x.com"])
+    assert code == 2
+
+
 def test_main_retries_transient_failure(monkeypatch, make_cert):
     monkeypatch.setattr("certinspect.fetch._RETRY_BACKOFF_SECONDS", 0)
     calls = {"n": 0}
