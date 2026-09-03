@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--discover DOMAIN` enumerates hostnames from Certificate Transparency logs
   (crt.sh) for a domain and inspects each one, surfacing forgotten or shadow
   certificates. Repeat the flag for several domains; host targets only.
+- `--discover-only` lists the Certificate Transparency inventory for the
+  `--discover` domain(s) — expiry, issuer and hostnames, tab-separated and
+  soonest expiry first, wildcards included — without connecting to any host.
+  Useful for a fast audit or spotting a certificate from an unexpected CA.
 
 ## [2.1.1] - 2026-08-15
 

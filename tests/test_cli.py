@@ -104,6 +104,37 @@ def test_main_discover_requires_a_result(monkeypatch):
     assert code == 2
 
 
+def test_main_discover_only_lists_ct_inventory(monkeypatch, capsys):
+    from certinspect.discover import DiscoveredCert
+
+    monkeypatch.setattr(
+        "certinspect.cli.discover_certificates",
+        lambda domain, timeout: [
+            DiscoveredCert(
+                hostnames=("api.example.com",),
+                issuer="CN=Test CA",
+                not_before="2024-01-01T00:00:00",
+                not_after="2024-04-01T00:00:00",
+            )
+        ],
+    )
+
+    def _never(*a, **k):
+        raise AssertionError("discover-only must not open a connection")
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _never)
+    code = _run_main(monkeypatch, ["--discover", "example.com", "--discover-only"])
+    out = capsys.readouterr()
+    assert code == 0
+    assert "2024-04-01T00:00:00\tCN=Test CA\tapi.example.com" in out.out
+    assert "discovered 1 certificate(s) for example.com" in out.err
+
+
+def test_main_discover_only_requires_discover(monkeypatch):
+    code = _run_main(monkeypatch, ["--discover-only"])
+    assert code == 2
+
+
 def test_main_retries_transient_failure(monkeypatch, make_cert):
     monkeypatch.setattr("certinspect.fetch._RETRY_BACKOFF_SECONDS", 0)
     calls = {"n": 0}

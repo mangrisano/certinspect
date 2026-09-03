@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
 from urllib.parse import urlsplit
 from certinspect import __version__
-from certinspect.discover import discover_hostnames
+from certinspect.discover import discover_certificates, discover_hostnames
 from certinspect.fetch import (
     STARTTLS_PORTS,
     check_revocation,
@@ -368,6 +368,18 @@ def build_parser() -> argparse.ArgumentParser:
             "DOMAIN and inspect each one, surfacing forgotten or shadow "
             "certificates. Repeat the flag for several domains. Host targets "
             "only; uses --timeout for the crt.sh query."
+        ),
+    )
+    parser.add_argument(
+        "--discover-only",
+        action="store_true",
+        dest="discover_only",
+        help=(
+            "With --discover, list the certificates Certificate Transparency "
+            "knows for the domain(s) — expiry, issuer and hostnames, "
+            "tab-separated, soonest expiry first — without connecting to any "
+            "host, then exit. Wildcard certificates are included. Handy for a "
+            "fast CT inventory or spotting a certificate from an unexpected CA."
         ),
     )
     parser.add_argument(
@@ -902,6 +914,31 @@ def _apply_profile(args: argparse.Namespace) -> None:
         args.cab_forum = True
 
 
+def _run_discover_only(args: argparse.Namespace) -> None:
+    """List the CT inventory for the --discover domains and exit.
+
+    Prints one tab-separated line per certificate (expiry, issuer, hostnames),
+    soonest expiry first, so the whole Certificate Transparency picture — dead
+    hosts and unexpected issuers included — is visible without a live handshake.
+    """
+    for domain in args.discover:
+        try:
+            certs = discover_certificates(domain, args.timeout)
+        except (OSError, ValueError) as err:
+            print(f"error: discovery for {domain}: {err}", file=sys.stderr)
+            sys.exit(1)
+        if certs:
+            print(
+                f"discovered {len(certs)} certificate(s) for {domain}",
+                file=sys.stderr,
+            )
+        else:
+            print(f"warning: no certificates found for {domain}", file=sys.stderr)
+        for cert in certs:
+            print(f"{cert.not_after}\t{cert.issuer}\t{', '.join(cert.hostnames)}")
+    sys.exit(0)
+
+
 def main() -> None:
     """CLI entry point."""
     parser = build_parser()
@@ -932,6 +969,11 @@ def main() -> None:
         )
     if args.discover and args.file:
         parser.error("--discover applies to host targets, not --file.")
+    if args.discover_only and not args.discover:
+        parser.error("--discover-only requires --discover.")
+
+    if args.discover_only:
+        _run_discover_only(args)
 
     extra_targets = []
     if args.input:
