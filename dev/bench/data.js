@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788450526655,
+  "lastUpdate": 1789909953464,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -450,6 +450,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000010804726009350733",
             "extra": "mean: 6.262194715710246 usec\nrounds: 26721"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "d977a31edb2a4a9d2c1086ea50a80c6bbf26175d",
+          "message": "docs: include --require-revocation-check in the exit code 9 table",
+          "timestamp": "2026-09-20T15:11:51+02:00",
+          "tree_id": "333e4a2f6671a613423378556755624b4d4c9d30",
+          "url": "https://github.com/mangrisano/certinspect/commit/d977a31edb2a4a9d2c1086ea50a80c6bbf26175d"
+        },
+        "date": 1789909953009,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 104330.06291412101,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014093630196406085",
+            "extra": "mean: 9.584964985817628 usec\nrounds: 11938"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 17421.333846645255,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000006790914467301712",
+            "extra": "mean: 57.400886109106125 usec\nrounds: 1159"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 99268.2783210606,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000013983497442049638",
+            "extra": "mean: 10.073711531147222 usec\nrounds: 23337"
           }
         ]
       }
