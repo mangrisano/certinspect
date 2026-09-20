@@ -9,7 +9,7 @@ import csv
 import io
 import json
 
-from certinspect.exit_codes import ExitCode
+from certinspect.exit_codes import ExitCode, Status
 from certinspect.models import CertificateInfo
 from certinspect.parser import certificate_status
 
@@ -104,10 +104,10 @@ def format_human(
         if not info["pin_match"]:
             lines.append("WARNING: fingerprint does not match the expected pin")
 
-    if status == "CRITICAL":
+    if status == Status.CRITICAL:
         lines.append("")
         lines.append(f"CRITICAL: certificate expires in {days} days")
-    elif status == "NOT YET VALID":
+    elif status == Status.NOT_YET_VALID:
         lines.append("")
         lines.append(
             f"WARNING: certificate is not valid until {info['not_valid_before']}"
@@ -369,9 +369,9 @@ def format_summary(
             status = info.get("status") or certificate_status(
                 info, warn_days, critical_days
             )
-            if status == "CRITICAL":
+            if status == Status.CRITICAL:
                 counts["critical"] += 1
-            elif status == "NOT YET VALID":
+            elif status == Status.NOT_YET_VALID:
                 counts["not-yet-valid"] += 1
             else:
                 counts["expired"] += 1
@@ -496,7 +496,8 @@ def format_prometheus(
         days = info["days_to_expire"]
         is_valid = (
             0
-            if certificate_status(info, warn_days) in ("EXPIRED", "INVALID DATES")
+            if certificate_status(info, warn_days)
+            in (Status.EXPIRED, Status.INVALID_DATES)
             else 1
         )
         up.append(f'certinspect_up{{target="{label}"}} 1')

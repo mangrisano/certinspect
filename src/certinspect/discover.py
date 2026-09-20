@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
-from certinspect.fetch import _http
+from certinspect.httpfetch import _http
 
 # crt.sh search front end. The `%` in the query is a SQL LIKE wildcard matching
 # any subdomain label; `output=json` asks for machine-readable results.

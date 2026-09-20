@@ -9,6 +9,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import dsa, ec, rsa
 from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID, NameOID
+from certinspect.exit_codes import Status
 from certinspect.models import CertificateInfo
 
 
@@ -404,7 +405,7 @@ def analyze(cert: x509.Certificate) -> CertificateInfo:
 
 def certificate_status(
     info: CertificateInfo, warn_days: int = 30, critical_days: int | None = None
-) -> str:
+) -> Status:
     """Return the validity status derived from the analyzed data.
 
     One of: 'INVALID DATES', 'NOT YET VALID', 'EXPIRED', 'CRITICAL',
@@ -415,17 +416,17 @@ def certificate_status(
     window is reported as 'CRITICAL' instead.
     """
     if info["not_valid_before"] > info["not_valid_after"]:
-        return "INVALID DATES"
+        return Status.INVALID_DATES
     if info["not_valid_before"] > datetime.now(timezone.utc):
-        return "NOT YET VALID"
+        return Status.NOT_YET_VALID
     days = info["days_to_expire"]
     if days < 0:
-        return "EXPIRED"
+        return Status.EXPIRED
     if critical_days is not None and days < critical_days:
-        return "CRITICAL"
+        return Status.CRITICAL
     if days < warn_days:
-        return "EXPIRING"
-    return "VALID"
+        return Status.EXPIRING
+    return Status.VALID
 
 
 # CA/Browser Forum TLS validity cap and its scheduled reductions (ballot

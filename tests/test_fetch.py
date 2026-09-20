@@ -2,7 +2,7 @@
 
 import pytest
 
-from certinspect.fetch import check_revocation
+from certinspect.revocation import check_revocation
 from certinspect.parser import load_certificate
 
 
@@ -22,7 +22,7 @@ def test_check_revocation_accepts_explicit_issuer(make_cert):
 
 
 def test_http_rejects_unsupported_scheme():
-    from certinspect.fetch import _http
+    from certinspect.httpfetch import _http
 
     with pytest.raises(ValueError, match="unsupported URL scheme"):
         _http("ftp://example.com/cert", timeout=1.0)
@@ -454,7 +454,7 @@ def _build_crl_pki(
 def test_crl_urls_extracts_http_distribution_points():
     from cryptography.hazmat.primitives import serialization
 
-    from certinspect.fetch import _crl_urls
+    from certinspect.revocation import _crl_urls
 
     _, leaf_cert, _ = _build_crl_pki()
     leaf = load_certificate(leaf_cert.public_bytes(serialization.Encoding.DER))
@@ -464,13 +464,13 @@ def test_crl_urls_extracts_http_distribution_points():
 def test_check_crl_reports_good_when_serial_absent(monkeypatch):
     from cryptography.hazmat.primitives import serialization
 
-    from certinspect import fetch
+    from certinspect import revocation
 
     issuer_cert, leaf_cert, crl = _build_crl_pki(revoked_serials=())
     der_crl = crl.public_bytes(serialization.Encoding.DER)
-    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+    monkeypatch.setattr(revocation, "_http", lambda url, timeout: der_crl)
 
-    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    status, detail = revocation._check_crl(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "GOOD"
     assert detail == "via CRL"
 
@@ -478,13 +478,13 @@ def test_check_crl_reports_good_when_serial_absent(monkeypatch):
 def test_check_crl_reports_revoked_when_serial_listed(monkeypatch):
     from cryptography.hazmat.primitives import serialization
 
-    from certinspect import fetch
+    from certinspect import revocation
 
     issuer_cert, leaf_cert, crl = _build_crl_pki(revoked_serials=(4242,))
     der_crl = crl.public_bytes(serialization.Encoding.DER)
-    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+    monkeypatch.setattr(revocation, "_http", lambda url, timeout: der_crl)
 
-    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    status, detail = revocation._check_crl(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "REVOKED"
     assert "via CRL" in detail
 
@@ -494,7 +494,7 @@ def test_check_crl_soft_fails_stale_crl_when_serial_absent(monkeypatch):
 
     from cryptography.hazmat.primitives import serialization
 
-    from certinspect import fetch
+    from certinspect import revocation
 
     issuer_cert, leaf_cert, crl = _build_crl_pki(
         revoked_serials=(),
@@ -502,9 +502,9 @@ def test_check_crl_soft_fails_stale_crl_when_serial_absent(monkeypatch):
         crl_next_update_delta=-timedelta(days=1),
     )
     der_crl = crl.public_bytes(serialization.Encoding.DER)
-    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+    monkeypatch.setattr(revocation, "_http", lambda url, timeout: der_crl)
 
-    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    status, detail = revocation._check_crl(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "UNAVAILABLE"
     assert "stale" in detail
 
@@ -514,7 +514,7 @@ def test_check_crl_reports_revoked_even_when_crl_is_stale(monkeypatch):
 
     from cryptography.hazmat.primitives import serialization
 
-    from certinspect import fetch
+    from certinspect import revocation
 
     issuer_cert, leaf_cert, crl = _build_crl_pki(
         revoked_serials=(4242,),
@@ -522,9 +522,9 @@ def test_check_crl_reports_revoked_even_when_crl_is_stale(monkeypatch):
         crl_next_update_delta=-timedelta(days=1),
     )
     der_crl = crl.public_bytes(serialization.Encoding.DER)
-    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+    monkeypatch.setattr(revocation, "_http", lambda url, timeout: der_crl)
 
-    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    status, detail = revocation._check_crl(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "REVOKED"
     assert "via CRL" in detail
 
@@ -534,7 +534,7 @@ def test_check_crl_soft_fails_not_yet_valid_crl_when_serial_absent(monkeypatch):
 
     from cryptography.hazmat.primitives import serialization
 
-    from certinspect import fetch
+    from certinspect import revocation
 
     issuer_cert, leaf_cert, crl = _build_crl_pki(
         revoked_serials=(),
@@ -542,9 +542,9 @@ def test_check_crl_soft_fails_not_yet_valid_crl_when_serial_absent(monkeypatch):
         crl_next_update_delta=timedelta(days=2),
     )
     der_crl = crl.public_bytes(serialization.Encoding.DER)
-    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+    monkeypatch.setattr(revocation, "_http", lambda url, timeout: der_crl)
 
-    status, detail = fetch._check_crl(leaf_cert, issuer_cert, timeout=1.0)
+    status, detail = revocation._check_crl(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "UNAVAILABLE"
     assert "not yet valid" in detail
 
@@ -553,17 +553,17 @@ def test_check_crl_skips_crl_with_bad_signature(monkeypatch):
     """A CRL not signed by the issuer is ignored (soft-fail)."""
     from cryptography.hazmat.primitives import serialization
 
-    from certinspect import fetch
+    from certinspect import revocation
 
     _, leaf_cert, _ = _build_crl_pki(revoked_serials=(4242,))
     # CRL signed by an unrelated CA must not be trusted against this issuer.
     other_issuer, _, other_crl = _build_crl_pki(revoked_serials=(4242,))
     der_crl = other_crl.public_bytes(serialization.Encoding.DER)
-    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+    monkeypatch.setattr(revocation, "_http", lambda url, timeout: der_crl)
 
     # Use the first PKI's issuer, whose key did not sign ``other_crl``.
     wrong_issuer, _, _ = _build_crl_pki()
-    status, _ = fetch._check_crl(leaf_cert, wrong_issuer, timeout=1.0)
+    status, _ = revocation._check_crl(leaf_cert, wrong_issuer, timeout=1.0)
     assert status == "UNAVAILABLE"
 
 
@@ -571,13 +571,13 @@ def test_check_revocation_falls_back_to_crl(monkeypatch):
     """With no OCSP responder, check_revocation consults the CRL."""
     from cryptography.hazmat.primitives import serialization
 
-    from certinspect import fetch
+    from certinspect import revocation
 
     issuer_cert, leaf_cert, crl = _build_crl_pki(revoked_serials=(4242,))
     der_crl = crl.public_bytes(serialization.Encoding.DER)
-    monkeypatch.setattr(fetch, "_http", lambda url, timeout: der_crl)
+    monkeypatch.setattr(revocation, "_http", lambda url, timeout: der_crl)
 
-    status, detail = fetch.check_revocation(leaf_cert, issuer=issuer_cert)
+    status, detail = revocation.check_revocation(leaf_cert, issuer=issuer_cert)
     assert status == "REVOKED"
     assert "via CRL" in detail
 
@@ -642,15 +642,15 @@ def test_check_ocsp_soft_fails_on_unparseable_response(monkeypatch):
     signatureAlgorithm the strict ASN.1 parser rejects with a ValueError. That
     must not abort the inspection — the revocation check soft-fails instead.
     """
-    from certinspect import fetch
+    from certinspect import revocation
 
     issuer_cert, leaf_cert = _build_ocsp_pki()
     # Garbage bytes that load_der_ocsp_response cannot parse.
     monkeypatch.setattr(
-        fetch, "_http", lambda url, data=None, timeout=None: b"\x30\x03not-asn1"
+        revocation, "_http", lambda url, data=None, timeout=None: b"\x30\x03not-asn1"
     )
 
-    status, detail = fetch._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
+    status, detail = revocation._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "UNAVAILABLE"
     assert "could not be parsed" in detail
 
@@ -673,40 +673,40 @@ def _addrinfo(ip: str):
 def test_guard_fetch_host_blocks_internal_addresses(monkeypatch, ip):
     """Loopback, link-local (cloud metadata), unspecified and multicast
     targets from a certificate URL must be refused."""
-    from certinspect import fetch
+    from certinspect import httpfetch
 
-    monkeypatch.setattr(fetch.socket, "getaddrinfo", lambda *a, **k: _addrinfo(ip))
+    monkeypatch.setattr(httpfetch.socket, "getaddrinfo", lambda *a, **k: _addrinfo(ip))
     with pytest.raises(ValueError, match="non-routable or internal"):
-        fetch._guard_fetch_host("http://danger.example/x")
+        httpfetch._guard_fetch_host("http://danger.example/x")
 
 
 def test_guard_fetch_host_allows_private_pki(monkeypatch):
     """An internal PKI on an RFC1918 address must stay reachable."""
-    from certinspect import fetch
+    from certinspect import httpfetch
 
     monkeypatch.setattr(
-        fetch.socket, "getaddrinfo", lambda *a, **k: _addrinfo("10.10.0.5")
+        httpfetch.socket, "getaddrinfo", lambda *a, **k: _addrinfo("10.10.0.5")
     )
-    assert fetch._guard_fetch_host("http://ocsp.internal.lan/") is None
+    assert httpfetch._guard_fetch_host("http://ocsp.internal.lan/") is None
 
 
 def test_http_refuses_link_local_metadata_address(monkeypatch):
     """The guard is wired into _http, so a metadata URL raises before urlopen."""
-    from certinspect import fetch
+    from certinspect import httpfetch
 
     monkeypatch.setattr(
-        fetch.socket, "getaddrinfo", lambda *a, **k: _addrinfo("169.254.169.254")
+        httpfetch.socket, "getaddrinfo", lambda *a, **k: _addrinfo("169.254.169.254")
     )
     with pytest.raises(ValueError, match="non-routable or internal"):
-        fetch._http("http://metadata.example/ocsp", timeout=1.0)
+        httpfetch._http("http://metadata.example/ocsp", timeout=1.0)
 
 
 def test_http_caps_oversized_response(monkeypatch):
     """A response larger than the cap is rejected instead of read in full."""
-    from certinspect import fetch
+    from certinspect import httpfetch
 
-    monkeypatch.setattr(fetch, "_guard_fetch_host", lambda url: None)
-    monkeypatch.setattr(fetch, "_MAX_HTTP_RESPONSE_BYTES", 10)
+    monkeypatch.setattr(httpfetch, "_guard_fetch_host", lambda url: None)
+    monkeypatch.setattr(httpfetch, "_MAX_HTTP_RESPONSE_BYTES", 10)
 
     class _Resp:
         def __enter__(self):
@@ -718,9 +718,9 @@ def test_http_caps_oversized_response(monkeypatch):
         def read(self, amt=-1):
             return b"x" * amt
 
-    monkeypatch.setattr(fetch.urllib.request, "urlopen", lambda *a, **k: _Resp())
+    monkeypatch.setattr(httpfetch.urllib.request, "urlopen", lambda *a, **k: _Resp())
     with pytest.raises(ValueError, match="exceeds the"):
-        fetch._http("http://big.example/crl", timeout=1.0)
+        httpfetch._http("http://big.example/crl", timeout=1.0)
 
 
 # --- OCSP response freshness ------------------------------------------------
@@ -799,15 +799,15 @@ def test_check_ocsp_good_when_response_is_fresh(monkeypatch):
 
     from cryptography.x509 import ocsp
 
-    from certinspect import fetch
+    from certinspect import revocation
 
     now = datetime.now(timezone.utc)
     issuer_cert, leaf_cert, der = _signed_ocsp(
         ocsp.OCSPCertStatus.GOOD, now - timedelta(hours=1), now + timedelta(days=1)
     )
-    monkeypatch.setattr(fetch, "_http", lambda url, data=None, timeout=None: der)
+    monkeypatch.setattr(revocation, "_http", lambda url, data=None, timeout=None: der)
 
-    status, _ = fetch._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
+    status, _ = revocation._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "GOOD"
 
 
@@ -818,15 +818,15 @@ def test_check_ocsp_soft_fails_on_stale_response(monkeypatch):
 
     from cryptography.x509 import ocsp
 
-    from certinspect import fetch
+    from certinspect import revocation
 
     now = datetime.now(timezone.utc)
     issuer_cert, leaf_cert, der = _signed_ocsp(
         ocsp.OCSPCertStatus.GOOD, now - timedelta(days=2), now - timedelta(days=1)
     )
-    monkeypatch.setattr(fetch, "_http", lambda url, data=None, timeout=None: der)
+    monkeypatch.setattr(revocation, "_http", lambda url, data=None, timeout=None: der)
 
-    status, detail = fetch._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
+    status, detail = revocation._check_ocsp(leaf_cert, issuer_cert, timeout=1.0)
     assert status == "UNAVAILABLE"
     assert "stale" in detail
 

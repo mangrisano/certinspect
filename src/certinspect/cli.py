@@ -26,12 +26,12 @@ from certinspect.discover import (
 )
 from certinspect.fetch import (
     STARTTLS_PORTS,
-    check_revocation,
     get_server_cert,
     retry_network,
     verify_chain,
     verify_chain_offline,
 )
+from certinspect.revocation import check_revocation
 from certinspect.parser import (
     load_certificate,
     load_certificates,
