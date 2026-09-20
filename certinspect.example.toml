@@ -1,0 +1,40 @@
+# Example --config file for certinspect.
+#
+# Keys use the argparse destination name: a flag's name with the leading
+# "--" dropped and every "-" replaced by "_" (e.g. --not-after-max becomes
+# not_after_max, --no-verify/--verify both become verify). An explicit
+# command-line flag always overrides the value set here.
+#
+# Copy the parts you want into:
+#   ~/.config/certinspect/config.toml   (loaded automatically, no --config needed)
+# or point at a copy of this file explicitly with --config PATH.
+#
+# Run `certinspect --help` for the full, authoritative list of options.
+
+# Warn if a certificate expires within this many days.
+days = 14
+
+# Escalate to CRITICAL once fewer days than this remain (must be <= days).
+# critical_days = 3
+
+# Verify the chain and check revocation by default (the built-in default is
+# already true; set to false here to make --no-verify the default instead).
+# verify = false
+
+# Verify against an internal/private CA bundle instead of the system trust
+# store, e.g. behind a corporate PKI.
+# cafile = "/etc/certinspect/internal-ca.pem"
+
+# Apply a named bundle of opt-in policy checks (see --profile in the README).
+# profile = "standard"
+
+# Inspect hosts in parallel in batch mode, and use the same concurrency for
+# --discover's per-domain queries.
+# concurrency = 10
+
+# Keep a status history for --only-changed (low-noise recurring monitoring).
+# state_file = "/var/lib/certinspect/state.json"
+# only_changed = true
+
+# Print a one-line tally to stderr after every run.
+# summary = true

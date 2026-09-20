@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-20
+
+### Added
+
+- `--config PATH` loads default option values from a TOML file (auto-discovered
+  at `~/.config/certinspect/config.toml` when the flag is omitted); an explicit
+  command-line flag always overrides it.
+- `--file` is now repeatable, inspecting several local certificate files in one
+  run (each reported separately); it can no longer be combined with host
+  targets.
+- `--discover` and `--discover-only` query several domains concurrently
+  (governed by `--concurrency`) instead of one at a time.
+- `--state-file PATH` persists each host's status across runs and
+  `--only-changed` shows only the targets whose status changed since the
+  previous run, for low-noise recurring monitoring.
+- `--print-completion {bash,zsh}` prints a shell completion script generated
+  from the live argument parser.
+- A `Dockerfile` builds a minimal container image running `certinspect`.
+
 ## [2.2.0] - 2026-09-03
 
 ### Added

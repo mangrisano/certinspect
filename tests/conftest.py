@@ -266,3 +266,16 @@ def _isolate_network_verification(monkeypatch):
     monkeypatch.setattr(
         cli, "check_revocation", lambda *a, **k: ("UNAVAILABLE", "no responder")
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_default_config(monkeypatch, tmp_path):
+    """Keep --config auto-discovery from picking up a real user config file.
+
+    Points the default --config location at a path that never exists, so
+    tests get certinspect's built-in defaults unless they pass --config
+    explicitly.
+    """
+    import certinspect.cli as cli
+
+    monkeypatch.setattr(cli, "_DEFAULT_CONFIG_PATH", tmp_path / "unused-config.toml")

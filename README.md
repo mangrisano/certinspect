@@ -107,6 +107,9 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
   - [`--concurrency`](#--concurrency-n)
   - [`--exporter`](#--exporter-nagiosprometheus)
   - [`--version`](#--version)
+  - [`--config`](#--config-path)
+  - [`--state-file` / `--only-changed`](#--state-file-path----only-changed)
+  - [`--print-completion`](#--print-completion-bashzsh)
 - [Monitoring](#monitoring)
 - [Exit codes](#exit-codes)
 - [Recipes](#recipes)
@@ -132,7 +135,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 | Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                                                                                                                                                                                                                                                                                                                                                 |
 | Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Connectivity       | Mutual-TLS client certificates (`--client-cert`/`--client-key`) and HTTP CONNECT proxy tunnelling — explicit (`--proxy`) or from the environment (`HTTPS_PROXY`/`NO_PROXY`, like curl; `--no-proxy` to opt out) — for hosts behind a corporate/cloud egress proxy                                                                                                                                                                                                                                                         |
-| Automation         | Meaningful exit codes for cron/CI (or force success with `--exit-zero`), no telemetry, single runtime dependency                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Automation         | Meaningful exit codes for cron/CI (or force success with `--exit-zero`), no telemetry, single runtime dependency, defaults from a `--config` file, low-noise recurring runs with `--state-file`/`--only-changed`, shell completion (`--print-completion`)                                                                                                                                                                                                                                                                |
 
 ## Requirements
 
@@ -150,6 +153,20 @@ pip install certinspect
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+```
+
+### Docker
+
+```bash
+docker build -t certinspect .
+docker run --rm certinspect example.com
+```
+
+### Shell completion
+
+```bash
+certinspect --print-completion bash | sudo tee /etc/bash_completion.d/certinspect
+certinspect --print-completion zsh > "${fpath[1]}/_certinspect"   # then restart the shell
 ```
 
 ## Usage
@@ -571,7 +588,8 @@ certinspect example.com --export ./example.com.pem
 | Option                                | Description                                                                                                                                                                                                                                                       |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `target...`                           | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`.                                                                                                                                                                                    |
-| `--file PATH`                         | Inspect a local certificate (PEM or DER) instead of a host. Use `-` to read the certificate from standard input.                                                                                                                                                  |
+| `--config PATH`                       | Load default option values from a TOML file (keys use the argparse destination name); an explicit flag always overrides it. Auto-discovered at `~/.config/certinspect/config.toml` when omitted.                                                                |
+| `--file PATH`                         | Inspect a local certificate (PEM or DER) instead of a host. Use `-` to read from standard input. Repeatable to inspect several files in one run; cannot be combined with host targets.                                                                           |
 | `--port N`                            | TCP port to connect to (default: 443).                                                                                                                                                                                                                            |
 | `--timeout N`                         | Connection timeout in seconds (default: 5). Used for both connect and read unless the two below are set.                                                                                                                                                          |
 | `--connect-timeout N`                 | TCP connect timeout in seconds (default: `--timeout`).                                                                                                                                                                                                            |
@@ -604,7 +622,7 @@ certinspect example.com --export ./example.com.pem
 | `--min-tls-version VER`               | Fail (exit 9) when the connection negotiates a TLS version older than `VER` (`TLSv1`, `TLSv1.1`, `TLSv1.2`, `TLSv1.3`). Host targets only; opt-in.                                                                                                                |
 | `--profile {lenient,standard,strict}` | Apply a named bundle of the opt-in policy checks in one go (exit 9 on violation). Intensity ladder, not an official standard; explicit flags override it. See [Policy profiles](#policy-profiles).                                                                |
 | `--input PATH`                        | Read extra targets from a file, one per line ('-' for stdin).                                                                                                                                                                                                     |
-| `--discover DOMAIN`                   | Discover hostnames from Certificate Transparency logs (crt.sh) for DOMAIN and inspect each one, surfacing forgotten or shadow certificates. Repeatable; host targets only.                                                                                        |
+| `--discover DOMAIN`                   | Discover hostnames from Certificate Transparency logs (crt.sh) for DOMAIN and inspect each one, surfacing forgotten or shadow certificates. Repeatable (queried concurrently per `--concurrency`); host targets only.                                            |
 | `--discover-only`                     | With `--discover`, list the CT inventory (expiry, issuer, hostnames, soonest expiry first, wildcards included) for the domain(s) without connecting, then exit. Good for a fast audit or spotting a certificate from an unexpected CA. Supports `--json`/`--csv`. |
 | `--expect-issuer SUBSTRING`           | With `--discover-only`, flag any certificate whose issuer matches none of these substrings (case-insensitive) and exit 9 — a Certificate Transparency mis-issuance check. Repeatable.                                                                             |
 | `--discover-timeout N`                | Timeout in seconds for the `--discover` crt.sh query (default: 30), separate from `--timeout` since a log search can be slower than a handshake.                                                                                                                  |
@@ -618,7 +636,10 @@ certinspect example.com --export ./example.com.pem
 | `--export PATH`                       | Save the inspected certificate as a PEM file at PATH.                                                                                                                                                                                                             |
 | `--starttls {smtp,imap,pop3,ftp}`     | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given).                                                                                                                                                                 |
 | `--exporter {nagios,prometheus}`      | Emit machine-readable monitoring output (ignores `--quiet`).                                                                                                                                                                                                      |
-| `--concurrency N`                     | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved).                                                                                                                                                                                 |
+| `--concurrency N`                     | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved). Also governs `--discover`'s per-domain concurrency.                                                                                                                             |
+| `--state-file PATH`                   | Persist each host target's status across runs at PATH (JSON) and compare against the previous run. Host targets only.                                                                                                                                            |
+| `--only-changed`                      | Show only targets whose status differs from the previous `--state-file` run (a first-seen target counts as changed). Requires `--state-file`; display only.                                                                                                      |
+| `--print-completion {bash,zsh}`       | Print a shell completion script for bash or zsh to stdout, then exit. Generated from the parser, so it always matches the installed flags.                                                                                                                       |
 | `--version`                           | Print the version and exit.                                                                                                                                                                                                                                       |
 
 ## Options in action
@@ -681,6 +702,23 @@ When the file is a bundle carrying the whole chain (leaf, intermediates and
 root — for example a PEM exported from a PKCS#12), `--verify` validates that
 chain **offline** and `--chain` lists every certificate in it (see
 [`--verify`](#--verify----cafile-path----capath-dir) and [`--chain`](#--chain)).
+
+Repeat `--file` to inspect several local certificates in one run; each result
+is then labelled with its path (like a host target's `=== host ===` header) so
+you can tell them apart. `--file` cannot be combined with host targets.
+
+```console
+$ certinspect --file leaf.pem --file expired.pem --no-verify
+=== leaf.pem ===
+Subject:        CN=example.com
+Status:         VALID
+...
+
+=== expired.pem ===
+Subject:        CN=old.example.com
+Status:         EXPIRED
+...
+```
 
 ### `--port N` / `--timeout N` — connection tuning
 
@@ -1333,6 +1371,65 @@ OK: example.com certificate VALID (64 days to expiry) | days=64;30;0
 ```console
 $ certinspect --version
 certinspect 1.0.1
+```
+
+### `--config PATH`
+
+Set defaults for a repeated invocation instead of a long, repeated command
+line. Keys use the argparse destination name (a flag's name with `-`
+replaced by `_`, e.g. `not-after-max` → `not_after_max`); an explicit
+command-line flag always overrides the config value.
+
+```console
+$ cat certinspect.toml
+days = 14
+verify = false
+
+$ certinspect example.com --config certinspect.toml
+# same as: certinspect example.com --days 14 --no-verify
+
+$ certinspect example.com --config certinspect.toml --days 30
+# --days 30 on the command line wins over the config's --days 14
+```
+
+Without `--config`, `~/.config/certinspect/config.toml` is loaded
+automatically if it exists — handy for a machine-wide default (e.g. a house
+`--profile` or `--cafile`) without wrapping the binary in a shell alias. A key
+that is not a real option, or that collides with another inside the same
+mutually exclusive group (e.g. setting both `json` and `csv`), is rejected at
+startup rather than silently ignored.
+
+A commented [`certinspect.example.toml`](certinspect.example.toml) ships in
+the repository with the most commonly-set options — copy the ones you want.
+
+### `--state-file PATH` / `--only-changed`
+
+For a recurring job (cron, CI) where you only care when something *changes* —
+not being reminded every run that a certificate is still fine. `--state-file`
+records each host's status in a small JSON file; `--only-changed` then limits
+the report to targets whose status differs from the previous run (a target
+seen for the first time counts as changed). The exit code still reflects
+every target, `--only-changed` affects the display only.
+
+```console
+$ certinspect example.com other.com --state-file /var/lib/certinspect/state.json --only-changed
+=== other.com ===
+Status:         EXPIRING
+...
+# example.com is still VALID since the last run, so it is left out here.
+```
+
+The state file is always brought up to date, whether or not `--only-changed`
+is given, so the next run has a fresh baseline to compare against.
+
+### `--print-completion {bash,zsh}`
+
+Generated straight from the argument parser, so it always matches the
+installed version's flags.
+
+```console
+$ certinspect --print-completion bash | sudo tee /etc/bash_completion.d/certinspect
+$ certinspect --print-completion zsh > "${fpath[1]}/_certinspect"
 ```
 
 ### Fetch error (`exit 1`)

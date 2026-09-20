@@ -28,10 +28,36 @@ def test_build_parser_defaults():
 
 def test_build_parser_options():
     args = build_parser().parse_args(["--file", "cert.pem", "--port", "8443", "--json"])
-    assert args.file == "cert.pem"
+    assert args.file == ["cert.pem"]
     assert args.port == 8443
     assert args.json is True
     assert args.target == []
+
+
+def test_build_parser_file_repeatable():
+    args = build_parser().parse_args(["--file", "a.pem", "--file", "b.pem"])
+    assert args.file == ["a.pem", "b.pem"]
+
+
+def test_main_print_completion_bash(monkeypatch, capsys):
+    code = _run_main(monkeypatch, ["--print-completion", "bash"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "complete -F _certinspect_completion certinspect" in out
+    assert "--state-file" in out
+
+
+def test_main_print_completion_zsh(monkeypatch, capsys):
+    code = _run_main(monkeypatch, ["--print-completion", "zsh"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "#compdef certinspect" in out
+    assert "--state-file" in out
+
+
+def test_main_print_completion_rejects_unknown_shell(monkeypatch, capsys):
+    code = _run_main(monkeypatch, ["--print-completion", "fish"])
+    assert code == 2
 
 
 def test_build_parser_multiple_targets():
@@ -96,12 +122,87 @@ def test_main_discover_inspects_found_hosts(monkeypatch, make_cert, capsys):
     assert "discovered 2 hostname(s) for example.com" in out.err
 
 
+def test_main_discover_multiple_domains_preserves_order(monkeypatch, make_cert, capsys):
+    def _hostnames(domain, timeout):
+        return [f"host.{domain}"]
+
+    monkeypatch.setattr("certinspect.cli.discover_hostnames", _hostnames)
+
+    def _fetch(host, port, timeout, **kwargs):
+        return make_cert(san=[host]), CONN
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--discover",
+            "a.com",
+            "--discover",
+            "b.com",
+            "--discover",
+            "c.com",
+            "--concurrency",
+            "3",
+            "--no-verify",
+        ],
+    )
+    out = capsys.readouterr()
+    assert code == 0
+    positions = [
+        out.out.index(f"=== host.{d} ===") for d in ("a.com", "b.com", "c.com")
+    ]
+    assert positions == sorted(positions)
+
+
+def test_main_discover_one_domain_errors_still_exits_one(monkeypatch):
+    def _hostnames(domain, timeout):
+        if domain == "bad.com":
+            raise ValueError("boom")
+        return ["host.good.com"]
+
+    monkeypatch.setattr("certinspect.cli.discover_hostnames", _hostnames)
+    code = _run_main(monkeypatch, ["--discover", "good.com", "--discover", "bad.com"])
+    assert code == 1
+
+
 def test_main_discover_requires_a_result(monkeypatch):
     monkeypatch.setattr(
         "certinspect.cli.discover_hostnames", lambda domain, timeout: []
     )
     code = _run_main(monkeypatch, ["--discover", "example.com"])
     assert code == 2
+
+
+def test_main_discover_only_multiple_domains_preserves_order(monkeypatch, capsys):
+    from certinspect.discover import DiscoveredCert
+
+    def _certs(domain, timeout):
+        return [
+            DiscoveredCert(
+                hostnames=(f"host.{domain}",),
+                issuer="CN=Test CA",
+                not_before="2024-01-01T00:00:00",
+                not_after="2024-04-01T00:00:00",
+            )
+        ]
+
+    monkeypatch.setattr("certinspect.cli.discover_certificates", _certs)
+    code = _run_main(
+        monkeypatch,
+        [
+            "--discover",
+            "a.com",
+            "--discover",
+            "b.com",
+            "--discover-only",
+            "--concurrency",
+            "2",
+        ],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    positions = [out.index(f"host.{d}") for d in ("a.com", "b.com")]
+    assert positions == sorted(positions)
 
 
 def test_main_discover_only_lists_ct_inventory(monkeypatch, capsys):
@@ -443,6 +544,53 @@ def test_main_exit_code_not_yet_valid(monkeypatch, capsys, tmp_path, make_cert):
     out = capsys.readouterr().out
     assert code == 4
     assert "NOT YET VALID" in out
+
+
+def test_main_file_multiple_paths_labels_each(monkeypatch, capsys, tmp_path, make_cert):
+    cert_a = tmp_path / "a.der"
+    cert_a.write_bytes(make_cert(san=["a.example.com"]))
+    cert_b = tmp_path / "b.der"
+    cert_b.write_bytes(make_cert(san=["b.example.com"]))
+
+    code = _run_main(
+        monkeypatch,
+        ["--file", str(cert_a), "--file", str(cert_b), "--no-verify"],
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert f"=== {cert_a} ===" in out
+    assert f"=== {cert_b} ===" in out
+
+
+def test_main_file_multiple_paths_one_error_continues(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    good = tmp_path / "good.der"
+    good.write_bytes(make_cert())
+    missing = tmp_path / "missing.der"
+
+    code = _run_main(
+        monkeypatch,
+        ["--file", str(good), "--file", str(missing), "--no-verify"],
+    )
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert str(missing) in err
+
+
+def test_main_file_with_host_target_is_rejected(monkeypatch, capsys, tmp_path):
+    cert_path = tmp_path / "cert.der"
+    code = _run_main(monkeypatch, ["example.com", "--file", str(cert_path)])
+    assert code == 2
+    assert "cannot be combined" in capsys.readouterr().err.lower()
+
+
+def test_main_file_two_stdin_is_rejected(monkeypatch, capsys):
+    code = _run_main(monkeypatch, ["--file", "-", "--file", "-"])
+    assert code == 2
+    assert "standard input" in capsys.readouterr().err.lower()
 
 
 def test_main_file_reads_stdin(monkeypatch, capsys, make_cert):
@@ -1800,6 +1948,169 @@ def test_main_sort_does_not_change_exit_code(monkeypatch, capsys, make_cert):
     code = _run_main(monkeypatch, ["ok.com", "soon.com", "--sort", "host"])
     # soon.com is EXPIRING (code 3); sorting must not alter the exit code.
     assert code == 3
+
+
+def test_main_config_sets_a_default(monkeypatch, capsys, tmp_path, make_cert):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("days = 14\n")
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=10)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["a.com", "--config", str(config_path)])
+    out = capsys.readouterr().out
+    # 10 days left is EXPIRING under the config's 14-day threshold.
+    assert code == 3
+    assert "EXPIRING" in out
+
+
+def test_main_config_cli_flag_overrides_it(monkeypatch, capsys, tmp_path, make_cert):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("days = 30\n")
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=10)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(
+        monkeypatch, ["a.com", "--config", str(config_path), "--days", "5"]
+    )
+    # An explicit --days 5 beats the config's --days 30: 10 days is VALID.
+    assert code == 0
+
+
+def test_main_config_auto_discovered_when_no_flag(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    import certinspect.cli as cli
+
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("days = 14\n")
+    monkeypatch.setattr(cli, "_DEFAULT_CONFIG_PATH", config_path)
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=10)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["a.com"])
+    assert code == 3
+
+
+def test_main_config_missing_file_exits_two(monkeypatch, capsys, tmp_path):
+    missing = tmp_path / "nope.toml"
+    code = _run_main(monkeypatch, ["a.com", "--config", str(missing)])
+    assert code == 2
+    assert "not found" in capsys.readouterr().err
+
+
+def test_main_config_unknown_key_exits_two(monkeypatch, capsys, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("frobnicate = true\n")
+    code = _run_main(monkeypatch, ["a.com", "--config", str(config_path)])
+    assert code == 2
+    assert "unknown option" in capsys.readouterr().err
+
+
+def test_main_config_conflicting_output_flags_exits_two(monkeypatch, capsys, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("json = true\ncsv = true\n")
+    code = _run_main(monkeypatch, ["a.com", "--config", str(config_path)])
+    assert code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_main_config_malformed_toml_exits_two(monkeypatch, capsys, tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("not valid toml [[[")
+    code = _run_main(monkeypatch, ["a.com", "--config", str(config_path)])
+    assert code == 2
+    assert "could not parse" in capsys.readouterr().err
+
+
+def test_main_state_file_first_run_reports_all_as_changed(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=200)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    state_path = tmp_path / "state.json"
+    code = _run_main(
+        monkeypatch,
+        ["a.com", "--state-file", str(state_path), "--only-changed"],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "=== a.com ===" in out
+    saved = json.loads(state_path.read_text())
+    assert saved == {"a.com": "VALID"}
+
+
+def test_main_state_file_only_changed_hides_unchanged_targets(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"a.com": "VALID", "b.com": "EXPIRED"}))
+    certs = {
+        "a.com": make_cert(san=["a.com"], days_valid=200),
+        "b.com": make_cert(san=["b.com"], days_valid=200),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(
+        monkeypatch,
+        ["a.com", "b.com", "--state-file", str(state_path), "--only-changed"],
+    )
+    out = capsys.readouterr().out
+    # a.com is still VALID (unchanged, hidden); b.com went from EXPIRED to
+    # VALID (changed, shown). The exit code still reflects every target.
+    assert "=== a.com ===" not in out
+    assert "=== b.com ===" in out
+    assert code == 0
+
+
+def test_main_state_file_without_only_changed_shows_everything(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"a.com": "VALID"}))
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=200)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(monkeypatch, ["a.com", "--state-file", str(state_path)])
+    out = capsys.readouterr().out
+    assert "=== a.com ===" in out
+    assert code == 0
+
+
+def test_main_state_file_updates_after_run(monkeypatch, tmp_path, make_cert):
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"a.com": "EXPIRED"}))
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=200)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    _run_main(monkeypatch, ["a.com", "--state-file", str(state_path)])
+    assert json.loads(state_path.read_text()) == {"a.com": "VALID"}
+
+
+def test_main_state_file_malformed_is_treated_as_empty(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    state_path = tmp_path / "state.json"
+    state_path.write_text("not json")
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=200)}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    code = _run_main(
+        monkeypatch,
+        ["a.com", "--state-file", str(state_path), "--only-changed"],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "=== a.com ===" in out
+
+
+def test_main_only_changed_requires_state_file(monkeypatch, capsys):
+    code = _run_main(monkeypatch, ["a.com", "--only-changed"])
+    assert code == 2
+    assert "--only-changed requires --state-file" in capsys.readouterr().err
+
+
+def test_main_state_file_rejects_file_target(monkeypatch, capsys, tmp_path):
+    cert_path = tmp_path / "cert.der"
+    state_path = tmp_path / "state.json"
+    code = _run_main(
+        monkeypatch,
+        ["--file", str(cert_path), "--state-file", str(state_path)],
+    )
+    assert code == 2
+    assert "not --file" in capsys.readouterr().err
 
 
 def test_main_summary_goes_to_stderr(monkeypatch, capsys, make_cert):
