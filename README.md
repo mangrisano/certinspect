@@ -1430,7 +1430,7 @@ worst code across all targets is returned.
 | 6    | Chain not trusted or revoked (`--verify`)                                                                                                          |
 | 7    | Fingerprint does not match `--pin`                                                                                                                 |
 | 8    | Expected SAN missing (`--expect-san`)                                                                                                              |
-| 9    | Policy violation (`--not-after-max`/`--cab-forum`, `--min-key-size`, `--fail-weak`, `--require-sct`, `--require-must-staple`, `--min-tls-version`) |
+| 9    | Policy violation (`--not-after-max`/`--cab-forum`, `--min-key-size`, `--fail-weak`, `--require-sct`, `--require-must-staple`, `--require-revocation-check`, `--min-tls-version`) |
 
 Example in a script:
 
