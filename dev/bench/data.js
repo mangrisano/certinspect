@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789909953464,
+  "lastUpdate": 1789914582105,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -495,6 +495,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000013983497442049638",
             "extra": "mean: 10.073711531147222 usec\nrounds: 23337"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "3555f3f69bd014455570eb836f35674e71a9cd9c",
+          "message": "feat: config file, batch --file, concurrent discovery, state diffing, shell completion, Docker image\n\nBump to 2.3.0.\n\n- --config PATH loads default option values from a TOML file, auto-discovered\n  at ~/.config/certinspect/config.toml; explicit flags still override it.\n- --file is now repeatable to inspect several local certificates in one run.\n- --discover/--discover-only query multiple domains concurrently.\n- --state-file/--only-changed report only targets whose status changed since\n  the previous run, for low-noise recurring monitoring.\n- --print-completion {bash,zsh} generates a shell completion script from the\n  live argument parser.\n- Add a Dockerfile for a minimal container image.",
+          "timestamp": "2026-09-20T16:27:44+02:00",
+          "tree_id": "11a39d9bd265b36a94ba34ff8458cc2b14470eaa",
+          "url": "https://github.com/mangrisano/certinspect/commit/3555f3f69bd014455570eb836f35674e71a9cd9c"
+        },
+        "date": 1789914581652,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 105187.59257279645,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014918615031549804",
+            "extra": "mean: 9.506824669534451 usec\nrounds: 12485"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 17376.992403362805,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008744486967331244",
+            "extra": "mean: 57.54735783889043 usec\nrounds: 1129"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 101147.42551022363,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000018865381313607109",
+            "extra": "mean: 9.88655909881684 usec\nrounds: 22547"
           }
         ]
       }
