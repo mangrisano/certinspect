@@ -9,13 +9,15 @@ import csv
 import io
 import json
 
+from certinspect.exit_codes import ExitCode
+from certinspect.models import CertificateInfo
 from certinspect.parser import certificate_status
 
 LABEL_WIDTH = 16
 
 
 def format_human(
-    info: dict, warn_days: int = 30, critical_days: int | None = None
+    info: CertificateInfo, warn_days: int = 30, critical_days: int | None = None
 ) -> str:
     """Return a human-readable text representation."""
     days = info["days_to_expire"]
@@ -160,7 +162,7 @@ def _chain_certificate_v2(link: dict) -> dict:
     }
 
 
-def _result_to_v2(target: str | None, info: dict) -> dict:
+def _result_to_v2(target: str | None, info: CertificateInfo) -> dict:
     """Transform an analyzed ``info`` dict into a version-2 result object.
 
     Groups related fields (``validity``, ``key``, ``connection``, ``chain``,
@@ -239,7 +241,7 @@ def format_json_v2(results: list[tuple[str | None, dict, int]], *, version: str)
     return json.dumps(document, indent=2, default=str, ensure_ascii=False)
 
 
-def _field_value(target: str | None, info: dict, name: str) -> str:
+def _field_value(target: str | None, info: CertificateInfo, name: str) -> str:
     """Render one selected field of a result as a single string.
 
     The pseudo-field 'target' exposes the inspected host. Missing or None
@@ -336,13 +338,13 @@ _SUMMARY_ORDER = (
     "policy",
 )
 _SUMMARY_BY_CODE = {
-    0: "valid",
-    3: "expiring",
-    5: "mismatch",
-    6: "untrusted",
-    7: "pin-mismatch",
-    8: "san-mismatch",
-    9: "policy",
+    ExitCode.OK: "valid",
+    ExitCode.EXPIRING: "expiring",
+    ExitCode.HOSTNAME_MISMATCH: "mismatch",
+    ExitCode.UNTRUSTED_OR_REVOKED: "untrusted",
+    ExitCode.PIN_MISMATCH: "pin-mismatch",
+    ExitCode.SAN_MISMATCH: "san-mismatch",
+    ExitCode.POLICY: "policy",
 }
 
 
@@ -363,7 +365,7 @@ def format_summary(
     """
     counts: dict[str, int] = dict.fromkeys(_SUMMARY_ORDER, 0)
     for _, info, code in results:
-        if code == 4:
+        if code == ExitCode.INVALID:
             status = info.get("status") or certificate_status(
                 info, warn_days, critical_days
             )
@@ -412,9 +414,9 @@ def _nagios_severity(code: int) -> int:
     (expired, hostname mismatch, untrusted chain, revoked, pin mismatch)
     maps to CRITICAL.
     """
-    if code == 0:
+    if code == ExitCode.OK:
         return NAGIOS_OK
-    if code == 3:
+    if code == ExitCode.EXPIRING:
         return NAGIOS_WARNING
     return NAGIOS_CRITICAL
 

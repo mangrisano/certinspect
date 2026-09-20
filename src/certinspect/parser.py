@@ -9,6 +9,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import dsa, ec, rsa
 from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID, NameOID
+from certinspect.models import CertificateInfo
 
 
 class CertificateLoadError(ValueError): ...
@@ -72,12 +73,12 @@ def _name_matches(pattern: str, hostname: str) -> bool:
     return pattern == hostname
 
 
-def hostname_matches(info: dict, hostname: str) -> bool:
+def hostname_matches(info: CertificateInfo, hostname: str) -> bool:
     """Return True if hostname is covered by the certificate's SAN names."""
     return any(_name_matches(name, hostname) for name in info["san"])
 
 
-def missing_san_names(info: dict, expected: list[str]) -> list[str]:
+def missing_san_names(info: CertificateInfo, expected: list[str]) -> list[str]:
     """Return the expected names not covered by the certificate's SAN.
 
     Each name is matched with the same wildcard rules as ``hostname_matches``
@@ -91,7 +92,7 @@ def format_fingerprint(cert: x509.Certificate) -> str:
     return ":".join(f"{b:02X}" for b in cert.fingerprint(hashes.SHA256()))
 
 
-def pin_matches(info: dict, pin: str) -> bool:
+def pin_matches(info: CertificateInfo, pin: str) -> bool:
     """Return True if the SHA-256 fingerprint equals the expected pin.
 
     The comparison ignores colons and case, so both ``AA:BB:..`` and
@@ -356,7 +357,7 @@ def _must_staple(cert: x509.Certificate) -> bool:
     return x509.TLSFeatureType.status_request in ext.value
 
 
-def analyze(cert: x509.Certificate) -> dict:
+def analyze(cert: x509.Certificate) -> CertificateInfo:
     """Extract the relevant information from the certificate as a dict."""
     now = datetime.now(timezone.utc)
     days_to_expire = (cert.not_valid_after_utc - now).days
@@ -402,7 +403,7 @@ def analyze(cert: x509.Certificate) -> dict:
 
 
 def certificate_status(
-    info: dict, warn_days: int = 30, critical_days: int | None = None
+    info: CertificateInfo, warn_days: int = 30, critical_days: int | None = None
 ) -> str:
     """Return the validity status derived from the analyzed data.
 
@@ -478,7 +479,7 @@ def tls_version_rank(version: str) -> int | None:
 
 
 def policy_violations(
-    info: dict,
+    info: CertificateInfo,
     *,
     not_after_max: int | None = None,
     min_key_size: int | None = None,
