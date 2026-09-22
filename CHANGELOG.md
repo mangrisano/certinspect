@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-09-22
+
+### Changed
+
+- Internal refactor only, with no change to behavior, output or exit codes:
+  renamed `config.load_config`/`DEFAULT_CONFIG_PATH`, `render.render`/
+  `load_state`/`save_state` and `httpfetch.fetch` to drop their leading
+  underscore, since they are imported across modules and the underscore
+  wrongly signalled module-private.
+
 ## [2.3.2] - 2026-09-20
 
 ### Changed
@@ -511,7 +521,8 @@ notes under each item.
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.3.2...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.3.3...HEAD
+[2.3.3]: https://github.com/mangrisano/certinspect/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/mangrisano/certinspect/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/mangrisano/certinspect/compare/v2.3.0...v2.3.1
 [2.3.0]: https://github.com/mangrisano/certinspect/compare/v2.2.0...v2.3.0
