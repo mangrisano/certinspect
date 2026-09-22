@@ -278,4 +278,4 @@ def _isolate_default_config(monkeypatch, tmp_path):
     """
     import certinspect.cli as cli
 
-    monkeypatch.setattr(cli, "_DEFAULT_CONFIG_PATH", tmp_path / "unused-config.toml")
+    monkeypatch.setattr(cli, "DEFAULT_CONFIG_PATH", tmp_path / "unused-config.toml")

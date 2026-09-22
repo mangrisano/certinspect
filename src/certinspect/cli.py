@@ -51,8 +51,8 @@ from certinspect.parser import (
 from certinspect.exit_codes import EXIT_BY_STATUS, ExitCode
 from certinspect.models import CertificateInfo
 from certinspect.completion import bash_completion_script, zsh_completion_script
-from certinspect.config import _DEFAULT_CONFIG_PATH, _load_config
-from certinspect.render import _load_state, _render, _save_state
+from certinspect.config import DEFAULT_CONFIG_PATH, load_config
+from certinspect.render import load_state, render, save_state
 
 
 @dataclass(frozen=True)
@@ -588,13 +588,13 @@ def main() -> None:
         if not Path(pre_args.config).is_file():
             parser.error(f"--config file not found: {pre_args.config}")
         config_path: Path | None = Path(pre_args.config)
-    elif _DEFAULT_CONFIG_PATH.is_file():
-        config_path = _DEFAULT_CONFIG_PATH
+    elif DEFAULT_CONFIG_PATH.is_file():
+        config_path = DEFAULT_CONFIG_PATH
     else:
         config_path = None
     if config_path is not None:
         try:
-            parser.set_defaults(**_load_config(str(config_path), parser))
+            parser.set_defaults(**load_config(str(config_path), parser))
         except ValueError as err:
             parser.error(str(err))
 
@@ -714,14 +714,14 @@ def main() -> None:
 
     changed_targets: set[str] | None = None
     if args.state_file:
-        previous_state = _load_state(args.state_file)
+        previous_state = load_state(args.state_file)
         current_state = {t: info["status"] for t, info, _ in results if t is not None}
         changed_targets = {
             t for t, status in current_state.items() if previous_state.get(t) != status
         }
-        _save_state(args.state_file, current_state)
+        save_state(args.state_file, current_state)
 
-    override = _render(
+    override = render(
         results,
         as_json=args.json,
         days=args.days,

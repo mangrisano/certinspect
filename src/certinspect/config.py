@@ -10,7 +10,7 @@ import tomllib
 from pathlib import Path
 
 # Default location for --config, checked only when the flag is not given.
-_DEFAULT_CONFIG_PATH = Path.home() / ".config" / "certinspect" / "config.toml"
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "certinspect" / "config.toml"
 
 # Destination groups the parser makes mutually exclusive: a --config file
 # setting more than one member of a group would silently defeat argparse's own
@@ -23,7 +23,7 @@ _CONFIG_EXCLUSIVE_GROUPS = (
 )
 
 
-def _load_config(path: str, parser: argparse.ArgumentParser) -> dict:
+def load_config(path: str, parser: argparse.ArgumentParser) -> dict:
     """Load a --config TOML file and return it as a dest -> value mapping.
 
     Every key must be a known argparse destination (checked against ``parser``

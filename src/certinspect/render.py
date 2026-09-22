@@ -22,7 +22,7 @@ from certinspect.formatter import (
 )
 
 
-def _render(
+def render(
     results: list[tuple[str | None, dict, int]],
     *,
     as_json: bool,
@@ -113,7 +113,7 @@ def _render(
     return None
 
 
-def _load_state(path: str) -> dict[str, str]:
+def load_state(path: str) -> dict[str, str]:
     """Return the target -> status mapping saved by a previous --state-file run.
 
     A missing, unreadable or malformed file is treated as an empty history (the
@@ -127,7 +127,7 @@ def _load_state(path: str) -> dict[str, str]:
     return data if isinstance(data, dict) else {}
 
 
-def _save_state(path: str, state: dict[str, str]) -> None:
+def save_state(path: str, state: dict[str, str]) -> None:
     """Persist the target -> status mapping for the next --state-file run.
 
     Failing to write is reported as a warning rather than aborting the run:

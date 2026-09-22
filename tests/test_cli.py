@@ -1981,7 +1981,7 @@ def test_main_config_auto_discovered_when_no_flag(
 
     config_path = tmp_path / "config.toml"
     config_path.write_text("days = 14\n")
-    monkeypatch.setattr(cli, "_DEFAULT_CONFIG_PATH", config_path)
+    monkeypatch.setattr(cli, "DEFAULT_CONFIG_PATH", config_path)
     certs = {"a.com": make_cert(san=["a.com"], days_valid=10)}
     monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
     code = _run_main(monkeypatch, ["a.com"])

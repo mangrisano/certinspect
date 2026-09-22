@@ -62,7 +62,7 @@ def _guard_fetch_host(url: str) -> None:
             )
 
 
-def _http(url: str, *, data: bytes | None = None, timeout: float) -> bytes:
+def fetch(url: str, *, data: bytes | None = None, timeout: float) -> bytes:
     """Perform a minimal HTTP(S) GET/POST and return the response body.
 
     Only ``http`` and ``https`` URLs are accepted; the URLs come from the

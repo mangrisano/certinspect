@@ -8,7 +8,7 @@ run logic; the completion and --config machinery introspect this parser.
 import argparse
 
 from certinspect import __version__
-from certinspect.config import _DEFAULT_CONFIG_PATH
+from certinspect.config import DEFAULT_CONFIG_PATH
 from certinspect.fetch import STARTTLS_PORTS
 from certinspect.parser import POLICY_PROFILES
 
@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
             f"TOML file of default option values (keys use the argparse "
             f"destination name, e.g. 'days = 14' or 'verify = false'); an "
             f"explicit command-line flag always overrides it. Without "
-            f"--config, {_DEFAULT_CONFIG_PATH} is loaded automatically if it "
+            f"--config, {DEFAULT_CONFIG_PATH} is loaded automatically if it "
             "exists."
         ),
     )

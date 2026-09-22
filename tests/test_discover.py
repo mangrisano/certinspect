@@ -48,18 +48,18 @@ def test_discover_hostnames_parses_and_sorts(monkeypatch):
             },
         ]
     ).encode()
-    monkeypatch.setattr("certinspect.discover._http", lambda url, *, timeout: payload)
+    monkeypatch.setattr("certinspect.discover.fetch", lambda url, *, timeout: payload)
     assert discover_hostnames("example.com", 5.0) == ["a.example.com", "b.example.com"]
 
 
 def test_discover_hostnames_rejects_non_json(monkeypatch):
-    monkeypatch.setattr("certinspect.discover._http", lambda url, *, timeout: b"nope")
+    monkeypatch.setattr("certinspect.discover.fetch", lambda url, *, timeout: b"nope")
     with pytest.raises(ValueError, match="could not parse"):
         discover_hostnames("example.com", 5.0)
 
 
 def test_discover_hostnames_rejects_non_array(monkeypatch):
-    monkeypatch.setattr("certinspect.discover._http", lambda url, *, timeout: b"{}")
+    monkeypatch.setattr("certinspect.discover.fetch", lambda url, *, timeout: b"{}")
     with pytest.raises(ValueError, match="expected a JSON array"):
         discover_hostnames("example.com", 5.0)
 
@@ -83,7 +83,7 @@ def test_discover_certificates_dedups_by_serial_and_keeps_metadata(monkeypatch):
     }
     # The same serial appears twice (precert + final cert) and must collapse.
     payload = json.dumps([record, dict(record)]).encode()
-    monkeypatch.setattr("certinspect.discover._http", lambda url, *, timeout: payload)
+    monkeypatch.setattr("certinspect.discover.fetch", lambda url, *, timeout: payload)
     assert discover_certificates("example.com", 5.0) == [
         DiscoveredCert(
             hostnames=("example.com", "www.example.com"),
@@ -113,7 +113,7 @@ def test_discover_certificates_sorts_by_expiry_and_keeps_wildcards(monkeypatch):
             },
         ]
     ).encode()
-    monkeypatch.setattr("certinspect.discover._http", lambda url, *, timeout: payload)
+    monkeypatch.setattr("certinspect.discover.fetch", lambda url, *, timeout: payload)
     certs = discover_certificates("example.com", 5.0)
     assert [cert.hostnames for cert in certs] == [
         ("*.example.com",),

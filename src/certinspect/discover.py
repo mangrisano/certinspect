@@ -14,7 +14,7 @@ import json
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
-from certinspect.httpfetch import _http
+from certinspect.httpfetch import fetch
 
 # crt.sh search front end. The `%` in the query is a SQL LIKE wildcard matching
 # any subdomain label; `output=json` asks for machine-readable results.
@@ -69,7 +69,7 @@ def _fetch_records(domain: str, timeout: float) -> list[dict]:
     Raises ValueError when the response is not the expected JSON array.
     """
     query = urlencode({"q": f"%.{domain}", "output": "json"})
-    body = _http(f"{_CRT_SH_URL}?{query}", timeout=timeout)
+    body = fetch(f"{_CRT_SH_URL}?{query}", timeout=timeout)
     try:
         records = json.loads(body)
     except json.JSONDecodeError as err:

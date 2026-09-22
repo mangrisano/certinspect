@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.x509 import ocsp
 from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
 
-from certinspect.httpfetch import _http
+from certinspect.httpfetch import fetch
 
 # Clock-skew tolerance when judging whether an OCSP response is still fresh.
 _OCSP_CLOCK_SKEW = timedelta(minutes=5)
@@ -51,7 +51,7 @@ def _fetch_issuer(cert: x509.Certificate, timeout: float) -> x509.Certificate | 
     _, issuer_urls = _aia_urls(cert)
     for url in issuer_urls:
         try:
-            return x509.load_der_x509_certificate(_http(url, timeout=timeout))
+            return x509.load_der_x509_certificate(fetch(url, timeout=timeout))
         except (OSError, ValueError):
             continue
     return None
@@ -122,7 +122,7 @@ def _check_ocsp(
     der_request = builder.build().public_bytes(serialization.Encoding.DER)
 
     try:
-        raw = _http(ocsp_urls[0], data=der_request, timeout=timeout)
+        raw = fetch(ocsp_urls[0], data=der_request, timeout=timeout)
     except (OSError, ValueError) as err:
         return "UNAVAILABLE", f"OCSP request failed: {err}"
 
@@ -196,7 +196,7 @@ def _check_crl(
 
     for url in urls:
         try:
-            raw = _http(url, timeout=timeout)
+            raw = fetch(url, timeout=timeout)
         except (OSError, ValueError):
             continue
         crl = _load_crl(raw)
