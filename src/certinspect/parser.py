@@ -125,18 +125,28 @@ def common_name(name: x509.Name) -> str:
     return attrs[0].value if attrs else name.rfc4514_string()
 
 
-def _ca_issuer_url(cert: x509.Certificate) -> str | None:
-    """Return the AIA "CA Issuers" URL of a certificate, or None when absent."""
+def aia_urls(cert: x509.Certificate) -> tuple[list[str], list[str]]:
+    """Return (ocsp_urls, ca_issuer_urls) from the certificate's AIA extension.
+
+    Both lists are empty when the Authority Information Access extension is
+    absent.
+    """
     try:
         aia = cert.extensions.get_extension_for_oid(
             ExtensionOID.AUTHORITY_INFORMATION_ACCESS
         ).value
     except x509.ExtensionNotFound:
-        return None
+        return [], []
+
+    ocsp_urls: list[str] = []
+    issuer_urls: list[str] = []
     for desc in aia:
-        if desc.access_method == AuthorityInformationAccessOID.CA_ISSUERS:
-            return desc.access_location.value
-    return None
+        location = desc.access_location.value
+        if desc.access_method == AuthorityInformationAccessOID.OCSP:
+            ocsp_urls.append(location)
+        elif desc.access_method == AuthorityInformationAccessOID.CA_ISSUERS:
+            issuer_urls.append(location)
+    return ocsp_urls, issuer_urls
 
 
 def chain_expiry_warnings(
@@ -215,8 +225,9 @@ def diagnose_chain(presented: list[x509.Certificate]) -> dict | None:
             ),
         }
 
-    url = _ca_issuer_url(leaf)
-    if url:
+    _, issuer_urls = aia_urls(leaf)
+    if issuer_urls:
+        url = issuer_urls[0]
         return {
             "code": "INCOMPLETE_CHAIN",
             "detail": (

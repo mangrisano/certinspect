@@ -15,14 +15,10 @@ from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
 from cryptography.x509 import ocsp
-from cryptography.x509.oid import (
-    AuthorityInformationAccessOID,
-    ExtendedKeyUsageOID,
-    ExtensionOID,
-)
+from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
 
 from certinspect.httpfetch import fetch
-from certinspect.parser import is_ca_certificate
+from certinspect.parser import aia_urls, is_ca_certificate
 
 # Clock-skew tolerance when judging whether an OCSP response is still fresh.
 _OCSP_CLOCK_SKEW = timedelta(minutes=5)
@@ -30,30 +26,6 @@ _OCSP_CLOCK_SKEW = timedelta(minutes=5)
 
 class _UnusableRevocationData(Exception):
     """An OCSP response or CRL that cannot back a verdict; the message says why."""
-
-
-def _aia_urls(cert: x509.Certificate) -> tuple[list[str], list[str]]:
-    """Return (ocsp_urls, ca_issuer_urls) from the certificate's AIA extension.
-
-    Both lists are empty when the Authority Information Access extension is
-    absent.
-    """
-    try:
-        aia = cert.extensions.get_extension_for_oid(
-            ExtensionOID.AUTHORITY_INFORMATION_ACCESS
-        ).value
-    except x509.ExtensionNotFound:
-        return [], []
-
-    ocsp_urls: list[str] = []
-    issuer_urls: list[str] = []
-    for desc in aia:
-        location = desc.access_location.value
-        if desc.access_method == AuthorityInformationAccessOID.OCSP:
-            ocsp_urls.append(location)
-        elif desc.access_method == AuthorityInformationAccessOID.CA_ISSUERS:
-            issuer_urls.append(location)
-    return ocsp_urls, issuer_urls
 
 
 def _signed_by(cert: x509.Certificate, issuer: x509.Certificate) -> bool:
@@ -71,7 +43,7 @@ def _fetch_issuer(cert: x509.Certificate, timeout: float) -> x509.Certificate | 
     The download is untrusted input, so a certificate is kept only if it really
     signed ``cert``. Return None when no usable issuer can be retrieved.
     """
-    _, issuer_urls = _aia_urls(cert)
+    _, issuer_urls = aia_urls(cert)
     for url in issuer_urls:
         try:
             candidate = x509.load_der_x509_certificate(fetch(url, timeout=timeout))
@@ -229,7 +201,7 @@ def _check_ocsp(
     timeout: float,
 ) -> tuple[str, str | None]:
     """Check revocation via OCSP. See ``check_revocation`` for the status set."""
-    ocsp_urls, _ = _aia_urls(cert)
+    ocsp_urls, _ = aia_urls(cert)
     if not ocsp_urls:
         return "UNAVAILABLE", "no OCSP responder in AIA extension"
     if issuer is None:
