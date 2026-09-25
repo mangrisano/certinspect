@@ -1,14 +1,15 @@
-"""Typed shape of the analyzed-certificate dictionary.
+"""Typed shapes shared across modules.
 
 ``analyze`` returns a plain dict that later stages enrich with the results of
-each check. This ``TypedDict`` documents that shape in one place and lets a
+each check. ``CertificateInfo`` documents that shape in one place and lets a
 type checker catch key typos, without changing the runtime value: the keys are
 added incrementally, so it is ``total=False`` (every key optional). Whether an
 optional check ran is still signalled by the presence of its key.
+``InspectionResult`` is one inspected target as handed to the renderers.
 """
 
 from datetime import datetime
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 from certinspect.exit_codes import RevocationStatus, Status
 
@@ -52,3 +53,15 @@ class CertificateInfo(TypedDict, total=False):
     pin_match: bool
     expected_san_missing: list[str]
     policy_violations: list[str]
+
+
+class InspectionResult(NamedTuple):
+    """One inspected target: its display label, analysis and exit code.
+
+    ``label`` is None for a lone --file, which is reported unlabelled. Being a
+    tuple, it still unpacks as ``label, info, code``.
+    """
+
+    label: str | None
+    info: CertificateInfo
+    code: int

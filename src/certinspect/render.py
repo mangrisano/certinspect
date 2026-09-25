@@ -20,10 +20,11 @@ from certinspect.formatter import (
     format_prometheus,
     format_summary,
 )
+from certinspect.models import InspectionResult
 
 
 def render(
-    results: list[tuple[str | None, dict, int]],
+    results: list[InspectionResult],
     *,
     as_json: bool,
     days: int,
@@ -71,15 +72,15 @@ def render(
     )
 
     if quiet:
-        results = [r for r in results if r[2] != 0]
+        results = [r for r in results if r.code != 0]
     if max_days is not None:
-        results = [r for r in results if r[1]["days_to_expire"] <= max_days]
+        results = [r for r in results if r.info["days_to_expire"] <= max_days]
     if changed_targets is not None:
-        results = [r for r in results if r[0] in changed_targets]
+        results = [r for r in results if r.label in changed_targets]
     if sort == "host":
-        results = sorted(results, key=lambda r: r[0] or "")
+        results = sorted(results, key=lambda r: r.label or "")
     elif sort == "expiry":
-        results = sorted(results, key=lambda r: r[1]["days_to_expire"])
+        results = sorted(results, key=lambda r: r.info["days_to_expire"])
 
     if fields:
         text = format_fields(results, fields)

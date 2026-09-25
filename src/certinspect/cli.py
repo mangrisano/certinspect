@@ -55,7 +55,7 @@ from certinspect.exit_codes import (
     RevocationStatus,
     most_severe,
 )
-from certinspect.models import CertificateInfo
+from certinspect.models import CertificateInfo, InspectionResult
 from certinspect.completion import bash_completion_script, zsh_completion_script
 from certinspect.config import DEFAULT_CONFIG_PATH, load_config
 from certinspect.render import load_state, render, save_state
@@ -688,14 +688,14 @@ def main() -> None:
     work_items: list[tuple[bool, str]] = [(True, path) for path in file_targets]
     work_items += [(False, raw) for raw in host_targets]
 
-    def _run(item: tuple[bool, str]) -> tuple[str, tuple | None, str | None]:
-        """Inspect one work item, returning (name, payload, error).
+    def _run(item: tuple[bool, str]) -> tuple[str, InspectionResult | None, str | None]:
+        """Inspect one work item, returning (name, result, error).
 
         ``item`` is ``(is_file, raw)``: a file path or a host target string.
         ``name`` labels the item (``host[:port]`` for a host, the path for a
-        file). ``payload`` is ``(label, info, code)`` on success and None on
-        failure, in which case ``error`` carries the message. Runs in worker
-        threads, so it must not perform any I/O on shared streams.
+        file). ``result`` is None on failure, in which case ``error`` carries
+        the message. Runs in worker threads, so it must not perform any I/O on
+        shared streams.
         """
         is_file, raw = item
         name = raw
@@ -703,20 +703,21 @@ def main() -> None:
             if is_file:
                 file_opts = replace(opts, file=raw)
                 info, code = _inspect(None, default_port, file_opts)
-                return name, (None if single_file else raw, info, code), None
+                label = None if single_file else raw
+                return name, InspectionResult(label, info, code), None
             target, port = _split_target(raw, default_port)
             name = _target_label(target, port, default_port)
             info, code = _inspect(target, port, opts)
         except (OSError, ssl.SSLError, ValueError) as err:
             return name, None, str(err)
-        return name, (name, info, code), None
+        return name, InspectionResult(name, info, code), None
 
     outcomes = _map(_run, work_items, args.concurrency)
 
-    results: list[tuple[str | None, dict, int]] = []
+    results: list[InspectionResult] = []
     errors: list[tuple[str | None, str]] = []
     codes: list[int] = []
-    for name, payload, err in outcomes:
+    for name, result, err in outcomes:
         if err is not None:
             if not args.exporter:
                 label = f"{name}: " if name else ""
@@ -724,13 +725,15 @@ def main() -> None:
             errors.append((name, err))
             codes.append(RUNTIME_ERROR)
             continue
-        results.append(payload)
-        codes.append(payload[2])
+        results.append(result)
+        codes.append(result.code)
 
     changed_targets: set[str] | None = None
     if args.state_file:
         previous_state = load_state(args.state_file)
-        current_state = {t: info["status"] for t, info, _ in results if t is not None}
+        current_state = {
+            r.label: r.info["status"] for r in results if r.label is not None
+        }
         changed_targets = {
             t for t, status in current_state.items() if previous_state.get(t) != status
         }

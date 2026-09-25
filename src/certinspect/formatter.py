@@ -12,7 +12,7 @@ import json
 from cryptography import x509
 
 from certinspect.exit_codes import ExitCode, RevocationStatus, Status
-from certinspect.models import CertificateInfo
+from certinspect.models import CertificateInfo, InspectionResult
 from certinspect.parser import certificate_status, common_name
 
 LABEL_WIDTH = 16
@@ -246,7 +246,7 @@ def _result_to_v2(target: str | None, info: CertificateInfo) -> dict:
     return result
 
 
-def format_json_v2(results: list[tuple[str | None, dict, int]], *, version: str) -> str:
+def format_json_v2(results: list[InspectionResult], *, version: str) -> str:
     """Return the version-2 JSON document for a batch of results.
 
     Wraps the per-target results in a versioned envelope
@@ -275,9 +275,7 @@ def _field_value(target: str | None, info: CertificateInfo, name: str) -> str:
     return str(value)
 
 
-def format_fields(
-    results: list[tuple[str | None, dict, int]], fields: list[str]
-) -> str:
+def format_fields(results: list[InspectionResult], fields: list[str]) -> str:
     """Render selected fields, one tab-separated line per target.
 
     Each name in ``fields`` selects an ``info`` key (plus the pseudo-field
@@ -322,7 +320,7 @@ def _common_name(dn: str) -> str:
 
 
 def format_csv(
-    results: list[tuple[str | None, dict, int]],
+    results: list[InspectionResult],
     warn_days: int = 30,
     delimiter: str = ",",
     critical_days: int | None = None,
@@ -370,7 +368,7 @@ _SUMMARY_BY_CODE = {
 
 
 def format_summary(
-    results: list[tuple[str | None, dict, int]],
+    results: list[InspectionResult],
     errors: list[tuple[str | None, str]] = (),
     warn_days: int = 30,
     critical_days: int | None = None,
@@ -441,7 +439,7 @@ def _nagios_severity(code: int) -> int:
 
 
 def format_nagios(
-    results: list[tuple[str | None, dict, int]],
+    results: list[InspectionResult],
     errors: list[tuple[str | None, str]] = (),
     warn_days: int = 30,
     critical_days: int | None = None,
@@ -487,7 +485,7 @@ def _prometheus_label(value: str) -> str:
 
 
 def format_prometheus(
-    results: list[tuple[str | None, dict, int]],
+    results: list[InspectionResult],
     errors: list[tuple[str | None, str]] = (),
     warn_days: int = 30,
 ) -> str:
