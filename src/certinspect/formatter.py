@@ -185,17 +185,12 @@ def format_json(data: dict | list) -> str:
     return json.dumps(data, indent=2, default=str, ensure_ascii=False)
 
 
-def _isoformat(value: object) -> object:
-    """Render a datetime as an ISO 8601 string, pass other values through."""
-    return value.isoformat() if hasattr(value, "isoformat") else value
-
-
 def _chain_certificate_v2(link: dict) -> dict:
     """Shape one chain-summary entry for the version-2 schema."""
     return {
         "subject": link["subject"],
         "issuer": link["issuer"],
-        "not_after": _isoformat(link["not_valid_after"]),
+        "not_after": link["not_valid_after"].isoformat(),
         "serial_number": str(link["serial_number"]),
         "is_ca": link["is_ca"],
     }
@@ -228,8 +223,8 @@ def _result_to_v2(target: str | None, info: CertificateInfo) -> dict:
             "weak": info["weak"],
         },
         "validity": {
-            "not_before": _isoformat(info["not_valid_before"]),
-            "not_after": _isoformat(info["not_valid_after"]),
+            "not_before": info["not_valid_before"].isoformat(),
+            "not_after": info["not_valid_after"].isoformat(),
             "days_to_expiry": info["days_to_expire"],
             "total_days": info["validity_days"],
         },
@@ -378,7 +373,7 @@ def format_ct_inventory(
     if as_json:
         payload = []
         for domain, cert, unexpected in rows:
-            record: dict[str, object] = {
+            record: dict[str, str | list[str] | bool] = {
                 "domain": domain,
                 "hostnames": list(cert.hostnames),
                 "issuer": cert.issuer,
