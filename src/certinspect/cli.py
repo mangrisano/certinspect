@@ -133,6 +133,17 @@ def _split_target(raw: str, default_port: int) -> tuple[str, int]:
     return parts.hostname or raw, parts.port or default_port
 
 
+def _target_label(host: str, port: int, default_port: int) -> str:
+    """Name a host result: the bare host on the default port, else ``host:port``.
+
+    Keeps the common case unchanged while telling apart several services on the
+    same host (output, --state-file keys, Prometheus labels).
+    """
+    if port == default_port:
+        return host
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
 def _connection_kwargs(opts: InspectOptions, *, include_ca: bool = False) -> dict:
     """Return the TLS connection keyword arguments shared by fetch and verify.
 
@@ -661,26 +672,27 @@ def main() -> None:
     work_items += [(False, raw) for raw in host_targets]
 
     def _run(item: tuple[bool, str]) -> tuple[str, tuple | None, str | None]:
-        """Inspect one work item, returning (raw, payload, error).
+        """Inspect one work item, returning (name, payload, error).
 
         ``item`` is ``(is_file, raw)``: a file path or a host target string.
-        ``payload`` is ``(label, info, code)`` on success and None on failure,
-        in which case ``error`` carries the message. Runs in worker threads, so
-        it must not perform any I/O on shared streams.
+        ``name`` labels the item (``host[:port]`` for a host, the path for a
+        file). ``payload`` is ``(label, info, code)`` on success and None on
+        failure, in which case ``error`` carries the message. Runs in worker
+        threads, so it must not perform any I/O on shared streams.
         """
         is_file, raw = item
+        name = raw
         try:
             if is_file:
                 file_opts = replace(opts, file=raw)
                 info, code = _inspect(None, default_port, file_opts)
-                label = None if single_file else raw
-            else:
-                target, port = _split_target(raw, default_port)
-                info, code = _inspect(target, port, opts)
-                label = target
+                return name, (None if single_file else raw, info, code), None
+            target, port = _split_target(raw, default_port)
+            name = _target_label(target, port, default_port)
+            info, code = _inspect(target, port, opts)
         except (OSError, ssl.SSLError, ValueError) as err:
-            return raw, None, str(err)
-        return raw, (label, info, code), None
+            return name, None, str(err)
+        return name, (name, info, code), None
 
     # Inspect in parallel when asked; ThreadPoolExecutor.map preserves order.
     workers = max(1, args.concurrency)
@@ -693,12 +705,12 @@ def main() -> None:
     results: list[tuple[str | None, dict, int]] = []
     errors: list[tuple[str | None, str]] = []
     codes: list[int] = []
-    for raw_target, payload, err in outcomes:
+    for name, payload, err in outcomes:
         if err is not None:
             if not args.exporter:
-                label = f"{raw_target}: " if raw_target else ""
+                label = f"{name}: " if name else ""
                 print(f"error: {label}{err}", file=sys.stderr)
-            errors.append((raw_target, err))
+            errors.append((name, err))
             codes.append(RUNTIME_ERROR)
             continue
         results.append(payload)

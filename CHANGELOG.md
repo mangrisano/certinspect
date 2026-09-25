@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key's bit length is not on the RSA scale.
 - Offline `--file` verification no longer reports a valid chain as untrusted
   when the leaf's first SAN is a wildcard (e.g. `*.example.com`).
+- A host target on a non-default port is now labelled `host:port` (e.g.
+  `a.com:8443`, `[::1]:8443`) in every output, the `--state-file` and the
+  Prometheus `target` label. Before, the port was dropped, so two services on
+  the same host collided: duplicate Prometheus series (rejected by the
+  textfile collector) and one state overwriting the other. Targets on the
+  default port keep their bare host label, and an unreachable target now gets
+  the same label as a reachable one.
 - When a certificate (or a batch) has several problems, the exit code is now
   the most severe one, as documented, instead of whichever check ran last or
   the highest number. An expired certificate with a weak key exits 4, not 9; a

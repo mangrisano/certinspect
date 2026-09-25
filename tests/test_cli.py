@@ -1238,7 +1238,7 @@ def test_main_url_target_is_normalized(monkeypatch, capsys, make_cert):
     code = _run_main(monkeypatch, ["https://example.com:8443/path"])
     assert code == 0
     assert seen == {"host": "example.com", "port": 8443}
-    assert "=== example.com ===" in capsys.readouterr().out
+    assert "=== example.com:8443 ===" in capsys.readouterr().out
 
 
 def test_main_hostname_match_in_json(monkeypatch, capsys, make_cert):
@@ -1363,6 +1363,53 @@ def test_main_batch_continues_on_error(monkeypatch, capsys, make_cert):
     assert "ok.com" in captured.out
     assert "down.com" in captured.err
     assert code == 1
+
+
+@pytest.mark.parametrize(
+    "host, port, expected",
+    [
+        ("a.com", 443, "a.com"),
+        ("a.com", 8443, "a.com:8443"),
+        ("::1", 443, "::1"),
+        ("::1", 8443, "[::1]:8443"),
+    ],
+)
+def test_target_label(host, port, expected):
+    from certinspect.cli import _target_label
+
+    assert _target_label(host, port, 443) == expected
+
+
+def _fetch_by_port(certs):
+    def _fetch(host, port, timeout, starttls=None, servername=None):
+        return certs[port], CONN
+
+    return _fetch
+
+
+def test_main_labels_same_host_on_two_ports_apart(monkeypatch, capsys, make_cert):
+    certs = {443: make_cert(san=["a.com"]), 8443: make_cert(san=["a.com"])}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch_by_port(certs))
+    _run_main(monkeypatch, ["a.com:443", "a.com:8443", "--field", "target"])
+    assert capsys.readouterr().out.splitlines() == ["a.com", "a.com:8443"]
+
+
+def test_main_port_flag_keeps_the_bare_label(monkeypatch, capsys, make_cert):
+    certs = {8443: make_cert(san=["a.com"])}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch_by_port(certs))
+    _run_main(monkeypatch, ["a.com", "--port", "8443", "--field", "target"])
+    assert capsys.readouterr().out.splitlines() == ["a.com"]
+
+
+def test_main_prometheus_labels_unreachable_target_like_a_reachable_one(
+    monkeypatch, capsys
+):
+    def _fetch(host, port, timeout, starttls=None, servername=None):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    _run_main(monkeypatch, ["https://down.com:8443/x", "--exporter", "prometheus"])
+    assert 'certinspect_up{target="down.com:8443"} 0' in capsys.readouterr().out
 
 
 def _expired_cert(make_cert, **kwargs):
