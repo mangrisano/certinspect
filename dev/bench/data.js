@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790088027402,
+  "lastUpdate": 1790355989134,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -675,6 +675,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 5.524428522343959e-7",
             "extra": "mean: 5.3234184752085 usec\nrounds: 19583"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "a37cf78918f8c100c0803ee161d839c7b3efe333",
+          "message": "chore(release): 2.4.0",
+          "timestamp": "2026-09-25T19:06:10+02:00",
+          "tree_id": "739f430af9ac451e13c2ac50047a79f723da9bb6",
+          "url": "https://github.com/mangrisano/certinspect/commit/a37cf78918f8c100c0803ee161d839c7b3efe333"
+        },
+        "date": 1790355988670,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 103494.17210945048,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000016253351339987232",
+            "extra": "mean: 9.662379819246711 usec\nrounds: 12943"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 17081.922143152526,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000006245707685292114",
+            "extra": "mean: 58.5414212533957 usec\nrounds: 1308"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 100683.55207524964,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000014082935467268765",
+            "extra": "mean: 9.932108863745814 usec\nrounds: 25463"
           }
         ]
       }
