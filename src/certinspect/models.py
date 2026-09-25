@@ -6,10 +6,13 @@ type checker catch key typos, without changing the runtime value: the keys are
 added incrementally, so it is ``total=False`` (every key optional). Whether an
 optional check ran is still signalled by the presence of its key.
 ``InspectionResult`` is one inspected target as handed to the renderers.
+``ConnectionInfo`` is what the TLS handshake negotiated.
 """
 
 from datetime import datetime
 from typing import NamedTuple, TypedDict
+
+from cryptography import x509
 
 from certinspect.exit_codes import RevocationStatus, Status
 
@@ -65,3 +68,15 @@ class InspectionResult(NamedTuple):
     label: str | None
     info: CertificateInfo
     code: int
+
+
+class ConnectionInfo(TypedDict):
+    """The handshake of ``fetch.get_server_cert``.
+
+    ``chain`` is the chain as the server sent it, leaf first; it is empty
+    before Python 3.13, which cannot expose it.
+    """
+
+    tls_version: str | None
+    cipher: str | None
+    chain: list[x509.Certificate]

@@ -21,6 +21,8 @@ from cryptography import x509
 from cryptography.x509 import verification
 from cryptography.x509.oid import NameOID
 
+from certinspect.models import ConnectionInfo
+
 
 # Standard plaintext ports for the STARTTLS-capable protocols, used as the
 # default port when --port is left unset.
@@ -261,19 +263,19 @@ def _run_starttls(sock: socket.socket, protocol: str, timeout: float | None) -> 
 def get_server_cert(
     host: str,
     port: int = 443,
-    timeout: float = 5.0,
+    timeout: float | tuple[float, float] = 5.0,
     starttls: str | None = None,
     servername: str | None = None,
     client_cert: str | None = None,
     client_key: str | None = None,
     proxy: str | None = None,
     no_proxy: bool = False,
-) -> tuple[bytes, dict]:
+) -> tuple[bytes, ConnectionInfo]:
     """Return the server certificate (DER bytes) and connection info.
 
-    The connection info is a dict with the negotiated ``tls_version``, the
-    ``cipher`` suite name, and the ``chain`` presented by the server (leaf
-    first) when the interpreter exposes it (Python 3.13+), otherwise [].
+    The connection info holds the negotiated ``tls_version``, the ``cipher``
+    suite name, and the ``chain`` presented by the server (leaf first) when
+    the interpreter exposes it (Python 3.13+), otherwise [].
 
     When ``starttls`` is set (smtp, imap, pop3 or ftp) the plaintext protocol
     is upgraded to TLS before the certificate is read.
@@ -302,11 +304,11 @@ def get_server_cert(
         with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
             der = ssock.getpeercert(binary_form=True)
             cipher = ssock.cipher()
-            conn = {
-                "tls_version": ssock.version(),
-                "cipher": cipher[0] if cipher else None,
-                "chain": _chain(ssock, "get_unverified_chain"),
-            }
+            conn = ConnectionInfo(
+                tls_version=ssock.version(),
+                cipher=cipher[0] if cipher else None,
+                chain=_chain(ssock, "get_unverified_chain"),
+            )
             return der, conn
 
 
@@ -336,7 +338,7 @@ def _trust_context(cafile: str | None, capath: str | None) -> ssl.SSLContext:
 def verify_chain(
     host: str,
     port: int = 443,
-    timeout: float = 5.0,
+    timeout: float | tuple[float, float] = 5.0,
     starttls: str | None = None,
     cafile: str | None = None,
     capath: str | None = None,

@@ -53,7 +53,7 @@ from certinspect.exit_codes import (
     RevocationStatus,
     most_severe,
 )
-from certinspect.models import CertificateInfo, InspectionResult
+from certinspect.models import CertificateInfo, ConnectionInfo, InspectionResult
 from certinspect.formatter import format_ct_inventory
 from certinspect.completion import bash_completion_script, zsh_completion_script
 from certinspect.config import DEFAULT_CONFIG_PATH, load_config
@@ -196,7 +196,7 @@ def _fetch_source(
     target: str | None,
     port: int,
     opts: InspectOptions,
-) -> tuple[bytes, dict | None]:
+) -> tuple[bytes, ConnectionInfo | None]:
     """Return (raw certificate bytes, connection info) for one source.
 
     Connection info is None for local files (no live TLS handshake).
@@ -292,7 +292,7 @@ def _check_chain(
     target: str | None,
     port: int,
     cert,
-    conn: dict | None,
+    conn: ConnectionInfo | None,
     opts: InspectOptions,
     file_bundle: list | None,
 ) -> tuple[ExitCode | None, list]:
