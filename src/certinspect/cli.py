@@ -254,7 +254,9 @@ def _inspect(
     if opts.file and (opts.verify or opts.chain):
         file_bundle = load_certificates(der)
 
-    override, chain_certs = _check_chain(info, target, port, conn, opts, file_bundle)
+    override, chain_certs = _check_chain(
+        info, target, port, cert, conn, opts, file_bundle
+    )
     codes.append(override)
     if opts.verify and target:
         codes.append(_check_revocation(info, cert, chain_certs, opts))
@@ -288,6 +290,7 @@ def _check_chain(
     info: CertificateInfo,
     target: str | None,
     port: int,
+    cert,
     conn: dict | None,
     opts: InspectOptions,
     file_bundle: list | None,
@@ -298,7 +301,9 @@ def _check_chain(
     Sets ``chain_trusted``/``chain_error`` and, when it fails,
     ``chain_diagnosis``. Returns UNTRUSTED_OR_REVOKED when the chain is not
     trusted (else None) and the verified chain, leaf first ([] when
-    unavailable).
+    unavailable). A host whose verification handshake presented a different
+    leaf than ``cert`` (a load balancer mid-rotation, say) is not trusted: the
+    verdict would belong to another certificate.
     """
     if not opts.verify:
         return None, []
@@ -315,6 +320,12 @@ def _check_chain(
             opts.retries,
         )
         presented = conn.get("chain") if conn else None
+        if trusted and verified and verified[0] != cert:
+            trusted, verified = False, []
+            reason = (
+                "the server presented a different certificate on the "
+                "verification handshake"
+            )
     else:
         return None, []
 

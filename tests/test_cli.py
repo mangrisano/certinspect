@@ -1723,6 +1723,41 @@ def test_main_verify_revocation_unavailable_is_soft_fail(
     assert code == 0
 
 
+def _verified_leaf(der):
+    """Return a verify_chain replacement trusting a chain whose leaf is ``der``."""
+    from cryptography import x509
+
+    leaf = x509.load_der_x509_certificate(der)
+    return lambda *a, **k: (True, None, [leaf])
+
+
+def test_main_verify_rejects_a_different_leaf_on_the_verification_handshake(
+    monkeypatch, capsys, make_cert
+):
+    """A load balancer serving another certificate to the verification
+    handshake must not make the inspected certificate look trusted."""
+    inspected = make_cert(san=["example.com"])
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _const_fetch(inspected))
+    monkeypatch.setattr(
+        "certinspect.cli.verify_chain", _verified_leaf(make_cert(san=["example.com"]))
+    )
+    code = _run_main(monkeypatch, ["example.com", "--json"])
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert code == 6
+    assert result["chain"]["trusted"] is False
+    assert "different certificate" in result["chain"]["error"]
+
+
+def test_main_verify_trusts_the_same_leaf(monkeypatch, capsys, make_cert):
+    inspected = make_cert(san=["example.com"])
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _const_fetch(inspected))
+    monkeypatch.setattr("certinspect.cli.verify_chain", _verified_leaf(inspected))
+    code = _run_main(monkeypatch, ["example.com", "--json"])
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert code == 0
+    assert result["chain"]["trusted"] is True
+
+
 def test_main_file_verify_reports_untrusted_self_signed(
     monkeypatch, capsys, tmp_path, make_cert
 ):

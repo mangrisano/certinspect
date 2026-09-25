@@ -313,7 +313,10 @@ SAN:
 
 By default certinspect opens a fully verified TLS handshake (chain +
 hostname against the Python/OpenSSL trust store) and, when the certificate
-advertises an OCSP responder, queries it for the revocation status. If OCSP is
+advertises an OCSP responder, queries it for the revocation status. The
+verified handshake is a second connection: if the server presents a different
+certificate on it (a load balancer mid-rotation, say), the chain is reported
+as not trusted instead of vouching for a certificate that was not inspected. If OCSP is
 unavailable, certinspect falls back to the certificate's CRL distribution
 points (downloaded over HTTP and verified against the issuer). Both checks are
 soft-fail: when neither OCSP nor the CRL gives an answer the status is

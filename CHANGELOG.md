@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A host is no longer reported as trusted on the strength of a different
+  certificate. The chain is verified over a second TLS connection, and nothing
+  checked that it saw the same certificate as the inspection; behind a load
+  balancer with mismatched backends an expired or foreign certificate could
+  show `chain_trusted: true`. When the two differ, the chain is now reported
+  as not trusted ("the server presented a different certificate on the
+  verification handshake", exit code 6).
+
 ## [2.4.3] - 2026-09-25
 
 ### Fixed

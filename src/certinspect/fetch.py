@@ -350,8 +350,9 @@ def verify_chain(
 
     Open a fully verified TLS handshake (system trust store, hostname check)
     as a browser would. Return ``(trusted, reason, chain)`` where ``chain`` is
-    the verified certificate chain (leaf first) when the interpreter exposes
-    it (Python 3.13+) and verification succeeds, otherwise an empty list.
+    the verified certificate chain (leaf first) on success — just the leaf on
+    interpreters without ``get_verified_chain`` (before 3.13) — and an empty
+    list on failure.
     ``reason`` is None on success or the verification message on failure.
     Network-level failures are left to propagate. When ``starttls`` is set the
     plaintext protocol is upgraded to TLS before the handshake.
@@ -381,7 +382,10 @@ def verify_chain(
             if starttls:
                 _negotiate_starttls(sock, starttls, read_timeout)
             with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
-                return True, None, _chain(ssock, "get_verified_chain")
+                chain = _chain(ssock, "get_verified_chain") or [
+                    x509.load_der_x509_certificate(ssock.getpeercert(binary_form=True))
+                ]
+                return True, None, chain
     except ssl.SSLCertVerificationError as err:
         return False, err.verify_message or str(err), []
 
