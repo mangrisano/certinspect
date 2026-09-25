@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 # exhaust memory. Real-world CRLs stay comfortably below this.
 _MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024
 
+# CRL/OCSP URLs legitimately redirect once or twice (http->https, a CDN).
+_MAX_REDIRECTS = 5
+
 
 def _is_blocked_fetch_address(
     ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
@@ -62,20 +65,44 @@ def _guard_fetch_host(url: str) -> None:
             )
 
 
+def _check_url(url: str) -> None:
+    """Raise ValueError unless ``url`` is an http(s) URL on an allowed host."""
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError(f"unsupported URL scheme: {url}")
+    _guard_fetch_host(url)
+
+
+class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to URLs that pass the same checks as the first.
+
+    Without this, a public host named in a certificate could answer with a
+    redirect to loopback or the cloud metadata endpoint and urllib would follow
+    it unchecked.
+    """
+
+    max_redirections = _MAX_REDIRECTS
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _check_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_GuardedRedirectHandler)
+
+
 def fetch(url: str, *, data: bytes | None = None, timeout: float) -> bytes:
     """Perform a minimal HTTP(S) GET/POST and return the response body.
 
     Only ``http`` and ``https`` URLs are accepted; the URLs come from the
     certificate's own AIA/CRL extensions, i.e. from untrusted input, so the
-    target host is screened against internal/non-routable addresses and the
-    response size is capped. A POST is used when ``data`` is given.
+    target host is screened against internal/non-routable addresses — on the
+    first request and on every redirect — and the response size is capped. A
+    POST is used when ``data`` is given.
     """
-    if not url.lower().startswith(("http://", "https://")):
-        raise ValueError(f"unsupported URL scheme: {url}")
-    _guard_fetch_host(url)
+    _check_url(url)
     headers = {"Content-Type": "application/ocsp-request"} if data else {}
     request = urllib.request.Request(url, data=data, headers=headers)
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with _OPENER.open(request, timeout=timeout) as response:
         body = response.read(_MAX_HTTP_RESPONSE_BYTES + 1)
     if len(body) > _MAX_HTTP_RESPONSE_BYTES:
         raise ValueError(

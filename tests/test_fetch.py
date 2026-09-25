@@ -1,5 +1,8 @@
 """Tests for the network helpers that do not require a live server."""
 
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import pytest
 
 from certinspect.revocation import check_revocation
@@ -718,9 +721,129 @@ def test_http_caps_oversized_response(monkeypatch):
         def read(self, amt=-1):
             return b"x" * amt
 
-    monkeypatch.setattr(httpfetch.urllib.request, "urlopen", lambda *a, **k: _Resp())
+    monkeypatch.setattr(httpfetch._OPENER, "open", lambda *a, **k: _Resp())
     with pytest.raises(ValueError, match="exceeds the"):
         httpfetch.fetch("http://big.example/crl", timeout=1.0)
+
+
+# --- SSRF guard on redirects -------------------------------------------------
+
+
+@pytest.fixture
+def serve():
+    """Start throwaway HTTP servers on 127.0.0.1; ``serve(respond)`` -> base URL."""
+    servers = []
+
+    def _start(respond):
+        class _Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                respond(self)
+
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        servers.append(server)
+        return f"http://127.0.0.1:{server.server_port}"
+
+    yield _start
+    for server in servers:
+        server.shutdown()
+        server.server_close()
+
+
+def _redirect_to(location):
+    def respond(handler):
+        handler.send_response(302)
+        handler.send_header("Location", location)
+        handler.end_headers()
+
+    return respond
+
+
+def _body(payload, hits):
+    def respond(handler):
+        hits.append(handler.path)
+        handler.send_response(200)
+        handler.end_headers()
+        handler.wfile.write(payload)
+
+    return respond
+
+
+def _guard_allowing(monkeypatch, *allowed_bases):
+    """Treat URLs under ``allowed_bases`` as public; keep the real guard otherwise.
+
+    Every test server listens on loopback, so this is how a test marks one of
+    them as the "public" host a certificate URL points at. Returns the list of
+    URLs the guard was asked about.
+    """
+    from certinspect import httpfetch
+
+    real_guard = httpfetch._guard_fetch_host
+    checked = []
+
+    def guard(url):
+        checked.append(url)
+        if not url.startswith(allowed_bases):
+            real_guard(url)
+
+    monkeypatch.setattr(httpfetch, "_guard_fetch_host", guard)
+    return checked
+
+
+def test_http_refuses_redirect_to_internal_address(monkeypatch, serve):
+    from certinspect import httpfetch
+
+    hits = []
+    internal = serve(_body(b"SECRET", hits))
+    public = serve(_redirect_to(f"{internal}/latest/meta-data/"))
+    _guard_allowing(monkeypatch, public)
+
+    with pytest.raises(ValueError, match="non-routable or internal"):
+        httpfetch.fetch(f"{public}/crl", timeout=3.0)
+    assert hits == []
+
+
+def test_http_follows_redirect_between_allowed_hosts(monkeypatch, serve):
+    from certinspect import httpfetch
+
+    hits = []
+    cdn = serve(_body(b"CRL-BYTES", hits))
+    ca = serve(_redirect_to(f"{cdn}/ca.crl"))
+    checked = _guard_allowing(monkeypatch, ca, cdn)
+
+    assert httpfetch.fetch(f"{ca}/ca.crl", timeout=3.0) == b"CRL-BYTES"
+    assert checked == [f"{ca}/ca.crl", f"{cdn}/ca.crl"]
+
+
+def test_http_refuses_redirect_to_unsupported_scheme(monkeypatch, serve):
+    from certinspect import httpfetch
+
+    public = serve(_redirect_to("ftp://127.0.0.1:1/ca.crl"))
+    _guard_allowing(monkeypatch, public)
+
+    with pytest.raises(ValueError, match="unsupported URL scheme"):
+        httpfetch.fetch(f"{public}/crl", timeout=3.0)
+
+
+def test_http_caps_redirect_chain(monkeypatch, serve):
+    from certinspect import httpfetch
+
+    hits = []
+
+    def respond(handler):
+        hits.append(handler.path)
+        step = int(handler.path.strip("/") or 0)
+        _redirect_to(f"/{step + 1}")(handler)
+
+    public = serve(respond)
+    _guard_allowing(monkeypatch, public)
+
+    with pytest.raises(OSError):
+        httpfetch.fetch(f"{public}/0", timeout=3.0)
+    assert len(hits) == httpfetch._MAX_REDIRECTS + 1
 
 
 # --- OCSP response freshness ------------------------------------------------

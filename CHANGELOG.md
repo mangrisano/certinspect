@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Offline `--file` verification no longer reports a valid chain as untrusted
   when the leaf's first SAN is a wildcard (e.g. `*.example.com`).
 
+### Security
+
+- The SSRF guard on certificate-supplied OCSP, CRL and CA-Issuer URLs (and the
+  crt.sh query) now also checks every HTTP redirect. Previously only the first
+  URL was screened, so a public host could redirect certinspect to loopback or
+  the cloud metadata endpoint (`169.254.169.254`). Redirects are also limited
+  to http/https and to 5 hops.
+
 ## [2.3.3] - 2026-09-22
 
 ### Changed
