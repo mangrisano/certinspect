@@ -233,10 +233,10 @@ def _inspect(
     if opts.file and (opts.verify or opts.chain):
         file_bundle = load_certificates(der)
 
-    override, chain_certs = _check_chain(
-        info, target, port, cert, conn, opts, file_bundle
-    )
+    override, chain_certs = _check_chain(info, target, port, conn, opts, file_bundle)
     codes.append(override)
+    if opts.verify and target:
+        codes.append(_check_revocation(info, cert, chain_certs, opts))
 
     # The verified chain (when available) is the most accurate source for the
     # intermediates actually used; fall back to the chain presented by the
@@ -267,59 +267,61 @@ def _check_chain(
     info: CertificateInfo,
     target: str | None,
     port: int,
-    cert,
     conn: dict | None,
     opts: InspectOptions,
     file_bundle: list | None,
 ) -> tuple[ExitCode | None, list]:
-    """Verify the chain (and, for hosts, revocation) and record the outcome.
+    """Verify the chain and record the outcome on ``info``.
 
-    Sets the ``chain_trusted``/``chain_error``/``chain_diagnosis`` keys, and
-    for host targets ``revocation_status``/``revocation_detail``, on ``info``.
-    Returns the exit-code override (UNTRUSTED_OR_REVOKED when the chain is
-    untrusted or the certificate is revoked, else None) and the chain to use
-    for expiry warnings.
+    A --file bundle is verified offline, a host over a verified handshake.
+    Sets ``chain_trusted``/``chain_error`` and, when it fails,
+    ``chain_diagnosis``. Returns UNTRUSTED_OR_REVOKED when the chain is not
+    trusted (else None) and the verified chain, leaf first ([] when
+    unavailable).
     """
-    if opts.verify and opts.file:
+    if not opts.verify:
+        return None, []
+    if opts.file:
         trusted, reason, verified = verify_chain_offline(
             file_bundle, cafile=opts.cafile, capath=opts.capath
         )
-        info["chain_trusted"] = trusted
-        info["chain_error"] = reason
-        override = None
-        if not trusted:
-            override = ExitCode.UNTRUSTED_OR_REVOKED
-            diagnosis = diagnose_chain(file_bundle)
-            if diagnosis:
-                info["chain_diagnosis"] = diagnosis
-        return override, verified or file_bundle
-    if opts.verify and target:
+        presented = file_bundle
+    elif target:
         verify_kwargs = _connection_kwargs(opts, include_ca=True)
         timeouts = (opts.effective_connect_timeout, opts.effective_read_timeout)
         trusted, reason, verified = retry_network(
             lambda: verify_chain(target, port, timeouts, **verify_kwargs),
             opts.retries,
         )
-        info["chain_trusted"] = trusted
-        info["chain_error"] = reason
-        override = None
-        if not trusted:
-            override = ExitCode.UNTRUSTED_OR_REVOKED
-            presented = conn.get("chain") if conn else None
-            if presented:
-                diagnosis = diagnose_chain(presented)
-                if diagnosis:
-                    info["chain_diagnosis"] = diagnosis
+        presented = conn.get("chain") if conn else None
+    else:
+        return None, []
 
-        # Prefer the issuer from the verified chain; fall back to AIA download.
-        issuer = verified[1] if len(verified) > 1 else None
-        revocation, detail = check_revocation(cert, opts.timeout, issuer=issuer)
-        info["revocation_status"] = revocation
-        info["revocation_detail"] = detail
-        if revocation == RevocationStatus.REVOKED:
-            override = ExitCode.UNTRUSTED_OR_REVOKED
-        return override, verified
-    return None, []
+    info["chain_trusted"] = trusted
+    info["chain_error"] = reason
+    if trusted:
+        return None, verified
+    diagnosis = diagnose_chain(presented) if presented else None
+    if diagnosis:
+        info["chain_diagnosis"] = diagnosis
+    return ExitCode.UNTRUSTED_OR_REVOKED, verified
+
+
+def _check_revocation(
+    info: CertificateInfo, cert, verified: list, opts: InspectOptions
+) -> ExitCode | None:
+    """Query OCSP/CRL and record ``revocation_status``/``revocation_detail``.
+
+    Returns UNTRUSTED_OR_REVOKED when the certificate is revoked, else None.
+    """
+    # Prefer the issuer from the verified chain; fall back to AIA download.
+    issuer = verified[1] if len(verified) > 1 else None
+    status, detail = check_revocation(cert, opts.timeout, issuer=issuer)
+    info["revocation_status"] = status
+    info["revocation_detail"] = detail
+    if status == RevocationStatus.REVOKED:
+        return ExitCode.UNTRUSTED_OR_REVOKED
+    return None
 
 
 def _check_pin(info: CertificateInfo, opts: InspectOptions) -> ExitCode | None:
