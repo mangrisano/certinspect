@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.5] - 2026-09-25
+
 ### Fixed
 
 - `--proxy` and `--no-proxy` now apply to the OCSP, CRL, CA-Issuer and
@@ -657,7 +659,8 @@ notes under each item.
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.4...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.5...HEAD
+[2.4.5]: https://github.com/mangrisano/certinspect/compare/v2.4.4...v2.4.5
 [2.4.4]: https://github.com/mangrisano/certinspect/compare/v2.4.3...v2.4.4
 [2.4.3]: https://github.com/mangrisano/certinspect/compare/v2.4.2...v2.4.3
 [2.4.2]: https://github.com/mangrisano/certinspect/compare/v2.4.1...v2.4.2
