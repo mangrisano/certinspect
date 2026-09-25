@@ -125,6 +125,28 @@ class InspectOptions:
         """Read/handshake timeout, defaulting to ``timeout`` when unset."""
         return self.read_timeout if self.read_timeout is not None else self.timeout
 
+    @property
+    def policy_requested(self) -> bool:
+        """True when at least one opt-in policy check (exit code 9) is enabled."""
+        # Identity checks: a numeric limit of 0 still counts as enabled (0 == False).
+        return any(
+            (value := getattr(self, name)) is not None and value is not False
+            for name in _POLICY_OPTIONS
+        )
+
+
+# The InspectOptions fields that enable an opt-in policy check.
+_POLICY_OPTIONS = (
+    "not_after_max",
+    "cab_forum",
+    "min_key_size",
+    "fail_weak",
+    "require_sct",
+    "require_must_staple",
+    "require_revocation_check",
+    "min_tls_version",
+)
+
 
 def _split_target(raw: str, default_port: int) -> tuple[str, int]:
     """Normalize a target into ``(host, port)``.
@@ -342,16 +364,7 @@ def _check_expect_san(info: CertificateInfo, opts: InspectOptions) -> ExitCode |
 
 def _check_policy(info: CertificateInfo, opts: InspectOptions) -> ExitCode | None:
     """Record the opt-in policy violations; return POLICY when any applies."""
-    if not (
-        opts.not_after_max is not None
-        or opts.cab_forum
-        or opts.min_key_size is not None
-        or opts.fail_weak
-        or opts.require_sct
-        or opts.require_must_staple
-        or opts.require_revocation_check
-        or opts.min_tls_version is not None
-    ):
+    if not opts.policy_requested:
         return None
     not_after_max = opts.not_after_max
     if opts.cab_forum:
