@@ -323,7 +323,9 @@ is treated as `UNAVAILABLE` too, so a replayed answer cannot mask a later
 revocation. The OCSP/CRL/CA-Issuer URLs come from the certificate, so
 certinspect refuses to follow one that resolves to a loopback, link-local
 (cloud metadata) or otherwise non-routable address, and caps the download
-size — private/internal PKI addresses stay reachable.
+size — private/internal PKI addresses stay reachable. It connects to the very
+address it checked, so a DNS answer that changes in between (DNS rebinding)
+cannot send the request elsewhere; through a proxy, the proxy resolves the name.
 
 When the responder is down (or the certificate has no OCSP URL at all) the CRL
 fallback can still catch a revoked certificate; the `via CRL` note shows which

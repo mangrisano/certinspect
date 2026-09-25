@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Certificate-supplied OCSP, CRL and CA-Issuer URLs (and the CT-log queries)
+  can no longer reach an internal address through DNS rebinding. The address
+  check resolved the name, then the HTTP client resolved it again to connect,
+  so a name server answering first with a public IP and then with `127.0.0.1`
+  or `169.254.169.254` got the request through. The connection now goes to the
+  address that was checked, on every redirect too. Requests sent through a
+  proxy are still checked by name only, since the proxy resolves it.
+
 ## [2.4.2] - 2026-09-25
 
 ### Changed

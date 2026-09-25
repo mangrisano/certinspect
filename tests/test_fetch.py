@@ -827,6 +827,7 @@ def _guard_allowing(monkeypatch, *allowed_bases):
     from certinspect import httpfetch
 
     real_guard = httpfetch._guard_fetch_host
+    real_vetted = httpfetch._vetted_addresses
     checked = []
 
     def guard(url):
@@ -834,7 +835,13 @@ def _guard_allowing(monkeypatch, *allowed_bases):
         if not url.startswith(allowed_bases):
             real_guard(url)
 
+    def vetted(host, port):
+        if f"http://{host}:{port}" in allowed_bases:
+            return [host]
+        return real_vetted(host, port)
+
     monkeypatch.setattr(httpfetch, "_guard_fetch_host", guard)
+    monkeypatch.setattr(httpfetch, "_vetted_addresses", vetted)
     return checked
 
 
@@ -889,6 +896,30 @@ def test_http_caps_redirect_chain(monkeypatch, serve):
     with pytest.raises(OSError):
         httpfetch.fetch(f"{public}/0", timeout=3.0)
     assert len(hits) == httpfetch._MAX_REDIRECTS + 1
+
+
+def test_http_connects_to_the_vetted_address_despite_dns_rebinding(monkeypatch, serve):
+    """A name that resolves public for the check and loopback afterwards
+    (DNS rebinding) must not reach the internal server."""
+    import socket as _socket
+
+    from certinspect import httpfetch
+
+    hits = []
+    internal = serve(_body(b"SECRET", hits))
+    port = int(internal.rsplit(":", 1)[1])
+    real_getaddrinfo = _socket.getaddrinfo
+    answers = iter(["93.184.215.14", "127.0.0.1"])
+
+    def rebinding_dns(host, *args, **kwargs):
+        if host != "rebind.example":
+            return real_getaddrinfo(host, *args, **kwargs)
+        return _addrinfo(next(answers, "127.0.0.1"))
+
+    monkeypatch.setattr(httpfetch.socket, "getaddrinfo", rebinding_dns)
+    with pytest.raises(ValueError, match="non-routable or internal"):
+        httpfetch.fetch(f"http://rebind.example:{port}/", timeout=3.0)
+    assert hits == []
 
 
 # --- OCSP response freshness ------------------------------------------------
