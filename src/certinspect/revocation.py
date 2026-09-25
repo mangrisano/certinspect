@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, paddin
 from cryptography.x509 import ocsp
 from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
 
+from certinspect.exit_codes import RevocationStatus
 from certinspect.httpfetch import fetch
 from certinspect.parser import aia_urls, is_ca_certificate
 
@@ -199,13 +200,16 @@ def _check_ocsp(
     cert: x509.Certificate,
     issuer: x509.Certificate | None,
     timeout: float,
-) -> tuple[str, str | None]:
+) -> tuple[RevocationStatus, str | None]:
     """Check revocation via OCSP. See ``check_revocation`` for the status set."""
     ocsp_urls, _ = aia_urls(cert)
     if not ocsp_urls:
-        return "UNAVAILABLE", "no OCSP responder in AIA extension"
+        return RevocationStatus.UNAVAILABLE, "no OCSP responder in AIA extension"
     if issuer is None:
-        return "UNAVAILABLE", "issuer certificate could not be retrieved"
+        return (
+            RevocationStatus.UNAVAILABLE,
+            "issuer certificate could not be retrieved",
+        )
 
     # OCSP CertID conventionally uses SHA-1 for the issuer name/key hashes;
     # many responders reject other digests.
@@ -216,7 +220,7 @@ def _check_ocsp(
     try:
         raw = fetch(ocsp_urls[0], data=der_request, timeout=timeout)
     except (OSError, ValueError) as err:
-        return "UNAVAILABLE", f"OCSP request failed: {err}"
+        return RevocationStatus.UNAVAILABLE, f"OCSP request failed: {err}"
 
     # Parsing must soft-fail too: some responders (e.g. DigiCert/GitHub) return
     # a BasicOCSPResponse whose signatureAlgorithm the strict ASN.1 parser
@@ -226,7 +230,7 @@ def _check_ocsp(
         response = ocsp.load_der_ocsp_response(raw)
         if response.response_status != ocsp.OCSPResponseStatus.SUCCESSFUL:
             return (
-                "UNAVAILABLE",
+                RevocationStatus.UNAVAILABLE,
                 f"OCSP response status: {response.response_status.name}",
             )
         # An unauthenticated REVOKED is ignored too, or an attacker could
@@ -236,16 +240,19 @@ def _check_ocsp(
         if status == ocsp.OCSPCertStatus.GOOD:
             _require_fresh_ocsp_response(response)
     except _UnusableRevocationData as err:
-        return "UNAVAILABLE", str(err)
+        return RevocationStatus.UNAVAILABLE, str(err)
     except ValueError as err:
-        return "UNAVAILABLE", f"OCSP response could not be parsed: {err}"
+        return (
+            RevocationStatus.UNAVAILABLE,
+            f"OCSP response could not be parsed: {err}",
+        )
 
     if status == ocsp.OCSPCertStatus.GOOD:
-        return "GOOD", None
+        return RevocationStatus.GOOD, None
     if status == ocsp.OCSPCertStatus.REVOKED:
         when = getattr(response, "revocation_time_utc", None)
-        return "REVOKED", f"revoked at {when}" if when else "revoked"
-    return "UNKNOWN", "responder does not know this certificate"
+        return RevocationStatus.REVOKED, f"revoked at {when}" if when else "revoked"
+    return RevocationStatus.UNKNOWN, "responder does not know this certificate"
 
 
 def _load_crl(raw: bytes) -> x509.CertificateRevocationList | None:
@@ -328,7 +335,7 @@ def _check_crl(
     cert: x509.Certificate,
     issuer: x509.Certificate | None,
     timeout: float,
-) -> tuple[str, str | None]:
+) -> tuple[RevocationStatus, str | None]:
     """Check revocation via the certificate's CRL distribution points.
 
     Download each CRL in turn and look up the certificate's serial number. A
@@ -336,13 +343,16 @@ def _check_crl(
     verifies against ``issuer`` and its scope can cover the certificate, so
     without a known issuer no CRL is trusted. A partial CRL (delta, or limited
     to some reasons) can prove REVOKED but not GOOD. The first CRL that yields
-    a verdict wins; otherwise the status is ``"UNAVAILABLE"`` (soft-fail).
+    a verdict wins; otherwise the status is UNAVAILABLE (soft-fail).
     """
     urls = _crl_urls(cert)
     if not urls:
-        return "UNAVAILABLE", "no CRL distribution point in extension"
+        return RevocationStatus.UNAVAILABLE, "no CRL distribution point in extension"
     if issuer is None:
-        return "UNAVAILABLE", "CRL cannot be verified without the issuer certificate"
+        return (
+            RevocationStatus.UNAVAILABLE,
+            "CRL cannot be verified without the issuer certificate",
+        )
 
     for url in urls:
         try:
@@ -362,31 +372,31 @@ def _check_crl(
         if revoked is not None:
             when = getattr(revoked, "revocation_date_utc", None)
             detail = f"revoked at {when}" if when else "revoked"
-            return "REVOKED", f"{detail} (via CRL)"
+            return RevocationStatus.REVOKED, f"{detail} (via CRL)"
         if partial:
             continue
         try:
             _require_fresh_crl(crl)
         except _UnusableRevocationData as err:
-            return "UNAVAILABLE", str(err)
-        return "GOOD", "via CRL"
+            return RevocationStatus.UNAVAILABLE, str(err)
+        return RevocationStatus.GOOD, "via CRL"
 
-    return "UNAVAILABLE", "no usable CRL could be retrieved"
+    return RevocationStatus.UNAVAILABLE, "no usable CRL could be retrieved"
 
 
 def check_revocation(
     cert: x509.Certificate,
     timeout: float = 5.0,
     issuer: x509.Certificate | None = None,
-) -> tuple[str, str | None]:
+) -> tuple[RevocationStatus, str | None]:
     """Check the certificate's revocation status via OCSP, then CRL.
 
-    Return ``(status, detail)`` where status is one of:
+    Return ``(status, detail)`` where status is a ``RevocationStatus``:
 
-    * ``"GOOD"`` — the certificate is confirmed valid.
-    * ``"REVOKED"`` — the certificate is confirmed revoked.
-    * ``"UNKNOWN"`` — the OCSP responder does not know this certificate.
-    * ``"UNAVAILABLE"`` — neither OCSP nor CRL gave an answer (soft-fail,
+    * GOOD — the certificate is confirmed valid.
+    * REVOKED — the certificate is confirmed revoked.
+    * UNKNOWN — the OCSP responder does not know this certificate.
+    * UNAVAILABLE — neither OCSP nor CRL gave an answer (soft-fail,
       like a browser).
 
     OCSP is tried first. When it soft-fails (no responder, issuer unavailable,
@@ -405,11 +415,11 @@ def check_revocation(
         issuer = _fetch_issuer(cert, timeout)
 
     status, detail = _check_ocsp(cert, issuer, timeout)
-    if status != "UNAVAILABLE":
+    if status != RevocationStatus.UNAVAILABLE:
         return status, detail
 
     crl_status, crl_detail = _check_crl(cert, issuer, timeout)
-    if crl_status != "UNAVAILABLE":
+    if crl_status != RevocationStatus.UNAVAILABLE:
         return crl_status, crl_detail
 
     # Both soft-failed: report the OCSP reason, which is usually the more

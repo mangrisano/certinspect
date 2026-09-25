@@ -10,6 +10,8 @@ optional check ran is still signalled by the presence of its key.
 from datetime import datetime
 from typing import TypedDict
 
+from certinspect.exit_codes import RevocationStatus, Status
+
 
 class CertificateInfo(TypedDict, total=False):
     """The dictionary produced by ``analyze`` and enriched during inspection."""
@@ -36,7 +38,7 @@ class CertificateInfo(TypedDict, total=False):
     weak: list[str]
 
     # Added during inspection, each only when the relevant check runs.
-    status: str
+    status: Status
     tls_version: str | None
     cipher: str | None
     hostname_match: bool | None
@@ -45,7 +47,7 @@ class CertificateInfo(TypedDict, total=False):
     chain_diagnosis: dict[str, str]
     chain_warnings: list[str]
     chain: list[dict]
-    revocation_status: str
+    revocation_status: RevocationStatus
     revocation_detail: str | None
     pin_match: bool
     expected_san_missing: list[str]

@@ -42,6 +42,15 @@ class Status(StrEnum):
     INVALID_DATES = "INVALID DATES"
 
 
+class RevocationStatus(StrEnum):
+    """Revocation verdict from OCSP/CRL; a ``StrEnum`` like ``Status``."""
+
+    GOOD = "GOOD"
+    REVOKED = "REVOKED"
+    UNKNOWN = "UNKNOWN"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
 # Validity status mapped to its exit code; the four non-valid date states all
 # share ExitCode.INVALID.
 EXIT_BY_STATUS: dict[Status, ExitCode] = {

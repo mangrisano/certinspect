@@ -11,7 +11,7 @@ import json
 
 from cryptography import x509
 
-from certinspect.exit_codes import ExitCode, Status
+from certinspect.exit_codes import ExitCode, RevocationStatus, Status
 from certinspect.models import CertificateInfo
 from certinspect.parser import certificate_status, common_name
 
@@ -105,7 +105,9 @@ def format_human(
 
     if info.get("revocation_status"):
         lines.append(row("Revocation", info["revocation_status"]))
-        if info["revocation_status"] == "REVOKED" and info.get("revocation_detail"):
+        if info["revocation_status"] == RevocationStatus.REVOKED and info.get(
+            "revocation_detail"
+        ):
             lines.append(f"WARNING: certificate revoked ({info['revocation_detail']})")
 
     if "pin_match" in info:
@@ -528,8 +530,11 @@ def format_prometheus(
         if "chain_trusted" in info:
             hit = 1 if info["chain_trusted"] else 0
             chain_trusted.append(f'certinspect_chain_trusted{{target="{label}"}} {hit}')
-        if info.get("revocation_status") in ("GOOD", "REVOKED"):
-            hit = 1 if info["revocation_status"] == "REVOKED" else 0
+        if info.get("revocation_status") in (
+            RevocationStatus.GOOD,
+            RevocationStatus.REVOKED,
+        ):
+            hit = 1 if info["revocation_status"] == RevocationStatus.REVOKED else 0
             revoked.append(f'certinspect_cert_revoked{{target="{label}"}} {hit}')
         if "policy_violations" in info:
             hit = 0 if info["policy_violations"] else 1

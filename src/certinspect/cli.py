@@ -48,7 +48,13 @@ from certinspect.parser import (
     POLICY_PROFILES,
     to_pem,
 )
-from certinspect.exit_codes import EXIT_BY_STATUS, RUNTIME_ERROR, ExitCode, most_severe
+from certinspect.exit_codes import (
+    EXIT_BY_STATUS,
+    RUNTIME_ERROR,
+    ExitCode,
+    RevocationStatus,
+    most_severe,
+)
 from certinspect.models import CertificateInfo
 from certinspect.completion import bash_completion_script, zsh_completion_script
 from certinspect.config import DEFAULT_CONFIG_PATH, load_config
@@ -310,7 +316,7 @@ def _check_chain(
         revocation, detail = check_revocation(cert, opts.timeout, issuer=issuer)
         info["revocation_status"] = revocation
         info["revocation_detail"] = detail
-        if revocation == "REVOKED":
+        if revocation == RevocationStatus.REVOKED:
             override = ExitCode.UNTRUSTED_OR_REVOKED
         return override, verified
     return None, []
@@ -369,7 +375,7 @@ def _check_policy(info: CertificateInfo, opts: InspectOptions) -> ExitCode | Non
 def _revocation_policy_violation(info: CertificateInfo) -> str | None:
     """Return a policy violation when revocation was not proven GOOD."""
     status = info.get("revocation_status")
-    if status == "GOOD":
+    if status == RevocationStatus.GOOD:
         return None
     detail = info.get("revocation_detail")
     if detail:
