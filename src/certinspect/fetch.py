@@ -263,25 +263,32 @@ def get_server_cert(
             conn = {
                 "tls_version": ssock.version(),
                 "cipher": cipher[0] if cipher else None,
-                "chain": _presented_chain(ssock),
+                "chain": _chain(ssock, "get_unverified_chain"),
             }
             return der, conn
 
 
-def _presented_chain(ssock: ssl.SSLSocket) -> list[x509.Certificate]:
-    """Return the chain presented by the server (leaf first), or [].
+def _chain(ssock: ssl.SSLSocket, method: str) -> list[x509.Certificate]:
+    """Return the chain from ``ssock.<method>()`` (leaf first), or [].
 
-    ``SSLSocket.get_unverified_chain`` exists from Python 3.13 and returns the
-    certificates exactly as sent by the server (regardless of trust), which is
-    what we want for inspection. Older interpreters return an empty list.
+    ``get_unverified_chain`` (the certificates exactly as sent, regardless of
+    trust) and ``get_verified_chain`` exist from Python 3.13; older
+    interpreters, or a chain that cannot be parsed, yield an empty list.
     """
-    getter = getattr(ssock, "get_unverified_chain", None)
+    getter = getattr(ssock, method, None)
     if getter is None:
         return []
     try:
         return [x509.load_der_x509_certificate(der) for der in getter()]
     except (TypeError, ValueError, ssl.SSLError):
         return []
+
+
+def _trust_context(cafile: str | None, capath: str | None) -> ssl.SSLContext:
+    """Return a verifying context trusting ``cafile``/``capath`` or the system store."""
+    if cafile or capath:
+        return ssl.create_default_context(cafile=cafile, capath=capath)
+    return ssl.create_default_context()
 
 
 def verify_chain(
@@ -318,10 +325,7 @@ def verify_chain(
     and ``proxy`` tunnels the handshake through an HTTP CONNECT proxy (with the
     environment's proxy honoured by default unless ``no_proxy`` is set).
     """
-    if cafile or capath:
-        context = ssl.create_default_context(cafile=cafile, capath=capath)
-    else:
-        context = ssl.create_default_context()
+    context = _trust_context(cafile, capath)
     # Verify chain trust only; the hostname is reported separately as hostname_match.
     context.check_hostname = False
     if client_cert:
@@ -335,24 +339,9 @@ def verify_chain(
             if starttls:
                 _negotiate_starttls(sock, starttls)
             with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
-                return True, None, _verified_chain(ssock)
+                return True, None, _chain(ssock, "get_verified_chain")
     except ssl.SSLCertVerificationError as err:
         return False, err.verify_message or str(err), []
-
-
-def _verified_chain(ssock: ssl.SSLSocket) -> list[x509.Certificate]:
-    """Return the verified chain (leaf first), or [] when unavailable.
-
-    ``SSLSocket.get_verified_chain`` exists from Python 3.13 and yields the
-    chain as DER-encoded bytes. Older interpreters return an empty list.
-    """
-    getter = getattr(ssock, "get_verified_chain", None)
-    if getter is None:
-        return []
-    try:
-        return [x509.load_der_x509_certificate(der) for der in getter()]
-    except (TypeError, ValueError, ssl.SSLError):
-        return []
 
 
 def _trust_anchors(cafile: str | None, capath: str | None) -> list[x509.Certificate]:
@@ -363,10 +352,7 @@ def _trust_anchors(cafile: str | None, capath: str | None) -> list[x509.Certific
     store. A root the current OpenSSL/cryptography cannot parse (e.g. a legacy
     certificate with a non-positive serial) is skipped rather than aborting.
     """
-    if cafile or capath:
-        context = ssl.create_default_context(cafile=cafile, capath=capath)
-    else:
-        context = ssl.create_default_context()
+    context = _trust_context(cafile, capath)
     anchors: list[x509.Certificate] = []
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
