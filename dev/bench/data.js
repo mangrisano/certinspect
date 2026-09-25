@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790367068488,
+  "lastUpdate": 1790372560288,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -945,6 +945,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000001475725488264465",
             "extra": "mean: 10.2947712738053 usec\nrounds: 24737"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "1dea19dd3d0225382ad84becf6b09227c5161fc9",
+          "message": "ci: type-check with mypy\n\nRun mypy on src in CI and in the publish gate, so the TypedDict and\nother annotations are enforced instead of being documentation only.",
+          "timestamp": "2026-09-25T23:41:01+02:00",
+          "tree_id": "7c0427962452b9e2cb5f209360b8914411121ed4",
+          "url": "https://github.com/mangrisano/certinspect/commit/1dea19dd3d0225382ad84becf6b09227c5161fc9"
+        },
+        "date": 1790372559511,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 181511.5250786081,
+            "unit": "iter/sec",
+            "range": "stddev: 6.360969111081333e-7",
+            "extra": "mean: 5.509292038436264 usec\nrounds: 11656"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 38505.32846796275,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002005412352728878",
+            "extra": "mean: 25.97043162044498 usec\nrounds: 1265"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 182674.13013289546,
+            "unit": "iter/sec",
+            "range": "stddev: 7.406535659604531e-7",
+            "extra": "mean: 5.474228886556076 usec\nrounds: 21941"
           }
         ]
       }
