@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1790372560288,
+  "lastUpdate": 1790374212745,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -990,6 +990,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 7.406535659604531e-7",
             "extra": "mean: 5.474228886556076 usec\nrounds: 21941"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "c1da6adced651f50f319fbcfacc8f02cf75d428a",
+          "message": "refactor(formatter): tighten type annotations\n\nType the CT inventory record with its real value types and drop _isoformat: every caller passes a datetime, so call .isoformat() directly.",
+          "timestamp": "2026-09-26T00:09:28+02:00",
+          "tree_id": "e1d0ee6c3f17439a6074ad5fc2f539c29bbac849",
+          "url": "https://github.com/mangrisano/certinspect/commit/c1da6adced651f50f319fbcfacc8f02cf75d428a"
+        },
+        "date": 1790374211829,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 99152.08869192551,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000019935198935650287",
+            "extra": "mean: 10.085516232614024 usec\nrounds: 11212"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 22003.105537446492,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004878779914785467",
+            "extra": "mean: 45.44812996047885 usec\nrounds: 1008"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 102666.68940741438,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000011171375003581462",
+            "extra": "mean: 9.740257582784997 usec\nrounds: 21562"
           }
         ]
       }
