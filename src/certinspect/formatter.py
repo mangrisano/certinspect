@@ -30,122 +30,140 @@ def format_human(
     info: CertificateInfo, warn_days: int = 30, critical_days: int | None = None
 ) -> str:
     """Return a human-readable text representation."""
-    days = info["days_to_expire"]
     status = _status_of(info, warn_days, critical_days)
+    sections = (
+        _summary_lines(info, status),
+        _extension_lines(info),
+        _check_lines(info),
+        _expiry_lines(info, status, warn_days),
+        _san_lines(info),
+        _chain_lines(info),
+    )
+    return "\n".join(line for section in sections for line in section)
 
-    def row(label: str, value: object) -> str:
-        return f"{label + ':':<{LABEL_WIDTH}}{value}"
 
-    lines = [
-        row("Subject", info["subject"]),
-        row("Status", status),
+def _row(label: str, value: object) -> str:
+    return f"{label + ':':<{LABEL_WIDTH}}{value}"
+
+
+def _summary_lines(info: CertificateInfo, status: str) -> list[str]:
+    """Identity, validity dates and key facts, always present."""
+    return [
+        _row("Subject", info["subject"]),
+        _row("Status", status),
         "",
-        row("Issuer", info["issuer"]),
-        row("Valid from", info["not_valid_before"]),
-        row("Valid until", info["not_valid_after"]),
-        row("Days to expiry", days),
-        row("Total validity", f"{info['validity_days']} days"),
+        _row("Issuer", info["issuer"]),
+        _row("Valid from", info["not_valid_before"]),
+        _row("Valid until", info["not_valid_after"]),
+        _row("Days to expiry", info["days_to_expire"]),
+        _row("Total validity", f"{info['validity_days']} days"),
         "",
-        row("Serial number", info["serial_number"]),
-        row("Signature", info["signature_algorithm"]),
-        row("Key size", _key_size_text(info)),
-        row("Fingerprint", info["fingerprint_sha256"]),
-        row("CA", info["is_ca"]),
-        row("Self-Signed", info["self_signed"]),
+        _row("Serial number", info["serial_number"]),
+        _row("Signature", info["signature_algorithm"]),
+        _row("Key size", _key_size_text(info)),
+        _row("Fingerprint", info["fingerprint_sha256"]),
+        _row("CA", info["is_ca"]),
+        _row("Self-Signed", info["self_signed"]),
     ]
 
+
+def _extension_lines(info: CertificateInfo) -> list[str]:
+    """Connection parameters, key usages, CT/Must-Staple and weak-crypto warnings."""
+    lines = []
     if info.get("tls_version"):
-        lines.append(row("TLS version", info["tls_version"]))
+        lines.append(_row("TLS version", info["tls_version"]))
     if info.get("cipher"):
-        lines.append(row("Cipher", info["cipher"]))
-
+        lines.append(_row("Cipher", info["cipher"]))
     if info["key_usage"]:
-        lines.append(row("Key usage", ", ".join(info["key_usage"])))
+        lines.append(_row("Key usage", ", ".join(info["key_usage"])))
     if info["extended_key_usage"]:
-        lines.append(row("Ext. key usage", ", ".join(info["extended_key_usage"])))
-
+        lines.append(_row("Ext. key usage", ", ".join(info["extended_key_usage"])))
     if "sct_count" in info:
         count = info["sct_count"]
         lines.append(
-            row("SCTs", count if count else "none (no Certificate Transparency)")
+            _row("SCTs", count if count else "none (no Certificate Transparency)")
         )
     if "must_staple" in info:
-        lines.append(row("Must-Staple", info["must_staple"]))
-
+        lines.append(_row("Must-Staple", info["must_staple"]))
     if info["weak"]:
         lines.append("")
-        for reason in info["weak"]:
-            lines.append(f"WARNING: {reason}")
+        lines.extend(f"WARNING: {reason}" for reason in info["weak"])
+    return lines
 
+
+def _check_lines(info: CertificateInfo) -> list[str]:
+    """The outcome of every check that ran: hostname, SAN, policy, chain, pin."""
+    lines = []
     if info.get("hostname_match") is not None:
-        lines.append(row("Hostname match", info["hostname_match"]))
+        lines.append(_row("Hostname match", info["hostname_match"]))
 
     if "expected_san_missing" in info:
         missing = info["expected_san_missing"]
-        lines.append(row("Expected SAN", "ok" if not missing else "MISSING"))
-        for name in missing:
-            lines.append(f"WARNING: SAN does not cover '{name}'")
+        lines.append(_row("Expected SAN", "ok" if not missing else "MISSING"))
+        lines.extend(f"WARNING: SAN does not cover '{name}'" for name in missing)
 
     if "policy_violations" in info:
         violations = info["policy_violations"]
-        lines.append(row("Policy", "ok" if not violations else "FAIL"))
-        for reason in violations:
-            lines.append(f"WARNING: policy violation ({reason})")
+        lines.append(_row("Policy", "ok" if not violations else "FAIL"))
+        lines.extend(f"WARNING: policy violation ({reason})" for reason in violations)
 
     if "chain_trusted" in info:
-        lines.append(row("Chain trusted", info["chain_trusted"]))
+        lines.append(_row("Chain trusted", info["chain_trusted"]))
         if not info["chain_trusted"] and info.get("chain_error"):
             lines.append(f"WARNING: chain not trusted ({info['chain_error']})")
         diagnosis = info.get("chain_diagnosis")
         if diagnosis:
-            lines.append(row("Chain diagnosis", diagnosis["code"]))
+            lines.append(_row("Chain diagnosis", diagnosis["code"]))
             lines.append(f"  -> {diagnosis['detail']}")
 
-    for warning in info.get("chain_warnings", ()):
-        lines.append(f"WARNING: {warning}")
+    lines.extend(f"WARNING: {warning}" for warning in info.get("chain_warnings", ()))
 
     if info.get("revocation_status"):
-        lines.append(row("Revocation", info["revocation_status"]))
+        lines.append(_row("Revocation", info["revocation_status"]))
         if info["revocation_status"] == RevocationStatus.REVOKED and info.get(
             "revocation_detail"
         ):
             lines.append(f"WARNING: certificate revoked ({info['revocation_detail']})")
 
     if "pin_match" in info:
-        lines.append(row("Pin match", info["pin_match"]))
+        lines.append(_row("Pin match", info["pin_match"]))
         if not info["pin_match"]:
             lines.append("WARNING: fingerprint does not match the expected pin")
+    return lines
 
+
+def _expiry_lines(info: CertificateInfo, status: str, warn_days: int) -> list[str]:
+    days = info["days_to_expire"]
     if status == Status.CRITICAL:
-        lines.append("")
-        lines.append(f"CRITICAL: certificate expires in {days} days")
-    elif status == Status.NOT_YET_VALID:
-        lines.append("")
-        lines.append(
-            f"WARNING: certificate is not valid until {info['not_valid_before']}"
-        )
-    elif 0 <= days < warn_days:
-        lines.append("")
-        lines.append(f"WARNING: certificate expires in {days} days")
+        return ["", f"CRITICAL: certificate expires in {days} days"]
+    if status == Status.NOT_YET_VALID:
+        return [
+            "",
+            f"WARNING: certificate is not valid until {info['not_valid_before']}",
+        ]
+    if 0 <= days < warn_days:
+        return ["", f"WARNING: certificate expires in {days} days"]
+    return []
 
+
+def _san_lines(info: CertificateInfo) -> list[str]:
     san = info["san"]
-    lines.append("")
-    if san:
-        lines.append("SAN:")
-        lines.extend(f"  - {name}" for name in san)
-    else:
-        lines.append(row("SAN", "(none)"))
+    if not san:
+        return ["", _row("SAN", "(none)")]
+    return ["", "SAN:", *(f"  - {name}" for name in san)]
 
-    if info.get("chain"):
-        lines.append("")
-        lines.append("Certificate chain:")
-        for i, link in enumerate(info["chain"]):
-            lines.append(f"  [{i}] {link['subject']}")
-            lines.append(f"      issuer:  {link['issuer']}")
-            lines.append(f"      expires: {link['not_valid_after']}")
-            lines.append(f"      CA:      {link['is_ca']}")
 
-    return "\n".join(lines)
+def _chain_lines(info: CertificateInfo) -> list[str]:
+    """The presented chain, when --chain asked for it."""
+    if not info.get("chain"):
+        return []
+    lines = ["", "Certificate chain:"]
+    for i, link in enumerate(info["chain"]):
+        lines.append(f"  [{i}] {link['subject']}")
+        lines.append(f"      issuer:  {link['issuer']}")
+        lines.append(f"      expires: {link['not_valid_after']}")
+        lines.append(f"      CA:      {link['is_ca']}")
+    return lines
 
 
 def _key_size_text(info: CertificateInfo) -> str:
