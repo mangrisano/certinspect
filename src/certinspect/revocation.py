@@ -9,6 +9,7 @@ HTTP transport is the SSRF-guarded client in :mod:`certinspect.httpfetch`.
 from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.x509 import ocsp
 from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
@@ -43,17 +44,29 @@ def _aia_urls(cert: x509.Certificate) -> tuple[list[str], list[str]]:
     return ocsp_urls, issuer_urls
 
 
+def _signed_by(cert: x509.Certificate, issuer: x509.Certificate) -> bool:
+    """Return True if ``issuer`` is named as, and signed, ``cert``'s issuer."""
+    try:
+        cert.verify_directly_issued_by(issuer)
+    except (InvalidSignature, TypeError, ValueError):
+        return False
+    return True
+
+
 def _fetch_issuer(cert: x509.Certificate, timeout: float) -> x509.Certificate | None:
     """Download the issuer certificate via the AIA "CA Issuers" URL.
 
-    Return None when no usable issuer can be retrieved.
+    The download is untrusted input, so a certificate is kept only if it really
+    signed ``cert``. Return None when no usable issuer can be retrieved.
     """
     _, issuer_urls = _aia_urls(cert)
     for url in issuer_urls:
         try:
-            return x509.load_der_x509_certificate(fetch(url, timeout=timeout))
+            candidate = x509.load_der_x509_certificate(fetch(url, timeout=timeout))
         except (OSError, ValueError):
             continue
+        if _signed_by(cert, candidate):
+            return candidate
     return None
 
 
@@ -240,7 +253,11 @@ def check_revocation(
 
     When ``issuer`` is provided (e.g. from the verified TLS chain) it is used
     directly; otherwise the issuer is downloaded via the AIA "CA Issuers" URL.
+    Either way an issuer that did not sign ``cert`` is discarded, since every
+    OCSP/CRL signature check is anchored on it.
     """
+    if issuer is not None and not _signed_by(cert, issuer):
+        issuer = None
     if issuer is None:
         issuer = _fetch_issuer(cert, timeout)
 

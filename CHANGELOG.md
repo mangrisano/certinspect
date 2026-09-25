@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inspection: the plaintext negotiation now rejects a reply line longer than
   8 KB and a reply of more than 100 lines (a line with no newline, an endless
   `250-` continuation or endless untagged IMAP lines used to be read forever).
+- The issuer certificate used to check OCSP and CRL signatures must now have
+  signed the inspected certificate. An issuer downloaded from the AIA "CA
+  Issuers" URL (plain HTTP, so replaceable on the network) was accepted as-is,
+  letting an attacker supply their own "issuer" and sign revocation answers.
 
 ## [2.3.3] - 2026-09-22
 

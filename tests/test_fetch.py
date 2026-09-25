@@ -999,6 +999,160 @@ def test_check_ocsp_soft_fails_on_stale_response(monkeypatch):
     assert "stale" in detail
 
 
+# --- revocation authenticity ------------------------------------------------
+
+ISSUER_URL = "http://ca.example.com/issuer.der"
+
+
+def _der(obj):
+    from cryptography.hazmat.primitives import serialization
+
+    return obj.public_bytes(serialization.Encoding.DER)
+
+
+def _ca(name="Test CA"):
+    """Return ``(cert, key)`` for a self-signed CA named ``name``."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    now = datetime.now(timezone.utc)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=365))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA256())
+    )
+    return cert, key
+
+
+def _leaf(issuer_cert, issuer_key, *, serial=4242, ca_issuers=False):
+    """A leaf signed by ``issuer_key`` pointing at OCSP_URL and CRL_URL."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
+
+    now = datetime.now(timezone.utc)
+    access = [
+        x509.AccessDescription(
+            AuthorityInformationAccessOID.OCSP, x509.UniformResourceIdentifier(OCSP_URL)
+        )
+    ]
+    if ca_issuers:
+        access.append(
+            x509.AccessDescription(
+                AuthorityInformationAccessOID.CA_ISSUERS,
+                x509.UniformResourceIdentifier(ISSUER_URL),
+            )
+        )
+    distribution_point = x509.DistributionPoint(
+        full_name=[x509.UniformResourceIdentifier(CRL_URL)],
+        relative_name=None,
+        reasons=None,
+        crl_issuer=None,
+    )
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    return (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "leaf")]))
+        .issuer_name(issuer_cert.subject)
+        .public_key(key.public_key())
+        .serial_number(serial)
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=90))
+        .add_extension(x509.AuthorityInformationAccess(access), critical=False)
+        .add_extension(x509.CRLDistributionPoints([distribution_point]), critical=False)
+        .sign(issuer_key, hashes.SHA256())
+    )
+
+
+def _ocsp_response(leaf, issuer, signer_cert, signer_key, *, status=None, embed=()):
+    """A fresh OCSP response about ``leaf``/``issuer``, signed by ``signer_key``."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.x509 import ocsp
+
+    now = datetime.now(timezone.utc)
+    status = status or ocsp.OCSPCertStatus.GOOD
+    revoked = status == ocsp.OCSPCertStatus.REVOKED
+    builder = (
+        ocsp.OCSPResponseBuilder()
+        .add_response(
+            cert=leaf,
+            issuer=issuer,
+            algorithm=hashes.SHA1(),
+            cert_status=status,
+            this_update=now - timedelta(hours=1),
+            next_update=now + timedelta(days=1),
+            revocation_time=now - timedelta(hours=2) if revoked else None,
+            revocation_reason=None,
+        )
+        .responder_id(ocsp.OCSPResponderEncoding.NAME, signer_cert)
+    )
+    if embed:
+        builder = builder.certificates(list(embed))
+    return _der(builder.sign(signer_key, hashes.SHA256()))
+
+
+def _serve(monkeypatch, bodies):
+    """Answer revocation HTTP fetches from a url -> bytes mapping."""
+    from certinspect import revocation
+
+    def _fetch(url, data=None, timeout=None):
+        if url not in bodies:
+            raise OSError(f"no route to {url}")
+        return bodies[url]
+
+    monkeypatch.setattr(revocation, "fetch", _fetch)
+
+
+def test_fetch_issuer_rejects_a_certificate_that_did_not_sign_the_leaf(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    mallory, _ = _ca()  # same name as the real CA, different key
+    leaf = _leaf(ca, ca_key, ca_issuers=True)
+    _serve(monkeypatch, {ISSUER_URL: _der(mallory)})
+
+    assert revocation._fetch_issuer(leaf, 1.0) is None
+
+
+def test_fetch_issuer_accepts_the_real_issuer(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key, ca_issuers=True)
+    _serve(monkeypatch, {ISSUER_URL: _der(ca)})
+
+    assert revocation._fetch_issuer(leaf, 1.0) == ca
+
+
+def test_check_revocation_ignores_an_issuer_that_did_not_sign_the_leaf(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    mallory, mallory_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    _serve(monkeypatch, {OCSP_URL: _ocsp_response(leaf, mallory, mallory, mallory_key)})
+
+    status, _ = revocation.check_revocation(leaf, timeout=1.0, issuer=mallory)
+    assert status == "UNAVAILABLE"
+
+
 # --- offline chain verification --------------------------------------------
 
 
