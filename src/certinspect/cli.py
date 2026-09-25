@@ -570,10 +570,8 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("--state-file applies to host targets, not --file.")
 
 
-def main() -> None:
-    """CLI entry point."""
-    parser = build_parser()
-
+def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
+    """Parse the command line on top of the defaults from the config file."""
     # --config must be resolved before the real parse: its values become the
     # argparse defaults, which an explicit command-line flag still overrides.
     config_pre_parser = argparse.ArgumentParser(add_help=False)
@@ -592,26 +590,24 @@ def main() -> None:
             parser.set_defaults(**load_config(str(config_path), parser))
         except ValueError as err:
             parser.error(str(err))
+    return parser.parse_args()
 
-    args = parser.parse_args()
 
-    if args.print_completion:
-        script = (
-            bash_completion_script(parser)
-            if args.print_completion == "bash"
-            else zsh_completion_script(parser)
-        )
-        print(script, end="")
-        sys.exit(0)
+def _completion_script(parser: argparse.ArgumentParser, shell: str) -> str:
+    """Return the completion script for ``shell`` ('bash' or 'zsh')."""
+    if shell == "bash":
+        return bash_completion_script(parser)
+    return zsh_completion_script(parser)
 
-    _apply_profile(args)
 
-    _validate_args(args, parser)
+def _collect_targets(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> tuple[list[str], list[str]]:
+    """Return ``(host_targets, file_targets)``, --input and --discover included.
 
-    if args.discover_only:
-        code = _run_discover_only(args)
-        sys.exit(0 if args.exit_zero else code)
-
+    Rejects an empty or inconsistent target set via ``parser.error``; an
+    unreadable --input file aborts with exit code 1.
+    """
     extra_targets = []
     if args.input:
         # An unreadable --input file (missing, no permission) is a runtime error
@@ -644,13 +640,25 @@ def main() -> None:
         parser.error("--file '-' (standard input) may be given at most once.")
     if args.export and len(host_targets) + len(file_targets) > 1:
         parser.error("--export saves a single certificate; give one target.")
+    return host_targets, file_targets
 
-    # With STARTTLS, fall back to the protocol's standard port unless the user
-    # passed --port explicitly (i.e. it differs from the 443 default).
-    default_port = args.port
-    if args.starttls and default_port == 443:
-        default_port = STARTTLS_PORTS[args.starttls]
 
+def _default_port(args: argparse.Namespace) -> int:
+    """Return --port, or the STARTTLS protocol's port when --port was not given."""
+    if args.starttls and args.port == 443:
+        return STARTTLS_PORTS[args.starttls]
+    return args.port
+
+
+def _inspect_all(
+    args: argparse.Namespace, host_targets: list[str], file_targets: list[str]
+) -> tuple[list[InspectionResult], list[tuple[str | None, str]], list[int]]:
+    """Inspect every target, returning ``(results, errors, codes)``.
+
+    Failures are reported on stderr (unless an exporter is selected) and
+    counted as RUNTIME_ERROR; ``codes`` holds one exit code per target.
+    """
+    default_port = _default_port(args)
     opts = InspectOptions.from_args(args)
 
     # A single --file source keeps the old unlabelled output; with several
@@ -683,12 +691,10 @@ def main() -> None:
             return name, None, str(err)
         return name, InspectionResult(name, info, code), None
 
-    outcomes = _map(_run, work_items, args.concurrency)
-
     results: list[InspectionResult] = []
     errors: list[tuple[str | None, str]] = []
     codes: list[int] = []
-    for name, result, err in outcomes:
+    for name, result, err in _map(_run, work_items, args.concurrency):
         if err is not None:
             if not args.exporter:
                 label = f"{name}: " if name else ""
@@ -698,8 +704,29 @@ def main() -> None:
             continue
         results.append(result)
         codes.append(result.code)
+    return results, errors, codes
 
-    changed_targets: set[str] | None = None
+
+def main() -> None:
+    """CLI entry point."""
+    parser = build_parser()
+    args = _parse_args(parser)
+
+    if args.print_completion:
+        print(_completion_script(parser, args.print_completion), end="")
+        sys.exit(0)
+
+    _apply_profile(args)
+    _validate_args(args, parser)
+
+    if args.discover_only:
+        code = _run_discover_only(args)
+        sys.exit(0 if args.exit_zero else code)
+
+    host_targets, file_targets = _collect_targets(args, parser)
+    results, errors, codes = _inspect_all(args, host_targets, file_targets)
+
+    changed_targets = None
     if args.state_file:
         changed_targets = update_state(args.state_file, results, errors)
 
