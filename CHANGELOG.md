@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-09-25
+
 ### Fixed
 
 - Certificate-supplied OCSP, CRL and CA-Issuer URLs (and the CT-log queries)
@@ -632,7 +634,8 @@ notes under each item.
 ### Added
 
 - Initial release: core TLS certificate inspector with human-readable and JSON
-  output.
+  output.3...HEAD
+  [2.4.3]: https://github.com/mangrisano/certinspect/compare/v2.4.2...v2.4.3
 
 [Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.2...HEAD
 [2.4.2]: https://github.com/mangrisano/certinspect/compare/v2.4.1...v2.4.2
