@@ -9,9 +9,11 @@ import csv
 import io
 import json
 
+from cryptography import x509
+
 from certinspect.exit_codes import ExitCode, Status
 from certinspect.models import CertificateInfo
-from certinspect.parser import certificate_status
+from certinspect.parser import certificate_status, common_name
 
 LABEL_WIDTH = 16
 
@@ -282,9 +284,9 @@ def format_fields(
 
 # Columns emitted by format_csv, in order. The first element is the header
 # label; the second pulls the value out of a (target, info) pair. The columns
-# are deliberately lean and free of embedded commas (CN only, no full DN,
-# serial or fingerprint) so the file opens cleanly in a spreadsheet; the
-# dropped fields remain available via --json.
+# are deliberately lean (CN only, no full DN, serial or fingerprint) so the
+# file opens cleanly in a spreadsheet; a name that itself contains a comma is
+# quoted by the csv writer. The dropped fields remain available via --json.
 _CSV_COLUMNS = (
     ("target", lambda target, info: target or ""),
     ("common_name", lambda target, info: _common_name(info["subject"])),
@@ -298,12 +300,15 @@ _CSV_COLUMNS = (
 
 
 def _common_name(dn: str) -> str:
-    """Return the CN from an RFC 4514 distinguished name, or the whole DN."""
-    for field in dn.split(","):
-        field = field.strip()
-        if field.startswith("CN="):
-            return field[3:]
-    return dn
+    """Return the CN from an RFC 4514 distinguished name, or the whole DN.
+
+    The DN is parsed rather than split on commas: a value may contain an
+    escaped comma, and even a fake ``CN=`` smuggled into another attribute.
+    """
+    try:
+        return common_name(x509.Name.from_rfc4514_string(dn))
+    except ValueError:
+        return dn
 
 
 def format_csv(

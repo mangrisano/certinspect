@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The `--csv` `common_name` and `issuer` columns now parse the distinguished
+  name instead of splitting it on commas. A Common Name containing a comma
+  (`ACME, Inc`) was truncated to `ACME\`, and a fake `CN=` hidden after an
+  escaped comma in another attribute could make the `issuer` column show a CA
+  that did not issue the certificate.
+
 ## [2.4.0] - 2026-09-25
 
 ### Added

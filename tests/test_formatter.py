@@ -419,6 +419,35 @@ def test_format_csv_issuer_is_common_name_only(make_cert):
     assert rows[0]["issuer"] == "Example Root CA"
 
 
+def test_format_csv_keeps_a_comma_inside_the_common_name(make_cert):
+    info = _info(make_cert(common_name="ACME, Inc", san=["example.com"]))
+    rows = _parse_csv(format_csv([("example.com", info, 0)]))
+    assert rows[0]["common_name"] == "ACME, Inc"
+
+
+def test_format_csv_issuer_cannot_be_spoofed_by_an_escaped_cn(make_cert):
+    info = _info(make_cert(san=["example.com"]))
+    # An Organization value that smuggles a fake "CN=" after an escaped comma.
+    info["issuer"] = "O=x\\,CN=DigiCert Global G2,CN=Mallory Self-Signed"
+    rows = _parse_csv(format_csv([("example.com", info, 0)]))
+    assert rows[0]["issuer"] == "Mallory Self-Signed"
+
+
+def test_format_csv_issuer_without_common_name_keeps_the_dn(make_cert):
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+
+    info = _info(make_cert(san=["example.com"]))
+    info["issuer"] = x509.Name(
+        [
+            x509.NameAttribute(NameOID.EMAIL_ADDRESS, "pki@example.com"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "No CN Here"),
+        ]
+    ).rfc4514_string()
+    rows = _parse_csv(format_csv([("example.com", info, 0)]))
+    assert rows[0]["issuer"] == info["issuer"]
+
+
 def test_format_csv_custom_delimiter(make_cert):
     info = _info(make_cert(san=["example.com"], days_valid=200))
     text = format_csv([("example.com", info, 0)], delimiter=";")

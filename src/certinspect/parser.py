@@ -116,10 +116,10 @@ def chain_summary(cert: x509.Certificate) -> dict:
 
 def _short_name(cert: x509.Certificate) -> str:
     """Return the certificate's Common Name, or its full subject DN."""
-    return _name_cn(cert.subject)
+    return common_name(cert.subject)
 
 
-def _name_cn(name: x509.Name) -> str:
+def common_name(name: x509.Name) -> str:
     """Return the Common Name of an X.509 name, or its full RFC 4514 DN."""
     attrs = name.get_attributes_for_oid(NameOID.COMMON_NAME)
     return attrs[0].value if attrs else name.rfc4514_string()
@@ -193,9 +193,9 @@ def diagnose_chain(presented: list[x509.Certificate]) -> dict | None:
                 ),
             }
 
-    issuer_cn = _name_cn(leaf.issuer)
+    issuer_cn = common_name(leaf.issuer)
     if any(leaf.issuer == cert.subject for cert in intermediates):
-        anchor = _name_cn(presented[-1].issuer)
+        anchor = common_name(presented[-1].issuer)
         return {
             "code": "UNTRUSTED_ROOT",
             "detail": (
