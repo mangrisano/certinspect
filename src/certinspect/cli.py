@@ -723,7 +723,11 @@ def main() -> None:
         changed_targets = {
             t for t, status in current_state.items() if previous_state.get(t) != status
         }
-        save_state(args.state_file, current_state)
+        # A target that failed this run keeps its last known status, so a
+        # transient outage is not reported as a change once it recovers.
+        failed = {name for name, _ in errors}
+        kept = {t: s for t, s in previous_state.items() if t in failed}
+        save_state(args.state_file, {**kept, **current_state})
 
     override = render(
         results,

@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   evaluate perfdata saw a healthy certificate as CRITICAL and one about to
   expire as OK. Without `--critical-days` the critical threshold is `0:`
   (expired), matching the plugin's own state.
+- `--state-file` no longer forgets a target that could not be reached: it
+  keeps its last known status. Before, the file was rewritten with only the
+  targets inspected successfully, so after a transient outage the host came
+  back as "seen for the first time" and `--only-changed` reported a change
+  that never happened.
 
 ## [2.4.0] - 2026-09-25
 

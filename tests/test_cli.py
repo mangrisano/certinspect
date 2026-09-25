@@ -2259,6 +2259,80 @@ def test_main_state_file_malformed_is_treated_as_empty(
     assert "=== a.com ===" in out
 
 
+def _fetch_with_outage(certs, down):
+    """A get_server_cert replacement whose hosts in ``down`` are unreachable."""
+
+    def _fetch(host, port, timeout, starttls=None, servername=None):
+        if host in down:
+            raise OSError("connection refused")
+        return certs[host], CONN
+
+    return _fetch
+
+
+def _state_run(monkeypatch, capsys, state_path, targets, certs, down=()):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert", _fetch_with_outage(certs, set(down))
+    )
+    argv = [*targets, "--state-file", str(state_path), "--only-changed"]
+    _run_main(monkeypatch, argv)
+    return capsys.readouterr().out
+
+
+def test_main_state_file_keeps_the_last_status_of_an_unreachable_target(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"a.com": "VALID", "b.com": "VALID"}))
+    certs = {"b.com": make_cert(san=["b.com"], days_valid=10)}
+
+    _state_run(monkeypatch, capsys, state_path, ["a.com", "b.com"], certs, ["a.com"])
+
+    assert json.loads(state_path.read_text()) == {
+        "a.com": "VALID",
+        "b.com": "EXPIRING",
+    }
+
+
+def test_main_state_file_ignores_an_outage_on_recovery(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    state_path = tmp_path / "state.json"
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=200)}
+
+    _state_run(monkeypatch, capsys, state_path, ["a.com"], certs)
+    _state_run(monkeypatch, capsys, state_path, ["a.com"], certs, ["a.com"])
+    out = _state_run(monkeypatch, capsys, state_path, ["a.com"], certs)
+
+    assert "=== a.com ===" not in out
+
+
+def test_main_state_file_reports_a_change_made_during_an_outage(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    state_path = tmp_path / "state.json"
+    valid = {"a.com": make_cert(san=["a.com"], days_valid=200)}
+    expiring = {"a.com": make_cert(san=["a.com"], days_valid=10)}
+
+    _state_run(monkeypatch, capsys, state_path, ["a.com"], valid)
+    _state_run(monkeypatch, capsys, state_path, ["a.com"], valid, ["a.com"])
+    out = _state_run(monkeypatch, capsys, state_path, ["a.com"], expiring)
+
+    assert "=== a.com ===" in out
+
+
+def test_main_state_file_forgets_a_target_removed_from_the_list(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps({"a.com": "VALID", "gone.com": "VALID"}))
+    certs = {"a.com": make_cert(san=["a.com"], days_valid=200)}
+
+    _state_run(monkeypatch, capsys, state_path, ["a.com"], certs)
+
+    assert json.loads(state_path.read_text()) == {"a.com": "VALID"}
+
+
 def test_main_only_changed_requires_state_file(monkeypatch, capsys):
     code = _run_main(monkeypatch, ["a.com", "--only-changed"])
     assert code == 2

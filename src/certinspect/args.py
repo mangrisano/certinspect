@@ -524,7 +524,8 @@ def build_parser() -> argparse.ArgumentParser:
             "compare against the previous run. Combine with --only-changed to "
             "show only the targets whose status changed; without it, the file "
             "is simply kept up to date for the next run. Host targets only; a "
-            "target seen for the first time counts as changed."
+            "target seen for the first time counts as changed, and one that "
+            "cannot be reached keeps its last known status."
         ),
     )
     parser.add_argument(

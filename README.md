@@ -1424,7 +1424,10 @@ Status:         EXPIRING
 ```
 
 The state file is always brought up to date, whether or not `--only-changed`
-is given, so the next run has a fresh baseline to compare against.
+is given, so the next run has a fresh baseline to compare against. A target
+that cannot be reached keeps its last known status, so a transient outage is
+reported as an error on that run (exit code 1) but not as a change once the
+host is back; a target removed from the list is dropped from the file.
 
 ### `--print-completion {bash,zsh}`
 
