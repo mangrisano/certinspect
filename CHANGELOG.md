@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.4] - 2026-09-25
+
 ### Fixed
 
 - A host is no longer reported as trusted on the strength of a different
@@ -645,7 +647,8 @@ notes under each item.
 
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.3...HEAD
-  [2.4.3]: https://github.com/mangrisano/certinspect/compare/v2.4.2...v2.4.3
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.4...HEAD
+[2.4.4]: https://github.com/mangrisano/certinspect/compare/v2.4.3...v2.4.4
 
 [Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.2...HEAD
 [2.4.2]: https://github.com/mangrisano/certinspect/compare/v2.4.1...v2.4.2
