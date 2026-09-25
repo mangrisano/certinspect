@@ -2,17 +2,24 @@
 
 Given a certificate (and, ideally, its issuer) determine whether it has been
 revoked, trying OCSP first and falling back to the CRL distribution points.
-Both soft-fail like a browser when no authoritative answer is available. The
+Both soft-fail like a browser when no authoritative answer is available. An
+OCSP response or CRL is only believed once its signature has been verified
+against the certificate's issuer. The
 HTTP transport is the SSRF-guarded client in :mod:`certinspect.httpfetch`.
 """
 
 from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
 from cryptography.x509 import ocsp
-from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID
+from cryptography.x509.oid import (
+    AuthorityInformationAccessOID,
+    ExtendedKeyUsageOID,
+    ExtensionOID,
+)
 
 from certinspect.httpfetch import fetch
 
@@ -117,6 +124,98 @@ def _ocsp_response_stale(response: ocsp.OCSPResponse) -> str | None:
     return None
 
 
+def _verify_signature(
+    public_key, signature: bytes, data: bytes, hash_algorithm
+) -> bool:
+    """Return True if ``signature`` over ``data`` verifies with ``public_key``."""
+    try:
+        if isinstance(public_key, rsa.RSAPublicKey):
+            public_key.verify(signature, data, padding.PKCS1v15(), hash_algorithm)
+        elif isinstance(public_key, ec.EllipticCurvePublicKey):
+            public_key.verify(signature, data, ec.ECDSA(hash_algorithm))
+        elif isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+            public_key.verify(signature, data)
+        else:
+            return False
+    except (InvalidSignature, TypeError, ValueError):
+        return False
+    return True
+
+
+def _names_responder(response: ocsp.OCSPResponse, cert: x509.Certificate) -> bool:
+    """Return True if the response's ResponderID designates ``cert``."""
+    if response.responder_name is not None:
+        return response.responder_name == cert.subject
+    key_id = x509.SubjectKeyIdentifier.from_public_key(cert.public_key()).digest
+    return response.responder_key_hash == key_id
+
+
+def _has_ocsp_signing(cert: x509.Certificate) -> bool:
+    """Return True if the certificate carries the id-kp-OCSPSigning EKU."""
+    try:
+        eku = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value
+    except x509.ExtensionNotFound:
+        return False
+    return ExtendedKeyUsageOID.OCSP_SIGNING in eku
+
+
+def _ocsp_signer(
+    response: ocsp.OCSPResponse, issuer: x509.Certificate
+) -> x509.Certificate | None:
+    """Return the certificate authorized to sign ``response``, or None.
+
+    That is the issuer itself or, per RFC 6960 section 4.2.2.2, a delegated
+    responder certificate embedded in the response, issued directly by the
+    issuer, carrying the id-kp-OCSPSigning EKU and currently valid.
+    """
+    if _names_responder(response, issuer):
+        return issuer
+    now = datetime.now(timezone.utc)
+    for candidate in response.certificates:
+        if (
+            _names_responder(response, candidate)
+            and _signed_by(candidate, issuer)
+            and _has_ocsp_signing(candidate)
+            and candidate.not_valid_before_utc <= now <= candidate.not_valid_after_utc
+        ):
+            return candidate
+    return None
+
+
+def _ocsp_authentication_error(
+    response: ocsp.OCSPResponse,
+    request: ocsp.OCSPRequest,
+    issuer: x509.Certificate,
+) -> str | None:
+    """Return why ``response`` cannot be trusted as the answer to ``request``.
+
+    The response must be about the requested certificate (a genuine answer for
+    another certificate of the same CA could otherwise be replayed) and be
+    validly signed by an authorized responder. Returns None when it is.
+    """
+    if (
+        response.serial_number != request.serial_number
+        or response.issuer_name_hash != request.issuer_name_hash
+        or response.issuer_key_hash != request.issuer_key_hash
+    ):
+        return "OCSP response is for a different certificate"
+    signer = _ocsp_signer(response, issuer)
+    if signer is None:
+        return "OCSP response is not signed by the issuer or an authorized responder"
+    try:
+        hash_algorithm = response.signature_hash_algorithm
+    except UnsupportedAlgorithm:
+        return "OCSP response uses an unsupported signature algorithm"
+    if not _verify_signature(
+        signer.public_key(),
+        response.signature,
+        response.tbs_response_bytes,
+        hash_algorithm,
+    ):
+        return "OCSP response signature is invalid"
+    return None
+
+
 def _check_ocsp(
     cert: x509.Certificate,
     issuer: x509.Certificate | None,
@@ -132,7 +231,8 @@ def _check_ocsp(
     # OCSP CertID conventionally uses SHA-1 for the issuer name/key hashes;
     # many responders reject other digests.
     builder = ocsp.OCSPRequestBuilder().add_certificate(cert, issuer, hashes.SHA1())
-    der_request = builder.build().public_bytes(serialization.Encoding.DER)
+    request = builder.build()
+    der_request = request.public_bytes(serialization.Encoding.DER)
 
     try:
         raw = fetch(ocsp_urls[0], data=der_request, timeout=timeout)
@@ -150,6 +250,11 @@ def _check_ocsp(
                 "UNAVAILABLE",
                 f"OCSP response status: {response.response_status.name}",
             )
+        # An unauthenticated REVOKED is ignored too, or an attacker could
+        # get healthy certificates reported as revoked.
+        problem = _ocsp_authentication_error(response, request, issuer)
+        if problem is not None:
+            return "UNAVAILABLE", problem
         status = response.certificate_status
     except ValueError as err:
         return "UNAVAILABLE", f"OCSP response could not be parsed: {err}"

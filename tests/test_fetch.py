@@ -1079,7 +1079,9 @@ def _leaf(issuer_cert, issuer_key, *, serial=4242, ca_issuers=False):
     )
 
 
-def _ocsp_response(leaf, issuer, signer_cert, signer_key, *, status=None, embed=()):
+def _ocsp_response(
+    leaf, issuer, signer_cert, signer_key, *, status=None, embed=(), by_key=False
+):
     """A fresh OCSP response about ``leaf``/``issuer``, signed by ``signer_key``."""
     from datetime import datetime, timedelta, timezone
 
@@ -1101,7 +1103,12 @@ def _ocsp_response(leaf, issuer, signer_cert, signer_key, *, status=None, embed=
             revocation_time=now - timedelta(hours=2) if revoked else None,
             revocation_reason=None,
         )
-        .responder_id(ocsp.OCSPResponderEncoding.NAME, signer_cert)
+        .responder_id(
+            ocsp.OCSPResponderEncoding.HASH
+            if by_key
+            else ocsp.OCSPResponderEncoding.NAME,
+            signer_cert,
+        )
     )
     if embed:
         builder = builder.certificates(list(embed))
@@ -1151,6 +1158,116 @@ def test_check_revocation_ignores_an_issuer_that_did_not_sign_the_leaf(monkeypat
 
     status, _ = revocation.check_revocation(leaf, timeout=1.0, issuer=mallory)
     assert status == "UNAVAILABLE"
+
+
+def _responder(issuer_cert, issuer_key, *, ocsp_signing=True):
+    """Return ``(cert, key)`` for an OCSP responder delegated by ``issuer_key``."""
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+
+    now = datetime.now(timezone.utc)
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    builder = (
+        x509.CertificateBuilder()
+        .subject_name(
+            x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "OCSP Responder")])
+        )
+        .issuer_name(issuer_cert.subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(days=1))
+        .not_valid_after(now + timedelta(days=30))
+    )
+    if ocsp_signing:
+        builder = builder.add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.OCSP_SIGNING]), critical=False
+        )
+    return builder.sign(issuer_key, hashes.SHA256()), key
+
+
+def test_check_ocsp_accepts_a_response_signed_by_the_issuer_key_id(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    _serve(monkeypatch, {OCSP_URL: _ocsp_response(leaf, ca, ca, ca_key, by_key=True)})
+
+    assert revocation._check_ocsp(leaf, ca, timeout=1.0) == ("GOOD", None)
+
+
+def test_check_ocsp_accepts_an_authorized_delegated_responder(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    responder, responder_key = _responder(ca, ca_key)
+    der = _ocsp_response(leaf, ca, responder, responder_key, embed=[responder])
+    _serve(monkeypatch, {OCSP_URL: der})
+
+    assert revocation._check_ocsp(leaf, ca, timeout=1.0) == ("GOOD", None)
+
+
+def _mallory_signs(ca, ca_key, leaf):
+    """Mallory's own CA, named like the real one, signs a GOOD for ``leaf``."""
+    mallory, mallory_key = _ca()
+    return _ocsp_response(leaf, ca, mallory, mallory_key)
+
+
+def _other_certificate_good(ca, ca_key, leaf):
+    """A genuine GOOD, signed by the CA, about another of its certificates."""
+    return _ocsp_response(_leaf(ca, ca_key, serial=9999), ca, ca, ca_key)
+
+
+def _forged_revoked(ca, ca_key, leaf):
+    from cryptography.x509 import ocsp
+
+    mallory, mallory_key = _ca()
+    return _ocsp_response(
+        leaf, ca, mallory, mallory_key, status=ocsp.OCSPCertStatus.REVOKED
+    )
+
+
+def _responder_without_ocsp_signing(ca, ca_key, leaf):
+    responder, key = _responder(ca, ca_key, ocsp_signing=False)
+    return _ocsp_response(leaf, ca, responder, key, embed=[responder])
+
+
+def _responder_from_another_ca(ca, ca_key, leaf):
+    mallory, mallory_key = _ca("Mallory CA")
+    responder, key = _responder(mallory, mallory_key)
+    return _ocsp_response(leaf, ca, responder, key, embed=[responder])
+
+
+def _responder_not_embedded(ca, ca_key, leaf):
+    responder, key = _responder(ca, ca_key)
+    return _ocsp_response(leaf, ca, responder, key)
+
+
+@pytest.mark.parametrize(
+    "forge, reason",
+    [
+        (_mallory_signs, "signature"),
+        (_other_certificate_good, "different certificate"),
+        (_forged_revoked, "signature"),
+        (_responder_without_ocsp_signing, "authorized responder"),
+        (_responder_from_another_ca, "authorized responder"),
+        (_responder_not_embedded, "authorized responder"),
+    ],
+)
+def test_check_ocsp_rejects_an_unauthenticated_response(monkeypatch, forge, reason):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    _serve(monkeypatch, {OCSP_URL: forge(ca, ca_key, leaf)})
+
+    status, detail = revocation._check_ocsp(leaf, ca, timeout=1.0)
+    assert status == "UNAVAILABLE"
+    assert reason in detail
 
 
 # --- offline chain verification --------------------------------------------

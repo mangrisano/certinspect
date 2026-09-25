@@ -50,6 +50,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signed the inspected certificate. An issuer downloaded from the AIA "CA
   Issuers" URL (plain HTTP, so replaceable on the network) was accepted as-is,
   letting an attacker supply their own "issuer" and sign revocation answers.
+- OCSP responses are now authenticated before their status is believed: the
+  response must be about the requested certificate (serial and issuer hashes)
+  and be validly signed by the issuer or by a delegated responder issued by it
+  with the OCSP Signing EKU (RFC 6960). A forged answer, or a genuine GOOD for
+  another certificate of the same CA, used to be accepted; it now degrades to
+  UNAVAILABLE and the CRL fallback runs. Unauthenticated REVOKED answers are
+  ignored the same way.
 
 ## [2.3.3] - 2026-09-22
 
