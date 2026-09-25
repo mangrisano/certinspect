@@ -58,7 +58,8 @@ from certinspect.exit_codes import (
 from certinspect.models import CertificateInfo, InspectionResult
 from certinspect.completion import bash_completion_script, zsh_completion_script
 from certinspect.config import DEFAULT_CONFIG_PATH, load_config
-from certinspect.render import OutputOptions, load_state, render, save_state
+from certinspect.render import OutputOptions, render
+from certinspect.state import update_state
 
 
 @dataclass(frozen=True)
@@ -732,18 +733,7 @@ def main() -> None:
 
     changed_targets: set[str] | None = None
     if args.state_file:
-        previous_state = load_state(args.state_file)
-        current_state = {
-            r.label: r.info["status"] for r in results if r.label is not None
-        }
-        changed_targets = {
-            t for t, status in current_state.items() if previous_state.get(t) != status
-        }
-        # A target that failed this run keeps its last known status, so a
-        # transient outage is not reported as a change once it recovers.
-        failed = {name for name, _ in errors}
-        kept = {t: s for t, s in previous_state.items() if t in failed}
-        save_state(args.state_file, {**kept, **current_state})
+        changed_targets = update_state(args.state_file, results, errors)
 
     override = render(
         results,

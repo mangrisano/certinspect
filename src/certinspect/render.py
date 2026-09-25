@@ -1,13 +1,11 @@
-"""Render inspection results and persist per-run state.
+"""Render inspection results.
 
 Turns the collected ``(target, info, exit_code)`` results into the selected
-output (human text, JSON, CSV, tab-separated fields, or a monitoring exporter)
-and reads/writes the optional --state-file used to detect status changes across
-runs. Presentation only; the analysis lives in parser/formatter.
+output (human text, JSON, CSV, tab-separated fields, or a monitoring exporter).
+Presentation only; the analysis lives in parser/formatter.
 """
 
 import argparse
-import json
 import sys
 from dataclasses import dataclass
 
@@ -139,30 +137,3 @@ def render(
     if summary_line:
         print(summary_line, file=sys.stderr)
     return None
-
-
-def load_state(path: str) -> dict[str, str]:
-    """Return the target -> status mapping saved by a previous --state-file run.
-
-    A missing, unreadable or malformed file is treated as an empty history (the
-    first run establishes the baseline) rather than an error.
-    """
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def save_state(path: str, state: dict[str, str]) -> None:
-    """Persist the target -> status mapping for the next --state-file run.
-
-    Failing to write is reported as a warning rather than aborting the run:
-    the inspection results themselves are unaffected.
-    """
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2, sort_keys=True)
-    except OSError as err:
-        print(f"warning: could not write --state-file {path}: {err}", file=sys.stderr)
