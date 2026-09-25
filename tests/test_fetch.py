@@ -897,6 +897,19 @@ def test_verify_chain_offline_needs_a_name(make_cert):
     assert chain == []
 
 
+@pytest.mark.parametrize("san", [("*.example.com", "example.com"), ("*.example.com",)])
+def test_verify_chain_offline_trusts_a_wildcard_leaf(make_chain, tmp_path, san):
+    from certinspect.fetch import verify_chain_offline
+
+    leaf, intermediate, root = make_chain(leaf_cn="example.com", leaf_san=san)
+    ca = tmp_path / "root.pem"
+    ca.write_bytes(_pem(root))
+
+    trusted, reason, _ = verify_chain_offline([leaf, intermediate], cafile=str(ca))
+
+    assert trusted is True, reason
+
+
 def test_verify_chain_offline_empty_bundle():
     from certinspect.fetch import verify_chain_offline
 

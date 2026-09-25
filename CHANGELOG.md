@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--min-key-size` (and the `standard`/`strict` profiles) no longer fails every
   EC certificate: the minimum now applies to RSA and DSA keys only, since an EC
   key's bit length is not on the RSA scale.
+- Offline `--file` verification no longer reports a valid chain as untrusted
+  when the leaf's first SAN is a wildcard (e.g. `*.example.com`).
 
 ## [2.3.3] - 2026-09-22
 

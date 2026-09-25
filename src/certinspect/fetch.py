@@ -366,14 +366,34 @@ def _trust_anchors(cafile: str | None, capath: str | None) -> list[x509.Certific
     return anchors
 
 
+# Stands in for the '*' of a wildcard SAN so the verifier gets a concrete host.
+_WILDCARD_PROBE_LABEL = "certinspect-probe"
+
+
+def _concrete_dns_name(names: list[str]) -> str:
+    """Return the first non-wildcard name, else the first one made concrete.
+
+    The verifier rejects a pattern such as ``*.example.com`` as the name to
+    check, so a wildcard becomes ``certinspect-probe.example.com``, which the
+    certificate's own wildcard SAN covers.
+    """
+    for name in names:
+        if "*" not in name:
+            return name
+    first = names[0]
+    if first.startswith("*."):
+        return _WILDCARD_PROBE_LABEL + first[1:]
+    return first
+
+
 def _offline_verification_subject(
     leaf: x509.Certificate,
 ) -> "verification.Subject | None":
     """Return a verification subject (DNS/IP) taken from the leaf itself.
 
     Chain trust is name-independent here — hostname matching is reported
-    separately — so the leaf's own first SAN entry (falling back to its Common
-    Name) is used. That turns the verifier's mandatory name check into a no-op
+    separately — so a name taken from the leaf's own SAN (falling back to its
+    Common Name, and made concrete when it is a wildcard) is used. That turns the verifier's mandatory name check into a no-op
     while its signature, validity and trust-anchor checks still run. Returns
     None when the leaf carries no usable name.
     """
@@ -384,14 +404,14 @@ def _offline_verification_subject(
     if san is not None:
         dns = san.get_values_for_type(x509.DNSName)
         if dns:
-            return verification.DNSName(dns[0])
+            return verification.DNSName(_concrete_dns_name(dns))
         ips = san.get_values_for_type(x509.IPAddress)
         if ips:
             return verification.IPAddress(ips[0])
     cn = leaf.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
     if cn:
         try:
-            return verification.DNSName(cn[0].value)
+            return verification.DNSName(_concrete_dns_name([cn[0].value]))
         except ValueError:
             return None
     return None
