@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   targets inspected successfully, so after a transient outage the host came
   back as "seen for the first time" and `--only-changed` reported a change
   that never happened.
+- `--export` with more than one target (hosts, several `--file`, or a
+  `--discover` that finds several hosts) is now a usage error (exit 2). Every
+  target used to overwrite the same file, so only the last certificate was
+  saved and the others were lost without a warning.
 
 ## [2.4.0] - 2026-09-25
 

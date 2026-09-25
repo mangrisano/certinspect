@@ -656,6 +656,8 @@ def main() -> None:
         parser.error("There is no target or no file to inspect.")
     if file_targets.count("-") > 1:
         parser.error("--file '-' (standard input) may be given at most once.")
+    if args.export and len(host_targets) + len(file_targets) > 1:
+        parser.error("--export saves a single certificate; give one target.")
 
     # With STARTTLS, fall back to the protocol's standard port unless the user
     # passed --port explicitly (i.e. it differs from the 443 default).

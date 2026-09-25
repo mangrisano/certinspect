@@ -633,7 +633,7 @@ certinspect example.com --export ./example.com.pem
 | `--summary`                           | Print a one-line tally (valid/expiring/expired/errors) to stderr; counts every target before filtering.                                                                                                                                                           |
 | `--field NAME`                        | Print only the given field(s), one tab-separated line per target (repeatable; `target` for the host). For scripting without a JSON tool.                                                                                                                          |
 | `--exit-zero`                         | Always exit 0, even on problems or fetch errors. Report-only mode for dashboards/CI that read the output, not the exit code.                                                                                                                                      |
-| `--export PATH`                       | Save the inspected certificate as a PEM file at PATH.                                                                                                                                                                                                             |
+| `--export PATH`                       | Save the inspected certificate as a PEM file at PATH. Single target only.                                                                                                                                                                                         |
 | `--starttls {smtp,imap,pop3,ftp}`     | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given).                                                                                                                                                                 |
 | `--exporter {nagios,prometheus}`      | Emit machine-readable monitoring output (ignores `--quiet`).                                                                                                                                                                                                      |
 | `--concurrency N`                     | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved). Also governs `--discover`'s per-domain concurrency.                                                                                                                             |
@@ -1290,7 +1290,9 @@ $ echo $?
 
 ### `--export PATH`
 
-Save the fetched certificate as PEM and still print the report.
+Save the fetched certificate as PEM and still print the report. It takes a
+single target; with several (hosts, `--file`s or a `--discover` result) the
+command stops with a usage error rather than overwriting the same file.
 
 ```console
 $ certinspect example.com --export ./fetched.pem

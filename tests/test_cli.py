@@ -1272,6 +1272,47 @@ def test_main_export_writes_pem(monkeypatch, capsys, tmp_path, make_cert):
     assert content.startswith(b"-----BEGIN CERTIFICATE-----")
 
 
+def test_main_export_rejects_several_hosts(monkeypatch, capsys, tmp_path, make_cert):
+    certs = {"a.com": make_cert(san=["a.com"]), "b.com": make_cert(san=["b.com"])}
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    out_path = tmp_path / "exported.pem"
+
+    code = _run_main(monkeypatch, ["a.com", "b.com", "--export", str(out_path)])
+
+    assert code == 2
+    assert "--export" in capsys.readouterr().err
+    assert not out_path.exists()
+
+
+def test_main_export_rejects_several_files(monkeypatch, capsys, tmp_path, make_cert):
+    first, second = tmp_path / "a.der", tmp_path / "b.der"
+    first.write_bytes(make_cert())
+    second.write_bytes(make_cert())
+    out_path = tmp_path / "exported.pem"
+    argv = ["--file", str(first), "--file", str(second), "--export", str(out_path)]
+
+    assert _run_main(monkeypatch, argv) == 2
+    assert not out_path.exists()
+
+
+def test_main_export_rejects_a_discovery_that_finds_several_hosts(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    monkeypatch.setattr(
+        "certinspect.cli.discover_hostnames",
+        lambda domain, timeout: ["a.example.com", "b.example.com"],
+    )
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        lambda host, port, timeout, **kwargs: (make_cert(san=[host]), CONN),
+    )
+    out_path = tmp_path / "exported.pem"
+    argv = ["--discover", "example.com", "--export", str(out_path)]
+
+    assert _run_main(monkeypatch, argv) == 2
+    assert not out_path.exists()
+
+
 def _fake_fetch(mapping):
     """Return a get_server_cert replacement backed by host->bytes mapping."""
 

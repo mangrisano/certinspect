@@ -444,7 +444,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--export",
         metavar="PATH",
-        help="Save the inspected certificate as a PEM file at PATH.",
+        help=(
+            "Save the inspected certificate as a PEM file at PATH. Needs a "
+            "single target (host or --file)."
+        ),
     )
     parser.add_argument(
         "--starttls",
