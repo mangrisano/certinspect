@@ -1517,8 +1517,15 @@ certinspect_policy_ok{target="example.com"} 0
 
 ## Exit codes
 
-Designed for automation (cron, CI, monitoring scripts). In batch mode the
-worst code across all targets is returned.
+Designed for automation (cron, CI, monitoring scripts). A single number can
+report only one problem, so when a certificate has several (e.g. expired _and_
+a weak key), or a batch has several targets, the **most severe** one is
+returned. The codes are labels, not a scale; severity follows this order, most
+severe first:
+
+`6` untrusted/revoked → `7` pin mismatch → `4` expired/not yet valid → `5`
+hostname mismatch → `1` runtime error (e.g. unreachable host) → `8` SAN
+missing → `9` policy → `3` expiring → `0` valid.
 
 | Code | Meaning                                                                                                                                                                          |
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

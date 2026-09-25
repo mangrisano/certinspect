@@ -456,7 +456,10 @@ def test_main_profile_standard_flags_weak_key(monkeypatch, tmp_path, make_cert):
     cert_path = tmp_path / "weak.der"
     cert_path.write_bytes(make_cert(key_size=1024))
 
-    code = _run_main(monkeypatch, ["--file", str(cert_path), "--profile", "standard"])
+    code = _run_main(
+        monkeypatch,
+        ["--file", str(cert_path), "--no-verify", "--profile", "standard"],
+    )
     assert code == 9
 
 
@@ -773,7 +776,8 @@ def test_main_expect_san_with_file(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(san=["example.com"]))
     code = _run_main(
-        monkeypatch, ["--file", str(cert_path), "--expect-san", "other.com"]
+        monkeypatch,
+        ["--file", str(cert_path), "--no-verify", "--expect-san", "other.com"],
     )
     assert code == 8
 
@@ -1140,7 +1144,8 @@ def test_main_proxy_rejected_with_file(monkeypatch, capsys, tmp_path, make_cert)
 def test_main_policy_with_file(monkeypatch, capsys, tmp_path, make_cert):
     cert_path = tmp_path / "cert.der"
     cert_path.write_bytes(make_cert(san=["example.com"], days_valid=400))
-    code = _run_main(monkeypatch, ["--file", str(cert_path), "--not-after-max", "398"])
+    argv = ["--file", str(cert_path), "--no-verify", "--not-after-max", "398"]
+    code = _run_main(monkeypatch, argv)
     assert code == 9
 
 
@@ -1358,6 +1363,95 @@ def test_main_batch_continues_on_error(monkeypatch, capsys, make_cert):
     assert "ok.com" in captured.out
     assert "down.com" in captured.err
     assert code == 1
+
+
+def _expired_cert(make_cert, **kwargs):
+    return make_cert(san=["example.com"], days_valid=-5, days_ago_start=30, **kwargs)
+
+
+def _patch_revoked(monkeypatch):
+    monkeypatch.setattr(
+        "certinspect.cli.check_revocation",
+        lambda cert, timeout, issuer=None: ("REVOKED", "revoked"),
+    )
+
+
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["example.com", "--min-key-size", "2048"], 4),
+        (["other.com"], 4),
+    ],
+)
+def test_main_expiry_is_not_masked_by_milder_problems(
+    monkeypatch, make_cert, argv, expected
+):
+    cert = _expired_cert(make_cert, key_size=1024)
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _const_fetch(cert))
+    assert _run_main(monkeypatch, argv) == expected
+
+
+@pytest.mark.parametrize(
+    "extra", [["--pin", "AA"], ["--expect-san", "x.com"], ["--min-key-size", "4096"]]
+)
+def test_main_revocation_is_not_masked_by_milder_problems(
+    monkeypatch, make_cert, extra
+):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert", _const_fetch(make_cert(san=["example.com"]))
+    )
+    _patch_revoked(monkeypatch)
+    assert _run_main(monkeypatch, ["example.com", *extra]) == 6
+
+
+def test_main_pin_mismatch_outranks_expiry(monkeypatch, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert", _const_fetch(_expired_cert(make_cert))
+    )
+    assert _run_main(monkeypatch, ["example.com", "--pin", "AA"]) == 7
+
+
+def test_main_batch_exit_code_follows_severity(monkeypatch, make_cert):
+    certs = {
+        "expired.com": make_cert(san=["expired.com"], days_valid=-5, days_ago_start=30),
+        "weak.com": make_cert(san=["weak.com"], key_size=1024),
+    }
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
+    argv = ["expired.com", "weak.com", "--min-key-size", "2048"]
+    assert _run_main(monkeypatch, argv) == 4
+
+
+@pytest.mark.parametrize(
+    "cert_kwargs, extra, expected",
+    [
+        ({"days_valid": 10}, [], 1),
+        ({"key_size": 1024}, ["--min-key-size", "2048"], 1),
+        ({"san": ["elsewhere.com"]}, [], 5),
+    ],
+)
+def test_main_batch_unreachable_host_ranks_by_severity(
+    monkeypatch, make_cert, cert_kwargs, extra, expected
+):
+    cert = make_cert(**{"san": ["ok.com"], **cert_kwargs})
+
+    def _fetch(host, port, timeout, starttls=None, servername=None):
+        if host == "down.com":
+            raise OSError("connection refused")
+        return cert, CONN
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    assert _run_main(monkeypatch, ["down.com", "ok.com", *extra]) == expected
+
+
+def test_most_severe_ranks_codes():
+    from certinspect.exit_codes import RUNTIME_ERROR, ExitCode, most_severe
+
+    assert most_severe([]) == ExitCode.OK
+    assert most_severe([ExitCode.POLICY, ExitCode.INVALID]) == ExitCode.INVALID
+    assert most_severe([ExitCode.EXPIRING, RUNTIME_ERROR]) == RUNTIME_ERROR
+    assert (
+        most_severe([ExitCode.INVALID, ExitCode.PIN_MISMATCH]) == ExitCode.PIN_MISMATCH
+    )
 
 
 def test_main_version_flag(monkeypatch, capsys):

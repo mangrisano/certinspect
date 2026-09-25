@@ -48,7 +48,7 @@ from certinspect.parser import (
     POLICY_PROFILES,
     to_pem,
 )
-from certinspect.exit_codes import EXIT_BY_STATUS, ExitCode
+from certinspect.exit_codes import EXIT_BY_STATUS, RUNTIME_ERROR, ExitCode, most_severe
 from certinspect.models import CertificateInfo
 from certinspect.completion import bash_completion_script, zsh_completion_script
 from certinspect.config import DEFAULT_CONFIG_PATH, load_config
@@ -191,7 +191,8 @@ def _inspect(
     ``expect_san`` names are not all covered by the certificate's SAN the exit
     code is 8. The opt-in policy checks (``not_after_max``/``cab_forum``,
     ``min_key_size``, ``fail_weak``, ``require_sct``, ``require_must_staple``,
-    ``min_tls_version``) yield exit code 9 when any is violated.
+    ``min_tls_version``) yield exit code 9 when any is violated. When several
+    checks fail, the most severe code wins (see ``exit_codes.most_severe``).
     """
     der, conn = _fetch_source(target, port, opts)
     cert = load_certificate(der)
@@ -206,9 +207,9 @@ def _inspect(
     info["hostname_match"] = hostname_matches(info, check_name) if check_name else None
 
     info["status"] = certificate_status(info, opts.days, opts.critical_days)
-    code = EXIT_BY_STATUS[info["status"]]
+    codes = [EXIT_BY_STATUS[info["status"]]]
     if info["hostname_match"] is False:
-        code = ExitCode.HOSTNAME_MISMATCH
+        codes.append(ExitCode.HOSTNAME_MISMATCH)
 
     # A --file bundle may carry the whole chain; parse it once when it is needed.
     file_bundle: list | None = None
@@ -218,8 +219,7 @@ def _inspect(
     override, chain_certs = _check_chain(
         info, target, port, cert, conn, opts, file_bundle
     )
-    if override is not None:
-        code = override
+    codes.append(override)
 
     # The verified chain (when available) is the most accurate source for the
     # intermediates actually used; fall back to the chain presented by the
@@ -238,14 +238,12 @@ def _inspect(
         presented = (conn.get("chain") or [cert]) if conn else (file_bundle or [cert])
         info["chain"] = [chain_summary(c) for c in presented]
 
-    for override in (
+    codes += [
         _check_pin(info, opts),
         _check_expect_san(info, opts),
         _check_policy(info, opts),
-    ):
-        if override is not None:
-            code = override
-    return info, code
+    ]
+    return info, most_severe(code for code in codes if code is not None)
 
 
 def _check_chain(
@@ -325,11 +323,7 @@ def _check_expect_san(info: CertificateInfo, opts: InspectOptions) -> ExitCode |
 
 
 def _check_policy(info: CertificateInfo, opts: InspectOptions) -> ExitCode | None:
-    """Record the opt-in policy violations; return POLICY when any applies.
-
-    A revoked certificate already fails with UNTRUSTED_OR_REVOKED, so a policy
-    violation does not override it.
-    """
+    """Record the opt-in policy violations; return POLICY when any applies."""
     if not (
         opts.not_after_max is not None
         or opts.cab_forum
@@ -358,9 +352,7 @@ def _check_policy(info: CertificateInfo, opts: InspectOptions) -> ExitCode | Non
         if violation is not None:
             violations.append(violation)
     info["policy_violations"] = violations
-    if violations and info.get("revocation_status") != "REVOKED":
-        return ExitCode.POLICY
-    return None
+    return ExitCode.POLICY if violations else None
 
 
 def _revocation_policy_violation(info: CertificateInfo) -> str | None:
@@ -707,7 +699,7 @@ def main() -> None:
                 label = f"{raw_target}: " if raw_target else ""
                 print(f"error: {label}{err}", file=sys.stderr)
             errors.append((raw_target, err))
-            codes.append(1)
+            codes.append(RUNTIME_ERROR)
             continue
         results.append(payload)
         codes.append(payload[2])
@@ -740,7 +732,7 @@ def main() -> None:
     )
     if args.exit_zero:
         sys.exit(0)
-    sys.exit(override if override is not None else max(codes, default=0))
+    sys.exit(override if override is not None else most_severe(codes))
 
 
 if __name__ == "__main__":

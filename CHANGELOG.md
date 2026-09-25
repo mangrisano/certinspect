@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key's bit length is not on the RSA scale.
 - Offline `--file` verification no longer reports a valid chain as untrusted
   when the leaf's first SAN is a wildcard (e.g. `*.example.com`).
+- When a certificate (or a batch) has several problems, the exit code is now
+  the most severe one, as documented, instead of whichever check ran last or
+  the highest number. An expired certificate with a weak key exits 4, not 9; a
+  revoked one with a pin or SAN mismatch exits 6, not 7/8; and an unreachable
+  host (1) now outranks SAN, policy and expiry warnings. The order is listed
+  in the README's "Exit codes" section.
 
 ### Security
 
