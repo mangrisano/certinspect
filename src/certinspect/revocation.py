@@ -28,6 +28,10 @@ from certinspect.parser import is_ca_certificate
 _OCSP_CLOCK_SKEW = timedelta(minutes=5)
 
 
+class _UnusableRevocationData(Exception):
+    """An OCSP response or CRL that cannot back a verdict; the message says why."""
+
+
 def _aia_urls(cert: x509.Certificate) -> tuple[list[str], list[str]]:
     """Return (ocsp_urls, ca_issuer_urls) from the certificate's AIA extension.
 
@@ -103,13 +107,13 @@ def _crl_urls(cert: x509.Certificate) -> list[str]:
     return urls
 
 
-def _ocsp_response_stale(response: ocsp.OCSPResponse) -> str | None:
-    """Return a reason when the OCSP response is outside its validity window.
+def _require_fresh_ocsp_response(response: ocsp.OCSPResponse) -> None:
+    """Raise when the OCSP response is outside its validity window.
 
     A response whose ``nextUpdate`` is already in the past (or whose
     ``thisUpdate`` lies in the future) may be a replayed or stale answer and
     must not back a trusted GOOD verdict; a small clock-skew tolerance is
-    allowed. Missing timestamps or parse errors return None ("cannot tell"),
+    allowed. Missing timestamps or parse errors raise nothing ("cannot tell"),
     preserving the browser-like soft-fail behaviour.
     """
     now = datetime.now(timezone.utc)
@@ -117,30 +121,29 @@ def _ocsp_response_stale(response: ocsp.OCSPResponse) -> str | None:
         this_update = response.this_update_utc
         next_update = response.next_update_utc
     except (ValueError, AttributeError):
-        return None
+        return
     if this_update is not None and this_update - _OCSP_CLOCK_SKEW > now:
-        return f"OCSP response not yet valid (thisUpdate {this_update})"
+        raise _UnusableRevocationData(
+            f"OCSP response not yet valid (thisUpdate {this_update})"
+        )
     if next_update is not None and next_update + _OCSP_CLOCK_SKEW < now:
-        return f"OCSP response is stale (nextUpdate {next_update})"
-    return None
+        raise _UnusableRevocationData(
+            f"OCSP response is stale (nextUpdate {next_update})"
+        )
 
 
 def _verify_signature(
     public_key, signature: bytes, data: bytes, hash_algorithm
-) -> bool:
-    """Return True if ``signature`` over ``data`` verifies with ``public_key``."""
-    try:
-        if isinstance(public_key, rsa.RSAPublicKey):
-            public_key.verify(signature, data, padding.PKCS1v15(), hash_algorithm)
-        elif isinstance(public_key, ec.EllipticCurvePublicKey):
-            public_key.verify(signature, data, ec.ECDSA(hash_algorithm))
-        elif isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
-            public_key.verify(signature, data)
-        else:
-            return False
-    except (InvalidSignature, TypeError, ValueError):
-        return False
-    return True
+) -> None:
+    """Verify ``signature`` over ``data``; raise InvalidSignature if it is wrong."""
+    if isinstance(public_key, rsa.RSAPublicKey):
+        public_key.verify(signature, data, padding.PKCS1v15(), hash_algorithm)
+    elif isinstance(public_key, ec.EllipticCurvePublicKey):
+        public_key.verify(signature, data, ec.ECDSA(hash_algorithm))
+    elif isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+        public_key.verify(signature, data)
+    else:
+        raise TypeError(f"unsupported public key type {type(public_key).__name__}")
 
 
 def _names_responder(response: ocsp.OCSPResponse, cert: x509.Certificate) -> bool:
@@ -183,38 +186,41 @@ def _ocsp_signer(
     return None
 
 
-def _ocsp_authentication_error(
+def _authenticate_ocsp_response(
     response: ocsp.OCSPResponse,
     request: ocsp.OCSPRequest,
     issuer: x509.Certificate,
-) -> str | None:
-    """Return why ``response`` cannot be trusted as the answer to ``request``.
+) -> None:
+    """Raise unless ``response`` authentically answers ``request``.
 
     The response must be about the requested certificate (a genuine answer for
     another certificate of the same CA could otherwise be replayed) and be
-    validly signed by an authorized responder. Returns None when it is.
+    validly signed by an authorized responder.
     """
     if (
         response.serial_number != request.serial_number
         or response.issuer_name_hash != request.issuer_name_hash
         or response.issuer_key_hash != request.issuer_key_hash
     ):
-        return "OCSP response is for a different certificate"
+        raise _UnusableRevocationData("OCSP response is for a different certificate")
     signer = _ocsp_signer(response, issuer)
     if signer is None:
-        return "OCSP response is not signed by the issuer or an authorized responder"
+        raise _UnusableRevocationData(
+            "OCSP response is not signed by the issuer or an authorized responder"
+        )
     try:
-        hash_algorithm = response.signature_hash_algorithm
-    except UnsupportedAlgorithm:
-        return "OCSP response uses an unsupported signature algorithm"
-    if not _verify_signature(
-        signer.public_key(),
-        response.signature,
-        response.tbs_response_bytes,
-        hash_algorithm,
-    ):
-        return "OCSP response signature is invalid"
-    return None
+        _verify_signature(
+            signer.public_key(),
+            response.signature,
+            response.tbs_response_bytes,
+            response.signature_hash_algorithm,
+        )
+    except UnsupportedAlgorithm as err:
+        raise _UnusableRevocationData(
+            "OCSP response uses an unsupported signature algorithm"
+        ) from err
+    except (InvalidSignature, TypeError, ValueError) as err:
+        raise _UnusableRevocationData("OCSP response signature is invalid") from err
 
 
 def _check_ocsp(
@@ -253,17 +259,16 @@ def _check_ocsp(
             )
         # An unauthenticated REVOKED is ignored too, or an attacker could
         # get healthy certificates reported as revoked.
-        problem = _ocsp_authentication_error(response, request, issuer)
-        if problem is not None:
-            return "UNAVAILABLE", problem
+        _authenticate_ocsp_response(response, request, issuer)
         status = response.certificate_status
+        if status == ocsp.OCSPCertStatus.GOOD:
+            _require_fresh_ocsp_response(response)
+    except _UnusableRevocationData as err:
+        return "UNAVAILABLE", str(err)
     except ValueError as err:
         return "UNAVAILABLE", f"OCSP response could not be parsed: {err}"
 
     if status == ocsp.OCSPCertStatus.GOOD:
-        stale = _ocsp_response_stale(response)
-        if stale is not None:
-            return "UNAVAILABLE", stale
         return "GOOD", None
     if status == ocsp.OCSPCertStatus.REVOKED:
         when = getattr(response, "revocation_time_utc", None)
@@ -282,52 +287,69 @@ def _load_crl(raw: bytes) -> x509.CertificateRevocationList | None:
             return None
 
 
-def _crl_stale(crl: x509.CertificateRevocationList) -> str | None:
-    """Return a reason when a CRL is outside its validity window."""
+def _require_fresh_crl(crl: x509.CertificateRevocationList) -> None:
+    """Raise when a CRL is outside its validity window."""
     now = datetime.now(timezone.utc)
     try:
         last_update = crl.last_update_utc
         next_update = crl.next_update_utc
     except (ValueError, AttributeError):
-        return None
+        return
     if last_update is not None and last_update - _OCSP_CLOCK_SKEW > now:
-        return f"CRL is not yet valid (lastUpdate {last_update})"
+        raise _UnusableRevocationData(
+            f"CRL is not yet valid (lastUpdate {last_update})"
+        )
     if next_update is not None and next_update + _OCSP_CLOCK_SKEW < now:
-        return f"CRL is stale (nextUpdate {next_update})"
-    return None
+        raise _UnusableRevocationData(f"CRL is stale (nextUpdate {next_update})")
 
 
-def _crl_coverage(
-    crl: x509.CertificateRevocationList, cert: x509.Certificate
-) -> str | None:
-    """Return how much of ``cert``'s revocation status the CRL can speak for.
+def _authenticate_crl(
+    crl: x509.CertificateRevocationList,
+    cert: x509.Certificate,
+    issuer: x509.Certificate,
+) -> None:
+    """Raise unless ``crl`` is issuer's, validly signed and able to cover ``cert``.
 
-    ``"full"`` when a missing serial proves the certificate is not revoked;
-    ``"partial"`` when the CRL can only prove revocation (a delta CRL, or one
-    limited to some revocation reasons); None when it cannot cover ``cert`` at
-    all: an indirect, attribute-only, CA-only (for an end-entity) or user-only
-    (for a CA) CRL, or one with a critical extension we do not understand
-    (RFC 5280 sections 5.2 and 6.3.3).
+    A CRL cannot cover ``cert`` when it is indirect, attribute-only, CA-only
+    (for an end-entity) or user-only (for a CA), or when it carries a critical
+    extension we do not understand (RFC 5280 sections 5.2 and 6.3.3).
     """
-    partial = False
+    if crl.issuer != cert.issuer:
+        raise _UnusableRevocationData("CRL is from a different issuer")
+    if not crl.is_signature_valid(issuer.public_key()):
+        raise _UnusableRevocationData("CRL signature is invalid")
+    is_ca = is_ca_certificate(cert)
     for extension in crl.extensions:
         value = extension.value
-        if isinstance(value, x509.DeltaCRLIndicator):
-            partial = True
-        elif isinstance(value, x509.IssuingDistributionPoint):
-            is_ca = is_ca_certificate(cert)
+        if isinstance(value, x509.IssuingDistributionPoint):
             if (
                 value.indirect_crl
                 or value.only_contains_attribute_certs
                 or (value.only_contains_ca_certs and not is_ca)
                 or (value.only_contains_user_certs and is_ca)
             ):
-                return None
-            if value.only_some_reasons:
-                partial = True
-        elif extension.critical:
-            return None
-    return "partial" if partial else "full"
+                raise _UnusableRevocationData(
+                    "CRL scope does not cover the certificate"
+                )
+        elif extension.critical and not isinstance(value, x509.DeltaCRLIndicator):
+            raise _UnusableRevocationData(
+                f"CRL has an unsupported critical extension {extension.oid.dotted_string}"
+            )
+
+
+def _crl_is_partial(crl: x509.CertificateRevocationList) -> bool:
+    """Return True if the CRL can prove revocation but not its absence.
+
+    That is a delta CRL, or one limited to some revocation reasons: a serial
+    missing from it does not mean the certificate is not revoked.
+    """
+    for extension in crl.extensions:
+        value = extension.value
+        if isinstance(value, x509.DeltaCRLIndicator):
+            return True
+        if isinstance(value, x509.IssuingDistributionPoint) and value.only_some_reasons:
+            return True
+    return False
 
 
 def _check_crl(
@@ -359,14 +381,9 @@ def _check_crl(
         if crl is None:
             continue
         try:
-            if crl.issuer != cert.issuer or not crl.is_signature_valid(
-                issuer.public_key()
-            ):
-                continue
-            coverage = _crl_coverage(crl, cert)
-        except (TypeError, ValueError):
-            continue
-        if coverage is None:
+            _authenticate_crl(crl, cert, issuer)
+            partial = _crl_is_partial(crl)
+        except (_UnusableRevocationData, TypeError, ValueError):
             continue
 
         revoked = crl.get_revoked_certificate_by_serial_number(cert.serial_number)
@@ -374,11 +391,12 @@ def _check_crl(
             when = getattr(revoked, "revocation_date_utc", None)
             detail = f"revoked at {when}" if when else "revoked"
             return "REVOKED", f"{detail} (via CRL)"
-        if coverage == "partial":
+        if partial:
             continue
-        stale = _crl_stale(crl)
-        if stale is not None:
-            return "UNAVAILABLE", stale
+        try:
+            _require_fresh_crl(crl)
+        except _UnusableRevocationData as err:
+            return "UNAVAILABLE", str(err)
         return "GOOD", "via CRL"
 
     return "UNAVAILABLE", "no usable CRL could be retrieved"
