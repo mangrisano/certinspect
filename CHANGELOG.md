@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-25
+
 ### Added
 
 - A `key_type` field (`RSA`, `EC`, `DSA`, `Ed25519`, `Ed448`) in the JSON
@@ -578,7 +580,8 @@ notes under each item.
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.3.3...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.0...HEAD
+[2.4.0]: https://github.com/mangrisano/certinspect/compare/v2.3.3...v2.4.0
 [2.3.3]: https://github.com/mangrisano/certinspect/compare/v2.3.2...v2.3.3
 [2.3.2]: https://github.com/mangrisano/certinspect/compare/v2.3.1...v2.3.2
 [2.3.1]: https://github.com/mangrisano/certinspect/compare/v2.3.0...v2.3.1
