@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `--proxy` and `--no-proxy` now apply to the OCSP, CRL, CA-Issuer and
+  CT-log (`--discover`) requests too, not only to the TLS connections. Those
+  requests went direct (or through the environment proxy) whatever the flags
+  said, so where only the proxy reaches the Internet the revocation check
+  silently came back `UNAVAILABLE`, and `--no-proxy` still sent them through
+  the environment proxy.
+
 ## [2.4.4] - 2026-09-25
 
 ### Fixed

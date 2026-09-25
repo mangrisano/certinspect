@@ -998,6 +998,49 @@ def test_http_malformed_response_is_a_value_error(monkeypatch, serve):
         httpfetch.fetch(f"{public}/crl", timeout=3.0)
 
 
+def _resolve_publicly(monkeypatch, name):
+    """Make ``name`` pass the address check without real DNS."""
+    import socket as _socket
+
+    from certinspect import httpfetch
+
+    real_getaddrinfo = _socket.getaddrinfo
+
+    def fake(host, *args, **kwargs):
+        if host == name:
+            return _addrinfo("93.184.215.14")
+        return real_getaddrinfo(host, *args, **kwargs)
+
+    monkeypatch.setattr(httpfetch.socket, "getaddrinfo", fake)
+
+
+def test_use_proxy_routes_fetches_through_the_proxy(monkeypatch, serve):
+    from certinspect import httpfetch
+
+    hits = []
+    proxy = serve(_body(b"VIA-PROXY", hits))
+    _resolve_publicly(monkeypatch, "ocsp.example")
+
+    httpfetch.use_proxy(proxy)
+    assert httpfetch.fetch("http://ocsp.example/ca.crl", timeout=3.0) == b"VIA-PROXY"
+    assert hits == ["http://ocsp.example/ca.crl"]
+
+
+def test_use_proxy_no_proxy_ignores_the_environment(monkeypatch, serve):
+    from certinspect import httpfetch
+
+    proxy_hits, direct_hits = [], []
+    proxy = serve(_body(b"VIA-PROXY", proxy_hits))
+    direct = serve(_body(b"DIRECT", direct_hits))
+    _guard_allowing(monkeypatch, direct)
+    monkeypatch.setenv("http_proxy", proxy)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+    httpfetch.use_proxy(None, no_proxy=True)
+    assert httpfetch.fetch(f"{direct}/ca.crl", timeout=3.0) == b"DIRECT"
+    assert proxy_hits == []
+
+
 # --- OCSP response freshness ------------------------------------------------
 
 

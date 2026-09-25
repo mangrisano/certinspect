@@ -28,6 +28,7 @@ from certinspect.fetch import (
     verify_chain,
     verify_chain_offline,
 )
+from certinspect import httpfetch
 from certinspect.revocation import check_revocation
 from certinspect.parser import (
     load_certificate,
@@ -742,6 +743,7 @@ def main() -> None:
 
     _apply_profile(args)
     _validate_args(args, parser)
+    httpfetch.use_proxy(args.proxy, args.no_proxy)
 
     if args.discover_only:
         code = _run_discover_only(args)

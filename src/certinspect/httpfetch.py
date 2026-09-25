@@ -182,9 +182,26 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
         )
 
 
-_OPENER = urllib.request.build_opener(
-    _GuardedRedirectHandler, _PinnedHTTPHandler, _PinnedHTTPSHandler
-)
+def _build_opener(proxy: str | None = None, no_proxy: bool = False):
+    handlers = [_GuardedRedirectHandler, _PinnedHTTPHandler, _PinnedHTTPSHandler]
+    if no_proxy:
+        handlers.append(urllib.request.ProxyHandler({}))
+    elif proxy:
+        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+    return urllib.request.build_opener(*handlers)
+
+
+_OPENER = _build_opener()
+
+
+def use_proxy(proxy: str | None, no_proxy: bool = False) -> None:
+    """Route every later fetch through ``proxy``, or directly with ``no_proxy``.
+
+    Mirrors --proxy/--no-proxy for the TLS connections; with neither, the
+    environment proxy (``HTTPS_PROXY``/``HTTP_PROXY``, ``NO_PROXY``) applies.
+    """
+    global _OPENER
+    _OPENER = _build_opener(proxy, no_proxy)
 
 
 def fetch(url: str, *, data: bytes | None = None, timeout: float) -> bytes:

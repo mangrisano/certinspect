@@ -275,6 +275,14 @@ def _isolate_network_verification(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _restore_fetch_proxy(monkeypatch):
+    """Undo the run-wide proxy choice ``main`` makes through ``use_proxy``."""
+    from certinspect import httpfetch
+
+    monkeypatch.setattr(httpfetch, "_OPENER", httpfetch._OPENER)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_default_config(monkeypatch, tmp_path):
     """Keep --config auto-discovery from picking up a real user config file.
 

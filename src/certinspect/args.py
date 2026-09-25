@@ -224,7 +224,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Tunnel the connection through an HTTP CONNECT proxy, e.g. "
             "http://proxy:8080 or http://user:pass@proxy:8080 (host targets "
-            "only). With no --proxy the environment proxy (HTTPS_PROXY, honouring "
+            "only); the OCSP, CRL, CA-Issuer and CT-log requests go through it "
+            "too. With no --proxy the environment proxy (HTTPS_PROXY, honouring "
             "NO_PROXY) is used automatically, like curl."
         ),
     )
@@ -233,8 +234,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="no_proxy",
         help=(
-            "Force a direct connection, ignoring any proxy set in the "
-            "environment. Mutually exclusive with --proxy."
+            "Force direct connections, the OCSP/CRL/CA-Issuer/CT-log requests "
+            "included, ignoring any proxy set in the environment. Mutually "
+            "exclusive with --proxy."
         ),
     )
     parser.add_argument(

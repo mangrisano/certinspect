@@ -1103,6 +1103,31 @@ def test_main_forwards_no_proxy(monkeypatch, capsys, make_cert):
     assert recorded.get("no_proxy") is True
 
 
+@pytest.mark.parametrize(
+    "flags, expected",
+    [
+        (["--proxy", "http://proxy:8080"], ("http://proxy:8080", False)),
+        (["--no-proxy"], (None, True)),
+        ([], (None, False)),
+    ],
+)
+def test_main_applies_the_proxy_choice_to_http_fetches(
+    monkeypatch, make_cert, flags, expected
+):
+    """OCSP/CRL/CA-Issuer/CT-log requests follow --proxy/--no-proxy too."""
+    calls = []
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _recording_fetch(make_cert(san=["example.com"]), {}),
+    )
+    monkeypatch.setattr(
+        "certinspect.cli.httpfetch.use_proxy",
+        lambda proxy, no_proxy=False: calls.append((proxy, no_proxy)),
+    )
+    _run_main(monkeypatch, ["example.com", *flags])
+    assert calls == [expected]
+
+
 def test_main_proxy_and_no_proxy_conflict(monkeypatch, capsys):
     code = _run_main(
         monkeypatch, ["example.com", "--proxy", "http://p:8080", "--no-proxy"]
