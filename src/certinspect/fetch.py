@@ -27,11 +27,15 @@ from cryptography.x509.oid import NameOID
 STARTTLS_PORTS = {"smtp": 587, "imap": 143, "pop3": 110, "ftp": 21}
 
 
-def _read_connect_response(sock: socket.socket) -> bytes:
-    """Read an HTTP CONNECT response up to the end of its header block."""
+def _read_connect_response(sock: socket.socket, timeout: float) -> bytes:
+    """Read an HTTP CONNECT response up to the end of its header block.
+
+    The whole response must arrive within ``timeout`` seconds.
+    """
+    reader = _Deadline(sock, timeout)
     buf = bytearray()
     while b"\r\n\r\n" not in buf:
-        chunk = sock.recv(256)
+        chunk = reader.recv(256)
         if not chunk:
             break
         buf += chunk
@@ -95,7 +99,7 @@ def _open_socket(
             request += f"Proxy-Authorization: Basic {token}\r\n"
         request += "\r\n"
         sock.sendall(request.encode("ascii"))
-        status_line = _read_connect_response(sock).split(b"\r\n", 1)[0]
+        status_line = _read_connect_response(sock, connect_timeout).split(b"\r\n", 1)[0]
         fields = status_line.split(None, 2)
         if len(fields) < 2 or fields[1] != b"200":
             raise ValueError(
@@ -141,6 +145,28 @@ _MAX_STARTTLS_LINE_BYTES = 8192
 _MAX_STARTTLS_REPLY_LINES = 100
 
 
+class _Deadline:
+    """A read-only view of a socket that bounds the total time of its reads.
+
+    A socket timeout applies to each ``recv`` alone, so a server sending one
+    byte just before it expires could keep a read loop going indefinitely.
+    """
+
+    def __init__(self, sock: socket.socket, timeout: float):
+        self._sock = sock
+        self._timeout = timeout
+        self._end = time.monotonic() + timeout
+
+    def recv(self, n: int) -> bytes:
+        remaining = self._end - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"server reply took longer than {self._timeout:g}s to arrive"
+            )
+        self._sock.settimeout(remaining)
+        return self._sock.recv(n)
+
+
 def _readline(sock: socket.socket) -> bytes:
     """Read one line (up to and including ``\\n``) from a plaintext socket.
 
@@ -179,33 +205,49 @@ def _expect(line: bytes, prefix: bytes) -> None:
         raise ValueError(f"unexpected STARTTLS reply: {line!r}")
 
 
-def _negotiate_starttls(sock: socket.socket, protocol: str) -> None:
+def _negotiate_starttls(
+    sock: socket.socket, protocol: str, timeout: float | None = None
+) -> None:
     """Run the plaintext STARTTLS handshake for ``protocol`` on ``sock``.
 
     Supports the line-based protocols smtp, imap, pop3 and ftp. On return the
     socket is ready to be wrapped in TLS. Raises ValueError if the server does
-    not agree to upgrade.
+    not agree to upgrade. With ``timeout``, each server reply must arrive in
+    full within that many seconds (TimeoutError otherwise), and the socket is
+    left with that timeout for the TLS handshake.
     """
+    try:
+        _run_starttls(sock, protocol, timeout)
+    finally:
+        if timeout is not None:
+            sock.settimeout(timeout)
+
+
+def _run_starttls(sock: socket.socket, protocol: str, timeout: float | None) -> None:
+    def reply():
+        return sock if timeout is None else _Deadline(sock, timeout)
+
     proto = protocol.lower()
     if proto == "smtp":
-        _expect(_read_reply(sock), b"220")
+        _expect(_read_reply(reply()), b"220")
         sock.sendall(b"EHLO certinspect\r\n")
-        _expect(_read_reply(sock), b"250")
+        _expect(_read_reply(reply()), b"250")
         sock.sendall(b"STARTTLS\r\n")
-        _expect(_read_reply(sock), b"220")
+        _expect(_read_reply(reply()), b"220")
     elif proto == "ftp":
-        _expect(_read_reply(sock), b"220")
+        _expect(_read_reply(reply()), b"220")
         sock.sendall(b"AUTH TLS\r\n")
-        _expect(_read_reply(sock), b"234")
+        _expect(_read_reply(reply()), b"234")
     elif proto == "pop3":
-        _expect(_readline(sock), b"+OK")
+        _expect(_readline(reply()), b"+OK")
         sock.sendall(b"STLS\r\n")
-        _expect(_readline(sock), b"+OK")
+        _expect(_readline(reply()), b"+OK")
     elif proto == "imap":
-        _expect(_readline(sock), b"* OK")
+        _expect(_readline(reply()), b"* OK")
         sock.sendall(b"a001 STARTTLS\r\n")
+        response = reply()
         for _ in range(_MAX_STARTTLS_REPLY_LINES):
-            line = _readline(sock)
+            line = _readline(response)
             if not line:
                 raise ValueError("connection closed during STARTTLS")
             if line.startswith(b"a001 "):
@@ -256,7 +298,7 @@ def get_server_cert(
         host, port, connect_timeout, read_timeout, resolved_proxy
     ) as sock:
         if starttls:
-            _negotiate_starttls(sock, starttls)
+            _negotiate_starttls(sock, starttls, read_timeout)
         with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
             der = ssock.getpeercert(binary_form=True)
             cipher = ssock.cipher()
@@ -337,7 +379,7 @@ def verify_chain(
             host, port, connect_timeout, read_timeout, resolved_proxy
         ) as sock:
             if starttls:
-                _negotiate_starttls(sock, starttls)
+                _negotiate_starttls(sock, starttls, read_timeout)
             with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
                 return True, None, _chain(ssock, "get_verified_chain")
     except ssl.SSLCertVerificationError as err:

@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `169.254.169.254` got the request through. The connection now goes to the
   address that was checked, on every redirect too. Requests sent through a
   proxy are still checked by name only, since the proxy resolves it.
+- A server sending one byte at a time can no longer stall a run. The timeouts
+  applied to each single read, so a reply dripped just under `--read-timeout`
+  never ended: STARTTLS replies and the proxy `CONNECT` answer now have to
+  arrive in full within the read (or connect) timeout, and OCSP, CRL,
+  CA-Issuer and CT-log downloads within 60 seconds overall. The TLS handshake
+  was already bounded.
+- A malformed HTTP response from an OCSP, CRL or CA-Issuer server is now a
+  soft failure like any other unusable answer, instead of an unhandled
+  exception that aborted the whole batch.
 
 ## [2.4.2] - 2026-09-25
 

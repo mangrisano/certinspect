@@ -9,6 +9,7 @@ checks and the CT-log discovery.
 import http.client
 import ipaddress
 import socket
+import threading
 import urllib.request
 from urllib.parse import urlsplit
 
@@ -19,6 +20,13 @@ _MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024
 
 # CRL/OCSP URLs legitimately redirect once or twice (http->https, a CDN).
 _MAX_REDIRECTS = 5
+
+# The socket timeout covers one read at a time; this bounds a whole fetch
+# (redirects included) against a server that sends one byte at a time.
+_FETCH_DEADLINE_SECONDS = 60.0
+
+# Sockets opened by the fetch running in this thread, closed at its deadline.
+_active = threading.local()
 
 
 def _is_blocked_fetch_address(
@@ -102,6 +110,19 @@ class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def _track(sock: socket.socket) -> socket.socket:
+    """Register ``sock`` with the fetch running in this thread, if any."""
+    sockets = getattr(_active, "sockets", None)
+    if sockets is not None:
+        sockets.append(sock)
+    return sock
+
+
+def _connect_direct(address, timeout, source_address=None) -> socket.socket:
+    """Connect like http.client does, to a proxy chosen by the environment."""
+    return _track(socket.create_connection(address, timeout, source_address))
+
+
 def _connect_vetted(address, timeout, source_address=None) -> socket.socket:
     """Connect to a vetted IP of ``address``'s host, never re-resolving it.
 
@@ -114,23 +135,28 @@ def _connect_vetted(address, timeout, source_address=None) -> socket.socket:
     error: OSError | None = None
     for ip in _vetted_addresses(host, port):
         try:
-            return socket.create_connection((ip, port), timeout, source_address)
+            return _track(socket.create_connection((ip, port), timeout, source_address))
         except OSError as err:
             error = err
     raise error or OSError(f"could not connect to {host}")
 
 
-class _PinnedHTTPConnection(http.client.HTTPConnection):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # http.client's connection hook; HTTPSConnection wraps the same socket.
-        self._create_connection = _connect_vetted
+def _connection_class(base: type, connect) -> type:
+    """Return ``base`` with its socket opened by ``connect``."""
+
+    class _Connection(base):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            # http.client's connection hook; HTTPSConnection wraps this socket.
+            self._create_connection = connect
+
+    return _Connection
 
 
-class _PinnedHTTPSConnection(http.client.HTTPSConnection):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._create_connection = _connect_vetted
+_PINNED_HTTP = _connection_class(http.client.HTTPConnection, _connect_vetted)
+_PINNED_HTTPS = _connection_class(http.client.HTTPSConnection, _connect_vetted)
+_PROXIED_HTTP = _connection_class(http.client.HTTPConnection, _connect_direct)
+_PROXIED_HTTPS = _connection_class(http.client.HTTPSConnection, _connect_direct)
 
 
 def _via_proxy(req: urllib.request.Request) -> bool:
@@ -144,17 +170,13 @@ def _via_proxy(req: urllib.request.Request) -> bool:
 
 class _PinnedHTTPHandler(urllib.request.HTTPHandler):
     def http_open(self, req):
-        pinned = not _via_proxy(req)
-        return self.do_open(
-            _PinnedHTTPConnection if pinned else http.client.HTTPConnection, req
-        )
+        return self.do_open(_PROXIED_HTTP if _via_proxy(req) else _PINNED_HTTP, req)
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
     def https_open(self, req):
-        pinned = not _via_proxy(req)
         return self.do_open(
-            _PinnedHTTPSConnection if pinned else http.client.HTTPSConnection,
+            _PROXIED_HTTPS if _via_proxy(req) else _PINNED_HTTPS,
             req,
             context=self._context,
         )
@@ -172,15 +194,48 @@ def fetch(url: str, *, data: bytes | None = None, timeout: float) -> bytes:
     certificate's own AIA/CRL extensions, i.e. from untrusted input, so the
     target host is screened against internal/non-routable addresses — on the
     first request and on every redirect — and the response size is capped. A
-    POST is used when ``data`` is given.
+    POST is used when ``data`` is given. The whole fetch must finish within
+    ``_FETCH_DEADLINE_SECONDS`` (TimeoutError otherwise); a malformed HTTP
+    response raises ValueError.
     """
     _check_url(url)
     headers = {"Content-Type": "application/ocsp-request"} if data else {}
     request = urllib.request.Request(url, data=data, headers=headers)
-    with _OPENER.open(request, timeout=timeout) as response:
-        body = response.read(_MAX_HTTP_RESPONSE_BYTES + 1)
+    sockets: list[socket.socket] = []
+    expired = threading.Event()
+
+    def expire() -> None:
+        expired.set()
+        for sock in list(sockets):
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    timer = threading.Timer(_FETCH_DEADLINE_SECONDS, expire)
+    timer.daemon = True
+    _active.sockets = sockets
+    timer.start()
+    try:
+        with _OPENER.open(request, timeout=timeout) as response:
+            body = response.read(_MAX_HTTP_RESPONSE_BYTES + 1)
+    except (OSError, http.client.HTTPException) as err:
+        if expired.is_set():
+            raise _deadline_error(url) from err
+        if isinstance(err, http.client.HTTPException):
+            raise ValueError(f"malformed HTTP response from {url}: {err!r}") from err
+        raise
+    finally:
+        timer.cancel()
+        _active.sockets = None
+    if expired.is_set():
+        raise _deadline_error(url)
     if len(body) > _MAX_HTTP_RESPONSE_BYTES:
         raise ValueError(
             f"response from {url} exceeds the {_MAX_HTTP_RESPONSE_BYTES}-byte limit"
         )
     return body
+
+
+def _deadline_error(url: str) -> TimeoutError:
+    return TimeoutError(f"fetching {url} took longer than {_FETCH_DEADLINE_SECONDS:g}s")

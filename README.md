@@ -732,7 +732,10 @@ The report is identical to a plain inspection; only how/where certinspect
 connects changes. Split the single `--timeout` into `--connect-timeout` and
 `--read-timeout` to fail fast on dead hosts while still allowing a slow
 handshake (requests-style), and add `--retries` to ride out transient network
-blips instead of reporting a false failure.
+blips instead of reporting a false failure. The read timeout bounds each whole
+server reply (TLS handshake, each STARTTLS reply, the proxy `CONNECT` answer),
+not a single read, so a server sending one byte at a time cannot stall a run;
+OCSP/CRL/CA-Issuer downloads have an overall 60-second limit.
 
 ```console
 $ certinspect example.com --connect-timeout 3 --read-timeout 10 --retries 2

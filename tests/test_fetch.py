@@ -1,6 +1,7 @@
 """Tests for the network helpers that do not require a live server."""
 
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -299,6 +300,42 @@ def test_negotiate_starttls_rejects_endless_replies(protocol, prefix, pattern):
 
     with pytest.raises(ValueError, match="too many lines"):
         _negotiate_starttls(_EndlessSocket(pattern, prefix=prefix), protocol)
+
+
+class _DrippingSocket(_EndlessSocket):
+    """A hostile server sending one byte per ``delay``, below any read timeout."""
+
+    def __init__(self, pattern: bytes, prefix: bytes = b"", delay: float = 0.02):
+        super().__init__(pattern, prefix=prefix)
+        self._delay = delay
+        self._give_up = time.monotonic() + 5.0
+
+    def recv(self, n: int) -> bytes:
+        if time.monotonic() > self._give_up:
+            raise AssertionError("client kept reading a dripping stream")
+        time.sleep(self._delay)
+        return super().recv(n)
+
+
+def test_negotiate_starttls_bounds_a_dripped_reply():
+    from certinspect.fetch import _negotiate_starttls
+
+    start = time.monotonic()
+    with pytest.raises(TimeoutError, match="took longer than 0.2s"):
+        _negotiate_starttls(_DrippingSocket(b"x", prefix=b"220 "), "smtp", 0.2)
+    assert time.monotonic() - start < 1.0
+
+
+def test_open_socket_bounds_a_dripped_proxy_reply(monkeypatch):
+    from certinspect import fetch
+
+    dripping = _DrippingSocket(b"X-Padding: x\r\n", prefix=b"HTTP/1.1 200 OK\r\n")
+    monkeypatch.setattr(
+        fetch.socket, "create_connection", lambda addr, timeout=None: dripping
+    )
+    with pytest.raises(TimeoutError):
+        fetch._open_socket("example.com", 443, 0.2, 5.0, "http://proxy:8080")
+    assert dripping.closed is True
 
 
 def test_verify_chain_uses_custom_ca(monkeypatch):
@@ -920,6 +957,45 @@ def test_http_connects_to_the_vetted_address_despite_dns_rebinding(monkeypatch, 
     with pytest.raises(ValueError, match="non-routable or internal"):
         httpfetch.fetch(f"http://rebind.example:{port}/", timeout=3.0)
     assert hits == []
+
+
+def test_http_fetch_has_a_total_deadline(monkeypatch, serve):
+    """A server dripping its body below the per-read timeout is cut off."""
+    from certinspect import httpfetch
+
+    def respond(handler):
+        handler.send_response(200)
+        handler.send_header("Content-Length", "1000")
+        handler.end_headers()
+        try:
+            for _ in range(200):
+                handler.wfile.write(b"x")
+                handler.wfile.flush()
+                time.sleep(0.02)
+        except OSError:
+            pass
+
+    public = serve(respond)
+    _guard_allowing(monkeypatch, public)
+    monkeypatch.setattr(httpfetch, "_FETCH_DEADLINE_SECONDS", 0.3)
+
+    start = time.monotonic()
+    with pytest.raises(TimeoutError, match="took longer than 0.3s"):
+        httpfetch.fetch(f"{public}/crl", timeout=3.0)
+    assert time.monotonic() - start < 2.0
+
+
+def test_http_malformed_response_is_a_value_error(monkeypatch, serve):
+    """A broken status line is a soft failure, not an unexpected exception."""
+    from certinspect import httpfetch
+
+    def respond(handler):
+        handler.wfile.write(b"NOT-HTTP garbage")
+
+    public = serve(respond)
+    _guard_allowing(monkeypatch, public)
+    with pytest.raises(ValueError, match="malformed HTTP response"):
+        httpfetch.fetch(f"{public}/crl", timeout=3.0)
 
 
 # --- OCSP response freshness ------------------------------------------------
