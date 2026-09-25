@@ -646,11 +646,11 @@ notes under each item.
 ### Added
 
 - Initial release: core TLS certificate inspector with human-readable and JSON
-  output.3...HEAD
+  output.
+
 [Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.4...HEAD
 [2.4.4]: https://github.com/mangrisano/certinspect/compare/v2.4.3...v2.4.4
-
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.2...HEAD
+[2.4.3]: https://github.com/mangrisano/certinspect/compare/v2.4.2...v2.4.3
 [2.4.2]: https://github.com/mangrisano/certinspect/compare/v2.4.1...v2.4.2
 [2.4.1]: https://github.com/mangrisano/certinspect/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/mangrisano/certinspect/compare/v2.3.3...v2.4.0
