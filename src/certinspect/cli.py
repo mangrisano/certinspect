@@ -58,7 +58,7 @@ from certinspect.exit_codes import (
 from certinspect.models import CertificateInfo, InspectionResult
 from certinspect.completion import bash_completion_script, zsh_completion_script
 from certinspect.config import DEFAULT_CONFIG_PATH, load_config
-from certinspect.render import load_state, render, save_state
+from certinspect.render import OutputOptions, load_state, render, save_state
 
 
 @dataclass(frozen=True)
@@ -747,20 +747,9 @@ def main() -> None:
 
     override = render(
         results,
-        as_json=args.json,
-        days=args.days,
-        quiet=args.quiet,
-        as_csv=args.csv,
-        csv_delimiter=args.csv_delimiter,
-        critical_days=args.critical_days,
-        max_days=args.max_days,
-        sort=args.sort,
-        summary=args.summary,
-        exporter=args.exporter,
-        fields=args.field,
-        schema=args.schema,
-        errors=errors,
-        changed_targets=changed_targets if args.only_changed else None,
+        errors,
+        OutputOptions.from_args(args),
+        changed_targets if args.only_changed else None,
     )
     if args.exit_zero:
         sys.exit(0)
