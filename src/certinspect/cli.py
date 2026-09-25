@@ -8,10 +8,7 @@ with a status code reflecting the worst certificate state found.
 """
 
 import argparse
-import csv
 import functools
-import io
-import json
 import sys
 import ssl
 from concurrent.futures import ThreadPoolExecutor
@@ -56,6 +53,7 @@ from certinspect.exit_codes import (
     most_severe,
 )
 from certinspect.models import CertificateInfo, InspectionResult
+from certinspect.formatter import format_ct_inventory
 from certinspect.completion import bash_completion_script, zsh_completion_script
 from certinspect.config import DEFAULT_CONFIG_PATH, load_config
 from certinspect.render import OutputOptions, render
@@ -484,14 +482,14 @@ def _issuer_is_expected(issuer: str, expected: list[str]) -> bool:
     return any(token.lower() in lowered for token in expected)
 
 
-def _run_discover_only(args: argparse.Namespace) -> None:
-    """List the CT inventory for the --discover domains and exit.
+def _run_discover_only(args: argparse.Namespace) -> ExitCode:
+    """Print the CT inventory for the --discover domains, return the exit code.
 
     Prints one certificate per line (expiry, issuer, hostnames), soonest expiry
     first, so the whole Certificate Transparency picture — dead hosts and
     unexpected issuers included — is visible without a live handshake. With
-    --expect-issuer, certificates from any other CA are flagged and the exit
-    code becomes 9; with --json the inventory is emitted as a JSON array.
+    --expect-issuer, certificates from any other CA are flagged and the result
+    is POLICY; with --json/--csv the inventory uses that format.
     """
     expected = args.expect_issuer or []
     rows: list[tuple[str, DiscoveredCert, bool]] = []
@@ -511,53 +509,22 @@ def _run_discover_only(args: argparse.Namespace) -> None:
 
     unexpected_count = sum(1 for _, _, unexpected in rows if unexpected)
 
-    if args.json:
-        payload = []
-        for domain, cert, unexpected in rows:
-            record = {
-                "domain": domain,
-                "hostnames": list(cert.hostnames),
-                "issuer": cert.issuer,
-                "not_before": cert.not_before,
-                "not_after": cert.not_after,
-            }
-            if expected:
-                record["unexpected_issuer"] = unexpected
-            payload.append(record)
-        print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
-    elif args.csv:
-        buffer = io.StringIO()
-        writer = csv.writer(buffer, delimiter=args.csv_delimiter, lineterminator="\n")
-        header = ["domain", "hostnames", "issuer", "not_before", "not_after"]
-        if expected:
-            header.append("unexpected_issuer")
-        writer.writerow(header)
-        for domain, cert, unexpected in rows:
-            record = [
-                domain,
-                " ".join(cert.hostnames),
-                cert.issuer,
-                cert.not_before,
-                cert.not_after,
-            ]
-            if expected:
-                record.append("yes" if unexpected else "no")
-            writer.writerow(record)
-        print(buffer.getvalue(), end="")
-    else:
-        for _, cert, unexpected in rows:
-            line = f"{cert.not_after}\t{cert.issuer}\t{', '.join(cert.hostnames)}"
-            print(f"{line}\tUNEXPECTED" if unexpected else line)
+    text = format_ct_inventory(
+        rows,
+        as_json=args.json,
+        as_csv=args.csv,
+        delimiter=args.csv_delimiter,
+        flag_issuer=bool(expected),
+    )
+    print(text, end="")
 
-    if expected and unexpected_count:
+    if unexpected_count:
         print(
             f"warning: {unexpected_count} certificate(s) from an unexpected issuer",
             file=sys.stderr,
         )
-
-    if args.exit_zero:
-        sys.exit(0)
-    sys.exit(9 if unexpected_count else 0)
+        return ExitCode.POLICY
+    return ExitCode.OK
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
@@ -642,7 +609,8 @@ def main() -> None:
     _validate_args(args, parser)
 
     if args.discover_only:
-        _run_discover_only(args)
+        code = _run_discover_only(args)
+        sys.exit(0 if args.exit_zero else code)
 
     extra_targets = []
     if args.input:

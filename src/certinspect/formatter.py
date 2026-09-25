@@ -11,6 +11,7 @@ import json
 
 from cryptography import x509
 
+from certinspect.discover import DiscoveredCert
 from certinspect.exit_codes import ExitCode, RevocationStatus, Status
 from certinspect.models import CertificateInfo, InspectionResult
 from certinspect.parser import certificate_status, common_name
@@ -339,6 +340,60 @@ def format_csv(
         status = _status_of(info, warn_days, critical_days)
         writer.writerow([getter(target, info, status) for _, getter in _CSV_COLUMNS])
     return buffer.getvalue()
+
+
+def format_ct_inventory(
+    rows: list[tuple[str, DiscoveredCert, bool]],
+    *,
+    as_json: bool = False,
+    as_csv: bool = False,
+    delimiter: str = ",",
+    flag_issuer: bool = False,
+) -> str:
+    """Render the --discover-only inventory, trailing newline included.
+
+    ``rows`` are ``(domain, cert, unexpected)``; ``flag_issuer`` (set with
+    --expect-issuer) adds the unexpected-issuer mark to every format. Text is
+    one tab-separated line per certificate (expiry, issuer, hostnames).
+    """
+    if as_json:
+        payload = []
+        for domain, cert, unexpected in rows:
+            record = {
+                "domain": domain,
+                "hostnames": list(cert.hostnames),
+                "issuer": cert.issuer,
+                "not_before": cert.not_before,
+                "not_after": cert.not_after,
+            }
+            if flag_issuer:
+                record["unexpected_issuer"] = unexpected
+            payload.append(record)
+        return format_json(payload) + "\n"
+    if as_csv:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter=delimiter, lineterminator="\n")
+        header = ["domain", "hostnames", "issuer", "not_before", "not_after"]
+        if flag_issuer:
+            header.append("unexpected_issuer")
+        writer.writerow(header)
+        for domain, cert, unexpected in rows:
+            record = [
+                domain,
+                " ".join(cert.hostnames),
+                cert.issuer,
+                cert.not_before,
+                cert.not_after,
+            ]
+            if flag_issuer:
+                record.append("yes" if unexpected else "no")
+            writer.writerow(record)
+        return buffer.getvalue()
+    lines = []
+    for _, cert, unexpected in rows:
+        line = f"{cert.not_after}\t{cert.issuer}\t{', '.join(cert.hostnames)}"
+        lines.append(f"{line}\tUNEXPECTED\n" if unexpected else f"{line}\n")
+    return "".join(lines)
 
 
 # Summary categories in display order. valid/expiring/expired are always
