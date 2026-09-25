@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-09-25
+
+### Changed
+
+- Internal refactor, no change in behavior or output. The `--state-file`
+  handling moved to a new `state` module, the `--discover-only` inventory is
+  rendered by the formatter, `main()` and the chain/revocation checks were
+  split into smaller functions, and revocation statuses and inspection results
+  are now typed (`RevocationStatus`, `InspectionResult`).
+
 ## [2.4.1] - 2026-09-25
 
 ### Fixed
@@ -605,7 +615,8 @@ notes under each item.
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.1...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.2...HEAD
+[2.4.2]: https://github.com/mangrisano/certinspect/compare/v2.4.1...v2.4.2
 [2.4.1]: https://github.com/mangrisano/certinspect/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/mangrisano/certinspect/compare/v2.3.3...v2.4.0
 [2.3.3]: https://github.com/mangrisano/certinspect/compare/v2.3.2...v2.3.3
