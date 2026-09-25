@@ -429,18 +429,40 @@ def _discover_one(
         return domain, None, str(err)
 
 
-def _discover_all(domains: list[str], timeout: float, workers: int, fetch) -> list:
-    """Run ``fetch(domain, timeout)`` for every domain, in parallel when asked.
+def _map(call, items: list, workers: int) -> list:
+    """Return ``[call(item) for item in items]``, in threads when ``workers`` > 1.
 
-    Returns the ``(domain, result, error)`` outcomes in ``domains`` order
-    regardless of concurrency, so callers can report them deterministically.
+    ThreadPoolExecutor.map keeps the input order, so the output is
+    deterministic regardless of concurrency.
+    """
+    workers = max(1, workers)
+    if workers > 1 and len(items) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            return list(pool.map(call, items))
+    return [call(item) for item in items]
+
+
+def _discover(
+    domains: list[str], timeout: float, workers: int, fetch, noun: str
+) -> list[tuple[str, list]]:
+    """Run ``fetch(domain, timeout)`` for every domain and report it on stderr.
+
+    ``noun`` names what ``fetch`` returns ("hostname", "certificate") in the
+    per-domain message. The first failed domain aborts with exit code 1, like
+    an unreadable --input. Returns ``(domain, result)`` pairs in input order.
     """
     call = functools.partial(_discover_one, timeout=timeout, fetch=fetch)
-    workers = max(1, workers)
-    if workers > 1 and len(domains) > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            return list(pool.map(call, domains))
-    return [call(domain) for domain in domains]
+    found = []
+    for domain, result, err in _map(call, domains, workers):
+        if err is not None:
+            print(f"error: discovery for {domain}: {err}", file=sys.stderr)
+            sys.exit(1)
+        if result:
+            print(f"discovered {len(result)} {noun}(s) for {domain}", file=sys.stderr)
+        else:
+            print(f"warning: no certificates found for {domain}", file=sys.stderr)
+        found.append((domain, result))
+    return found
 
 
 def _issuer_is_expected(issuer: str, expected: list[str]) -> bool:
@@ -464,20 +486,14 @@ def _run_discover_only(args: argparse.Namespace) -> None:
     """
     expected = args.expect_issuer or []
     rows: list[tuple[str, DiscoveredCert, bool]] = []
-    outcomes = _discover_all(
-        args.discover, args.discover_timeout, args.concurrency, discover_certificates
+    inventory = _discover(
+        args.discover,
+        args.discover_timeout,
+        args.concurrency,
+        discover_certificates,
+        "certificate",
     )
-    for domain, certs, err in outcomes:
-        if err is not None:
-            print(f"error: discovery for {domain}: {err}", file=sys.stderr)
-            sys.exit(1)
-        if certs:
-            print(
-                f"discovered {len(certs)} certificate(s) for {domain}",
-                file=sys.stderr,
-            )
-        else:
-            print(f"warning: no certificates found for {domain}", file=sys.stderr)
+    for domain, certs in inventory:
         for cert in certs:
             unexpected = bool(expected) and not _issuer_is_expected(
                 cert.issuer, expected
@@ -631,20 +647,13 @@ def main() -> None:
             sys.exit(1)
     discovered_targets: list[str] = []
     if args.discover:
-        outcomes = _discover_all(
-            args.discover, args.discover_timeout, args.concurrency, discover_hostnames
-        )
-        for domain, found, err in outcomes:
-            if err is not None:
-                print(f"error: discovery for {domain}: {err}", file=sys.stderr)
-                sys.exit(1)
-            if found:
-                print(
-                    f"discovered {len(found)} hostname(s) for {domain}",
-                    file=sys.stderr,
-                )
-            else:
-                print(f"warning: no certificates found for {domain}", file=sys.stderr)
+        for _, found in _discover(
+            args.discover,
+            args.discover_timeout,
+            args.concurrency,
+            discover_hostnames,
+            "hostname",
+        ):
             discovered_targets.extend(found)
 
     host_targets = [*args.target, *extra_targets, *discovered_targets]
@@ -696,13 +705,7 @@ def main() -> None:
             return name, None, str(err)
         return name, (name, info, code), None
 
-    # Inspect in parallel when asked; ThreadPoolExecutor.map preserves order.
-    workers = max(1, args.concurrency)
-    if workers > 1 and len(work_items) > 1:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            outcomes = list(pool.map(_run, work_items))
-    else:
-        outcomes = [_run(item) for item in work_items]
+    outcomes = _map(_run, work_items, args.concurrency)
 
     results: list[tuple[str | None, dict, int]] = []
     errors: list[tuple[str | None, str]] = []
