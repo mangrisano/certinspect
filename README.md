@@ -1367,7 +1367,7 @@ Machine-readable monitoring output (full examples in
 
 ```console
 $ certinspect example.com --exporter nagios
-OK: example.com certificate VALID (64 days to expiry) | days=64;30;0
+OK: example.com certificate VALID (64 days to expiry) | days=64;30:;0:
 ```
 
 ### `--version`
@@ -1459,8 +1459,8 @@ host is CRITICAL:
 
 ```console
 $ certinspect example.com expired.example.com --exporter nagios
-OK: example.com certificate VALID (217 days to expiry) | days=217;30;0
-CRITICAL: expired.example.com certificate EXPIRED (-3 days to expiry) | days=-3;30;0
+OK: example.com certificate VALID (217 days to expiry) | days=217;30:;0:
+CRITICAL: expired.example.com certificate EXPIRED (-3 days to expiry) | days=-3;30:;0:
 ```
 
 `prometheus` emits textfile-collector metrics (`certinspect_up`,

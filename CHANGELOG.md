@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`ACME, Inc`) was truncated to `ACME\`, and a fake `CN=` hidden after an
   escaped comma in another attribute could make the `issuer` column show a CA
   that did not issue the certificate.
+- The `--exporter nagios` perfdata thresholds now use the `N:` range form
+  (`days=44;30:;7:`), meaning "alert below N". The bare `30;7` meant "alert
+  above N" under the Monitoring Plugins range rules, so graphers and tools that
+  evaluate perfdata saw a healthy certificate as CRITICAL and one about to
+  expire as OK. Without `--critical-days` the critical threshold is `0:`
+  (expired), matching the plugin's own state.
 
 ## [2.4.0] - 2026-09-25
 

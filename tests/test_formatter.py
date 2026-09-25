@@ -268,6 +268,54 @@ def test_format_nagios_overall_is_worst_severity(make_cert):
     assert code == NAGIOS_WARNING
 
 
+@pytest.mark.parametrize(
+    "critical_days, thresholds", [(7, ";30:;7:"), (None, ";30:;0:")]
+)
+def test_format_nagios_perfdata_alerts_below_the_thresholds(
+    make_cert, critical_days, thresholds
+):
+    info = _info(make_cert(days_valid=200))
+    text, _ = format_nagios(
+        [("example.com", info, 0)], warn_days=30, critical_days=critical_days
+    )
+    assert text.endswith(f"| days={info['days_to_expire']}{thresholds}")
+
+
+def _breaches(value: float, threshold: str) -> bool:
+    """Monitoring Plugins range rule: "N" is 0..N, "N:" is N..inf; alert outside."""
+    low, sep, high = threshold.partition(":")
+    if not sep:
+        low, high = "0", low
+    return not (float(low or 0) <= value <= float(high or "inf"))
+
+
+@pytest.mark.parametrize(
+    "days_valid, critical_days",
+    [(45, 7), (20, 7), (3, 7), (45, None), (-2, None)],
+)
+def test_format_nagios_perfdata_agrees_with_the_plugin_state(
+    make_cert, days_valid, critical_days
+):
+    from certinspect.exit_codes import EXIT_BY_STATUS
+    from certinspect.parser import certificate_status
+
+    info = _info(make_cert(days_valid=days_valid, days_ago_start=30))
+    info["status"] = certificate_status(info, 30, critical_days)
+    code = EXIT_BY_STATUS[info["status"]]
+    text, _ = format_nagios(
+        [("example.com", info, code)], warn_days=30, critical_days=critical_days
+    )
+    label, perfdata = text.split(" | ")
+    value, warn, crit = perfdata.removeprefix("days=").split(";")
+    if _breaches(float(value), crit):
+        graphed = "CRITICAL"
+    elif _breaches(float(value), warn):
+        graphed = "WARNING"
+    else:
+        graphed = "OK"
+    assert label.startswith(f"{graphed}:")
+
+
 def test_format_prometheus_exposes_metrics(make_cert):
     info = _info(make_cert(days_valid=42))
     results = [("example.com", info, 0)]

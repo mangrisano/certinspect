@@ -458,7 +458,9 @@ def format_nagios(
             info, warn_days, critical_days
         )
         days = info["days_to_expire"]
-        perfdata = f"days={days};{warn_days};{critical_days or 0}"
+        # "N:" alerts below N; a bare "N" would alert above it (plugin range rules).
+        critical = critical_days if critical_days is not None else 0
+        perfdata = f"days={days};{warn_days}:;{critical}:"
         lines.append(
             f"{_NAGIOS_LABELS[severity]}: {name} certificate {status} "
             f"({days} days to expiry) | {perfdata}"
