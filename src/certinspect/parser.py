@@ -110,7 +110,7 @@ def chain_summary(cert: x509.Certificate) -> dict:
         "issuer": cert.issuer.rfc4514_string(),
         "not_valid_after": cert.not_valid_after_utc,
         "serial_number": cert.serial_number,
-        "is_ca": _is_ca(cert),
+        "is_ca": is_ca_certificate(cert),
     }
 
 
@@ -233,7 +233,7 @@ def diagnose_chain(presented: list[x509.Certificate]) -> dict | None:
     }
 
 
-def _is_ca(cert: x509.Certificate) -> bool:
+def is_ca_certificate(cert: x509.Certificate) -> bool:
     """Return the BasicConstraints CA flag, or False if the extension is absent."""
     try:
         ext = cert.extensions.get_extension_for_class(x509.BasicConstraints)
@@ -390,7 +390,7 @@ def analyze(cert: x509.Certificate) -> CertificateInfo:
     except x509.ExtensionNotFound:
         san = []
 
-    is_ca = _is_ca(cert)
+    is_ca = is_ca_certificate(cert)
     public_key = cert.public_key()
 
     weak = []

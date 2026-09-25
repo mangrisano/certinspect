@@ -22,6 +22,7 @@ from cryptography.x509.oid import (
 )
 
 from certinspect.httpfetch import fetch
+from certinspect.parser import is_ca_certificate
 
 # Clock-skew tolerance when judging whether an OCSP response is still fresh.
 _OCSP_CLOCK_SKEW = timedelta(minutes=5)
@@ -296,6 +297,39 @@ def _crl_stale(crl: x509.CertificateRevocationList) -> str | None:
     return None
 
 
+def _crl_coverage(
+    crl: x509.CertificateRevocationList, cert: x509.Certificate
+) -> str | None:
+    """Return how much of ``cert``'s revocation status the CRL can speak for.
+
+    ``"full"`` when a missing serial proves the certificate is not revoked;
+    ``"partial"`` when the CRL can only prove revocation (a delta CRL, or one
+    limited to some revocation reasons); None when it cannot cover ``cert`` at
+    all: an indirect, attribute-only, CA-only (for an end-entity) or user-only
+    (for a CA) CRL, or one with a critical extension we do not understand
+    (RFC 5280 sections 5.2 and 6.3.3).
+    """
+    partial = False
+    for extension in crl.extensions:
+        value = extension.value
+        if isinstance(value, x509.DeltaCRLIndicator):
+            partial = True
+        elif isinstance(value, x509.IssuingDistributionPoint):
+            is_ca = is_ca_certificate(cert)
+            if (
+                value.indirect_crl
+                or value.only_contains_attribute_certs
+                or (value.only_contains_ca_certs and not is_ca)
+                or (value.only_contains_user_certs and is_ca)
+            ):
+                return None
+            if value.only_some_reasons:
+                partial = True
+        elif extension.critical:
+            return None
+    return "partial" if partial else "full"
+
+
 def _check_crl(
     cert: x509.Certificate,
     issuer: x509.Certificate | None,
@@ -303,14 +337,18 @@ def _check_crl(
 ) -> tuple[str, str | None]:
     """Check revocation via the certificate's CRL distribution points.
 
-    Download each CRL in turn and look up the certificate's serial number.
-    When ``issuer`` is known the CRL signature is verified and a CRL that
-    fails the check is skipped. The first CRL that yields a verdict wins;
-    otherwise the status is ``"UNAVAILABLE"`` (soft-fail).
+    Download each CRL in turn and look up the certificate's serial number. A
+    CRL is used only if it names the certificate's issuer, its signature
+    verifies against ``issuer`` and its scope can cover the certificate, so
+    without a known issuer no CRL is trusted. A partial CRL (delta, or limited
+    to some reasons) can prove REVOKED but not GOOD. The first CRL that yields
+    a verdict wins; otherwise the status is ``"UNAVAILABLE"`` (soft-fail).
     """
     urls = _crl_urls(cert)
     if not urls:
         return "UNAVAILABLE", "no CRL distribution point in extension"
+    if issuer is None:
+        return "UNAVAILABLE", "CRL cannot be verified without the issuer certificate"
 
     for url in urls:
         try:
@@ -320,7 +358,15 @@ def _check_crl(
         crl = _load_crl(raw)
         if crl is None:
             continue
-        if issuer is not None and not crl.is_signature_valid(issuer.public_key()):
+        try:
+            if crl.issuer != cert.issuer or not crl.is_signature_valid(
+                issuer.public_key()
+            ):
+                continue
+            coverage = _crl_coverage(crl, cert)
+        except (TypeError, ValueError):
+            continue
+        if coverage is None:
             continue
 
         revoked = crl.get_revoked_certificate_by_serial_number(cert.serial_number)
@@ -328,12 +374,14 @@ def _check_crl(
             when = getattr(revoked, "revocation_date_utc", None)
             detail = f"revoked at {when}" if when else "revoked"
             return "REVOKED", f"{detail} (via CRL)"
+        if coverage == "partial":
+            continue
         stale = _crl_stale(crl)
         if stale is not None:
             return "UNAVAILABLE", stale
         return "GOOD", "via CRL"
 
-    return "UNAVAILABLE", "CRL could not be retrieved"
+    return "UNAVAILABLE", "no usable CRL could be retrieved"
 
 
 def check_revocation(

@@ -57,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   another certificate of the same CA, used to be accepted; it now degrades to
   UNAVAILABLE and the CRL fallback runs. Unauthenticated REVOKED answers are
   ignored the same way.
+- CRLs are now trusted only when their signature is verified against the
+  issuer (without a known issuer none is used), their issuer name matches the
+  certificate's, and their scope can cover it (RFC 5280). A CRL limited to CA
+  certificates, attribute certificates or indirect entries, or carrying an
+  unknown critical extension, is ignored; a partial CRL (a delta CRL or one
+  limited to some revocation reasons) can prove REVOKED but no longer GOOD.
 
 ## [2.3.3] - 2026-09-22
 

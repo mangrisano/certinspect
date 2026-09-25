@@ -1270,6 +1270,155 @@ def test_check_ocsp_rejects_an_unauthenticated_response(monkeypatch, forge, reas
     assert reason in detail
 
 
+def _crl(issuer_cert, signer_key, *, revoked=(), extensions=(), issuer_name=None):
+    """A fresh DER CRL revoking ``revoked`` serials, with extra ``extensions``.
+
+    ``extensions`` holds ``(extension, critical)`` pairs; ``issuer_name``
+    overrides the CRL's issuer (defaults to ``issuer_cert``'s subject).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.x509.oid import NameOID
+
+    now = datetime.now(timezone.utc)
+    name = issuer_cert.subject
+    if issuer_name is not None:
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer_name)])
+    builder = (
+        x509.CertificateRevocationListBuilder()
+        .issuer_name(name)
+        .last_update(now - timedelta(hours=1))
+        .next_update(now + timedelta(days=1))
+    )
+    for serial in revoked:
+        builder = builder.add_revoked_certificate(
+            x509.RevokedCertificateBuilder()
+            .serial_number(serial)
+            .revocation_date(now - timedelta(hours=2))
+            .build()
+        )
+    for extension, critical in extensions:
+        builder = builder.add_extension(extension, critical=critical)
+    return _der(builder.sign(signer_key, hashes.SHA256()))
+
+
+def _idp(**flags):
+    from cryptography import x509
+
+    scope = {
+        "full_name": None,
+        "relative_name": None,
+        "only_contains_user_certs": False,
+        "only_contains_ca_certs": False,
+        "only_some_reasons": None,
+        "indirect_crl": False,
+        "only_contains_attribute_certs": False,
+    }
+    return x509.IssuingDistributionPoint(**{**scope, **flags})
+
+
+def _some_reasons():
+    from cryptography import x509
+
+    return _idp(only_some_reasons=frozenset({x509.ReasonFlags.key_compromise}))
+
+
+def _delta():
+    from cryptography import x509
+
+    return x509.DeltaCRLIndicator(1)
+
+
+def _unknown_critical():
+    from cryptography import x509
+
+    return x509.UnrecognizedExtension(
+        x509.ObjectIdentifier("1.3.6.1.4.1.55555.1"), b"\x05\x00"
+    )
+
+
+def test_check_crl_needs_the_issuer_to_verify_the_signature(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    _serve(monkeypatch, {CRL_URL: _crl(ca, ca_key)})
+
+    status, detail = revocation._check_crl(leaf, None, timeout=1.0)
+    assert status == "UNAVAILABLE"
+    assert "issuer" in detail
+
+
+def test_check_crl_ignores_a_crl_from_another_issuer_name(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    _serve(monkeypatch, {CRL_URL: _crl(ca, ca_key, issuer_name="Other CA")})
+
+    status, _ = revocation._check_crl(leaf, ca, timeout=1.0)
+    assert status == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [
+        lambda: _idp(only_contains_ca_certs=True),
+        lambda: _idp(only_contains_attribute_certs=True),
+        lambda: _idp(indirect_crl=True),
+        _unknown_critical,
+    ],
+    ids=["ca-only", "attribute-only", "indirect", "unknown-critical"],
+)
+def test_check_crl_ignores_a_crl_that_cannot_cover_the_certificate(
+    monkeypatch, extension
+):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    _serve(
+        monkeypatch,
+        {CRL_URL: _crl(ca, ca_key, revoked=(4242,), extensions=[(extension(), True)])},
+    )
+
+    status, _ = revocation._check_crl(leaf, ca, timeout=1.0)
+    assert status == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize("extension", [_some_reasons, _delta], ids=["reasons", "delta"])
+@pytest.mark.parametrize(
+    "revoked, expected", [((), "UNAVAILABLE"), ((4242,), "REVOKED")]
+)
+def test_check_crl_partial_crl_proves_revocation_but_not_good(
+    monkeypatch, extension, revoked, expected
+):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    _serve(
+        monkeypatch,
+        {CRL_URL: _crl(ca, ca_key, revoked=revoked, extensions=[(extension(), True)])},
+    )
+
+    status, _ = revocation._check_crl(leaf, ca, timeout=1.0)
+    assert status == expected
+
+
+def test_check_crl_accepts_a_user_certs_only_crl_for_a_leaf(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    der = _crl(ca, ca_key, extensions=[(_idp(only_contains_user_certs=True), True)])
+    _serve(monkeypatch, {CRL_URL: der})
+
+    assert revocation._check_crl(leaf, ca, timeout=1.0) == ("GOOD", "via CRL")
+
+
 # --- offline chain verification --------------------------------------------
 
 
