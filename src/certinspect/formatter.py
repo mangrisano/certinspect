@@ -8,6 +8,7 @@ analysis logic lives in parser.py.
 import csv
 import io
 import json
+from collections.abc import Sequence
 
 from cryptography import x509
 
@@ -377,7 +378,7 @@ def format_ct_inventory(
     if as_json:
         payload = []
         for domain, cert, unexpected in rows:
-            record = {
+            record: dict[str, object] = {
                 "domain": domain,
                 "hostnames": list(cert.hostnames),
                 "issuer": cert.issuer,
@@ -396,7 +397,7 @@ def format_ct_inventory(
             header.append("unexpected_issuer")
         writer.writerow(header)
         for domain, cert, unexpected in rows:
-            record = [
+            fields = [
                 domain,
                 " ".join(cert.hostnames),
                 cert.issuer,
@@ -404,8 +405,8 @@ def format_ct_inventory(
                 cert.not_after,
             ]
             if flag_issuer:
-                record.append("yes" if unexpected else "no")
-            writer.writerow(record)
+                fields.append("yes" if unexpected else "no")
+            writer.writerow(fields)
         return buffer.getvalue()
     lines = []
     for _, cert, unexpected in rows:
@@ -429,7 +430,7 @@ _SUMMARY_ORDER = (
     "san-mismatch",
     "policy",
 )
-_SUMMARY_BY_CODE = {
+_SUMMARY_BY_CODE: dict[int, str] = {
     ExitCode.OK: "valid",
     ExitCode.EXPIRING: "expiring",
     ExitCode.HOSTNAME_MISMATCH: "mismatch",
@@ -442,7 +443,7 @@ _SUMMARY_BY_CODE = {
 
 def format_summary(
     results: list[InspectionResult],
-    errors: list[tuple[str | None, str]] = (),
+    errors: Sequence[tuple[str | None, str]] = (),
     warn_days: int = 30,
     critical_days: int | None = None,
 ) -> str:
@@ -513,7 +514,7 @@ def _nagios_severity(code: int) -> int:
 
 def format_nagios(
     results: list[InspectionResult],
-    errors: list[tuple[str | None, str]] = (),
+    errors: Sequence[tuple[str | None, str]] = (),
     warn_days: int = 30,
     critical_days: int | None = None,
 ) -> tuple[str, int]:
@@ -559,7 +560,7 @@ def _prometheus_label(value: str) -> str:
 
 def format_prometheus(
     results: list[InspectionResult],
-    errors: list[tuple[str | None, str]] = (),
+    errors: Sequence[tuple[str | None, str]] = (),
     warn_days: int = 30,
 ) -> str:
     """Render results as Prometheus textfile-collector metrics.

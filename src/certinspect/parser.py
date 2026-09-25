@@ -8,7 +8,7 @@ from datetime import date, datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, rsa
-from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID, NameOID
+from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
 from certinspect.exit_codes import Status
 from certinspect.models import CertificateInfo
 
@@ -122,7 +122,9 @@ def _short_name(cert: x509.Certificate) -> str:
 def common_name(name: x509.Name) -> str:
     """Return the Common Name of an X.509 name, or its full RFC 4514 DN."""
     attrs = name.get_attributes_for_oid(NameOID.COMMON_NAME)
-    return attrs[0].value if attrs else name.rfc4514_string()
+    if attrs and isinstance(attrs[0].value, str):
+        return attrs[0].value
+    return name.rfc4514_string()
 
 
 def aia_urls(cert: x509.Certificate) -> tuple[list[str], list[str]]:
@@ -132,8 +134,8 @@ def aia_urls(cert: x509.Certificate) -> tuple[list[str], list[str]]:
     absent.
     """
     try:
-        aia = cert.extensions.get_extension_for_oid(
-            ExtensionOID.AUTHORITY_INFORMATION_ACCESS
+        aia = cert.extensions.get_extension_for_class(
+            x509.AuthorityInformationAccess
         ).value
     except x509.ExtensionNotFound:
         return [], []
@@ -553,6 +555,7 @@ def policy_violations(
     if (
         min_key_size is not None
         and info["key_type"] in _SIZE_CHECKED_KEY_TYPES
+        and info["key_size"] is not None
         and info["key_size"] < min_key_size
     ):
         violations.append(

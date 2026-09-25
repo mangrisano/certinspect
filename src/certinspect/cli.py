@@ -208,8 +208,10 @@ def _fetch_source(
             return f.read(), None
     kwargs = _connection_kwargs(opts)
     timeouts = (opts.effective_connect_timeout, opts.effective_read_timeout)
+    host = target
+    assert host is not None, "a source is either a file or a host"
     return retry_network(
-        lambda: get_server_cert(target, port, timeouts, **kwargs),
+        lambda: get_server_cert(host, port, timeouts, **kwargs),
         opts.retries,
     )
 
@@ -246,7 +248,7 @@ def _inspect(
     info["hostname_match"] = hostname_matches(info, check_name) if check_name else None
 
     info["status"] = certificate_status(info, opts.days, opts.critical_days)
-    codes = [EXIT_BY_STATUS[info["status"]]]
+    codes: list[ExitCode | None] = [EXIT_BY_STATUS[info["status"]]]
     if info["hostname_match"] is False:
         codes.append(ExitCode.HOSTNAME_MISMATCH)
 
@@ -308,11 +310,11 @@ def _check_chain(
     """
     if not opts.verify:
         return None, []
-    if opts.file:
+    if opts.file and file_bundle is not None:
         trusted, reason, verified = verify_chain_offline(
             file_bundle, cafile=opts.cafile, capath=opts.capath
         )
-        presented = file_bundle
+        presented: list | None = file_bundle
     elif target:
         verify_kwargs = _connection_kwargs(opts, include_ca=True)
         timeouts = (opts.effective_connect_timeout, opts.effective_read_timeout)

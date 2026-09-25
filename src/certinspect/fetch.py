@@ -302,7 +302,7 @@ def get_server_cert(
         if starttls:
             _negotiate_starttls(sock, starttls, read_timeout)
         with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
-            der = ssock.getpeercert(binary_form=True)
+            der = _peer_der(ssock)
             cipher = ssock.cipher()
             conn = ConnectionInfo(
                 tls_version=ssock.version(),
@@ -310,6 +310,14 @@ def get_server_cert(
                 chain=_chain(ssock, "get_unverified_chain"),
             )
             return der, conn
+
+
+def _peer_der(ssock: ssl.SSLSocket) -> bytes:
+    """Return the server certificate (DER) of a completed handshake."""
+    der = ssock.getpeercert(binary_form=True)
+    if der is None:
+        raise ValueError("the server presented no certificate")
+    return der
 
 
 def _chain(ssock: ssl.SSLSocket, method: str) -> list[x509.Certificate]:
@@ -385,7 +393,7 @@ def verify_chain(
                 _negotiate_starttls(sock, starttls, read_timeout)
             with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
                 chain = _chain(ssock, "get_verified_chain") or [
-                    x509.load_der_x509_certificate(ssock.getpeercert(binary_form=True))
+                    x509.load_der_x509_certificate(_peer_der(ssock))
                 ]
                 return True, None, chain
     except ssl.SSLCertVerificationError as err:
@@ -455,7 +463,7 @@ def _offline_verification_subject(
         if ips:
             return verification.IPAddress(ips[0])
     cn = leaf.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
-    if cn:
+    if cn and isinstance(cn[0].value, str):
         try:
             return verification.DNSName(_concrete_dns_name([cn[0].value]))
         except ValueError:

@@ -182,8 +182,14 @@ class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
         )
 
 
-def _build_opener(proxy: str | None = None, no_proxy: bool = False):
-    handlers = [_GuardedRedirectHandler, _PinnedHTTPHandler, _PinnedHTTPSHandler]
+def _build_opener(
+    proxy: str | None = None, no_proxy: bool = False
+) -> urllib.request.OpenerDirector:
+    handlers: list[type[urllib.request.BaseHandler] | urllib.request.BaseHandler] = [
+        _GuardedRedirectHandler,
+        _PinnedHTTPHandler,
+        _PinnedHTTPSHandler,
+    ]
     if no_proxy:
         handlers.append(urllib.request.ProxyHandler({}))
     elif proxy:

@@ -9,17 +9,23 @@ HTTP transport is the SSRF-guarded client in :mod:`certinspect.httpfetch`.
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import cast, get_args
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
+from cryptography.hazmat.primitives.asymmetric.types import (
+    CertificateIssuerPublicKeyTypes,
+)
 from cryptography.x509 import ocsp
-from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
+from cryptography.x509.oid import ExtendedKeyUsageOID
 
 from certinspect.exit_codes import RevocationStatus
 from certinspect.httpfetch import fetch
 from certinspect.parser import aia_urls, is_ca_certificate
+
+_SIGNING_KEY_TYPES = get_args(CertificateIssuerPublicKeyTypes)
 
 # Clock-skew tolerance when judging whether an OCSP response is still fresh.
 _OCSP_CLOCK_SKEW = timedelta(minutes=5)
@@ -63,9 +69,7 @@ def _crl_urls(cert: x509.Certificate) -> list[str]:
     extension is absent or carries no usable URL.
     """
     try:
-        dps = cert.extensions.get_extension_for_oid(
-            ExtensionOID.CRL_DISTRIBUTION_POINTS
-        ).value
+        dps = cert.extensions.get_extension_for_class(x509.CRLDistributionPoints).value
     except x509.ExtensionNotFound:
         return []
 
@@ -295,7 +299,11 @@ def _authenticate_crl(
     """
     if crl.issuer != cert.issuer:
         raise _UnusableRevocationData("CRL is from a different issuer")
-    if not crl.is_signature_valid(issuer.public_key()):
+    issuer_key = issuer.public_key()
+    # A key-agreement key (X25519, X448, ML-KEM) cannot have signed anything.
+    if not isinstance(issuer_key, _SIGNING_KEY_TYPES):
+        raise _UnusableRevocationData("the issuer key cannot sign a CRL")
+    if not crl.is_signature_valid(cast(CertificateIssuerPublicKeyTypes, issuer_key)):
         raise _UnusableRevocationData("CRL signature is invalid")
     is_ca = is_ca_certificate(cert)
     for extension in crl.extensions:
