@@ -386,8 +386,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         dest="min_key_size",
         help=(
-            "Fail (exit code 9) when the public key is smaller than N bits "
-            "(e.g. 2048 for RSA). Opt-in policy check."
+            "Fail (exit code 9) when an RSA or DSA public key is smaller than "
+            "N bits (e.g. 2048). EC and EdDSA keys are not size-checked here; "
+            "--fail-weak flags an EC key below 256 bit. Opt-in policy check."
         ),
     )
     parser.add_argument(

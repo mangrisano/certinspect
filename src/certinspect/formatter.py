@@ -38,7 +38,7 @@ def format_human(
         "",
         row("Serial number", info["serial_number"]),
         row("Signature", info["signature_algorithm"]),
-        row("Key size", f"{info['key_size']} bit"),
+        row("Key size", _key_size_text(info)),
         row("Fingerprint", info["fingerprint_sha256"]),
         row("CA", info["is_ca"]),
         row("Self-Signed", info["self_signed"]),
@@ -136,6 +136,14 @@ def format_human(
     return "\n".join(lines)
 
 
+def _key_size_text(info: CertificateInfo) -> str:
+    """Render the key size with its type, e.g. '2048 bit (RSA)' or 'n/a (Ed25519)'."""
+    size = info["key_size"]
+    if size is None:
+        return f"n/a ({info['key_type']})"
+    return f"{size} bit ({info['key_type']})"
+
+
 def format_json(data: dict | list) -> str:
     """Return an indented JSON representation of an analyzed result.
 
@@ -181,6 +189,7 @@ def _result_to_v2(target: str | None, info: CertificateInfo) -> dict:
         "is_ca": info["is_ca"],
         "san": info["san"],
         "key": {
+            "type": info["key_type"],
             "size": info["key_size"],
             "signature_algorithm": info["signature_algorithm"],
             "usage": info["key_usage"],

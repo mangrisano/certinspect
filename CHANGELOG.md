@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A `key_type` field (`RSA`, `EC`, `DSA`, `Ed25519`, `Ed448`) in the JSON
+  output (`key.type` in schema 2) and next to the key size in the text output.
+
+### Fixed
+
+- A certificate with an Ed25519 or Ed448 key no longer crashes the whole run
+  with a traceback; its `key_size` is reported as `null` (`n/a` in text).
+- `--min-key-size` (and the `standard`/`strict` profiles) no longer fails every
+  EC certificate: the minimum now applies to RSA and DSA keys only, since an EC
+  key's bit length is not on the RSA scale.
+
 ## [2.3.3] - 2026-09-22
 
 ### Changed

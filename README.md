@@ -35,7 +35,7 @@ Subject:        CN=example.com
 Status:         VALID
 Days to expiry: 64
 Signature:      ecdsa-with-SHA256
-Key size:       256 bit
+Key size:       256 bit (EC)
 TLS version:    TLSv1.3
 Cipher:         TLS_AES_256_GCM_SHA384
 Hostname match: True
@@ -135,7 +135,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
 | Triage helpers     | Only certs expiring within N days (`--max-days`), sort by host or soonest expiry (`--sort`), one-line tally (`--summary`), tighter CRITICAL threshold (`--critical-days`)                                                                                                                                                                                                                                                                                                                                                 |
 | Protocols          | Direct TLS plus STARTTLS — SMTP, IMAP, POP3, FTP (`--starttls`)                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Connectivity       | Mutual-TLS client certificates (`--client-cert`/`--client-key`) and HTTP CONNECT proxy tunnelling — explicit (`--proxy`) or from the environment (`HTTPS_PROXY`/`NO_PROXY`, like curl; `--no-proxy` to opt out) — for hosts behind a corporate/cloud egress proxy                                                                                                                                                                                                                                                         |
-| Automation         | Meaningful exit codes for cron/CI (or force success with `--exit-zero`), no telemetry, single runtime dependency, defaults from a `--config` file, low-noise recurring runs with `--state-file`/`--only-changed`, shell completion (`--print-completion`)                                                                                                                                                                                                                                                                |
+| Automation         | Meaningful exit codes for cron/CI (or force success with `--exit-zero`), no telemetry, single runtime dependency, defaults from a `--config` file, low-noise recurring runs with `--state-file`/`--only-changed`, shell completion (`--print-completion`)                                                                                                                                                                                                                                                                 |
 
 ## Requirements
 
@@ -292,7 +292,7 @@ Total validity: 396 days
 
 Serial number:  1587345912129534630556007389588586994
 Signature:      sha256WithRSAEncryption
-Key size:       2048 bit
+Key size:       2048 bit (RSA)
 Fingerprint:    15:58:1C:41:02:3F:07:89:85:31:4E:7D:4C:4F:8A:CA:BF:05:C7:F6:...
 CA:             False
 Self-Signed:    False
@@ -588,8 +588,8 @@ certinspect example.com --export ./example.com.pem
 | Option                                | Description                                                                                                                                                                                                                                                       |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `target...`                           | One or more domains, URLs or `host:port` to inspect. Omit when using `--file`.                                                                                                                                                                                    |
-| `--config PATH`                       | Load default option values from a TOML file (keys use the argparse destination name); an explicit flag always overrides it. Auto-discovered at `~/.config/certinspect/config.toml` when omitted.                                                                |
-| `--file PATH`                         | Inspect a local certificate (PEM or DER) instead of a host. Use `-` to read from standard input. Repeatable to inspect several files in one run; cannot be combined with host targets.                                                                           |
+| `--config PATH`                       | Load default option values from a TOML file (keys use the argparse destination name); an explicit flag always overrides it. Auto-discovered at `~/.config/certinspect/config.toml` when omitted.                                                                  |
+| `--file PATH`                         | Inspect a local certificate (PEM or DER) instead of a host. Use `-` to read from standard input. Repeatable to inspect several files in one run; cannot be combined with host targets.                                                                            |
 | `--port N`                            | TCP port to connect to (default: 443).                                                                                                                                                                                                                            |
 | `--timeout N`                         | Connection timeout in seconds (default: 5). Used for both connect and read unless the two below are set.                                                                                                                                                          |
 | `--connect-timeout N`                 | TCP connect timeout in seconds (default: `--timeout`).                                                                                                                                                                                                            |
@@ -614,7 +614,7 @@ certinspect example.com --export ./example.com.pem
 | `--expect-san NAME`                   | Assert the certificate's SAN covers `NAME` (wildcards honored); exit 8 if missing. Repeatable; works for host and `--file` targets.                                                                                                                               |
 | `--not-after-max N`                   | Fail (exit 9) when the total validity exceeds N days (use 398 for the CA/Browser Forum maximum). Opt-in; works for host and `--file` targets.                                                                                                                     |
 | `--cab-forum`                         | Fail (exit 9) when the total validity exceeds the CA/Browser Forum maximum in effect today (398 days now, then 200, 100 and 47 on 2026/2027/2029-03-15). Date-aware shorthand for `--not-after-max`; mutually exclusive with it.                                  |
-| `--min-key-size N`                    | Fail (exit 9) when the public key is smaller than N bits (e.g. 2048 for RSA). Opt-in.                                                                                                                                                                             |
+| `--min-key-size N`                    | Fail (exit 9) when an RSA/DSA public key is smaller than N bits (e.g. 2048). EC/EdDSA keys are not size-checked. Opt-in.                                                                                                                                          |
 | `--fail-weak`                         | Turn the weak-crypto warnings (small key, SHA-1/MD5 signature) into a hard failure (exit 9) instead of a mere warning.                                                                                                                                            |
 | `--require-sct`                       | Fail (exit 9) when the certificate embeds no Signed Certificate Timestamps (Certificate Transparency). Checks embedded SCTs only, not those from the TLS handshake or OCSP. Opt-in.                                                                               |
 | `--require-must-staple`               | Fail (exit 9) when the certificate lacks the OCSP Must-Staple extension (RFC 7633 TLS Feature `status_request`). Opt-in.                                                                                                                                          |
@@ -622,7 +622,7 @@ certinspect example.com --export ./example.com.pem
 | `--min-tls-version VER`               | Fail (exit 9) when the connection negotiates a TLS version older than `VER` (`TLSv1`, `TLSv1.1`, `TLSv1.2`, `TLSv1.3`). Host targets only; opt-in.                                                                                                                |
 | `--profile {lenient,standard,strict}` | Apply a named bundle of the opt-in policy checks in one go (exit 9 on violation). Intensity ladder, not an official standard; explicit flags override it. See [Policy profiles](#policy-profiles).                                                                |
 | `--input PATH`                        | Read extra targets from a file, one per line ('-' for stdin).                                                                                                                                                                                                     |
-| `--discover DOMAIN`                   | Discover hostnames from Certificate Transparency logs (crt.sh) for DOMAIN and inspect each one, surfacing forgotten or shadow certificates. Repeatable (queried concurrently per `--concurrency`); host targets only.                                            |
+| `--discover DOMAIN`                   | Discover hostnames from Certificate Transparency logs (crt.sh) for DOMAIN and inspect each one, surfacing forgotten or shadow certificates. Repeatable (queried concurrently per `--concurrency`); host targets only.                                             |
 | `--discover-only`                     | With `--discover`, list the CT inventory (expiry, issuer, hostnames, soonest expiry first, wildcards included) for the domain(s) without connecting, then exit. Good for a fast audit or spotting a certificate from an unexpected CA. Supports `--json`/`--csv`. |
 | `--expect-issuer SUBSTRING`           | With `--discover-only`, flag any certificate whose issuer matches none of these substrings (case-insensitive) and exit 9 — a Certificate Transparency mis-issuance check. Repeatable.                                                                             |
 | `--discover-timeout N`                | Timeout in seconds for the `--discover` crt.sh query (default: 30), separate from `--timeout` since a log search can be slower than a handshake.                                                                                                                  |
@@ -637,9 +637,9 @@ certinspect example.com --export ./example.com.pem
 | `--starttls {smtp,imap,pop3,ftp}`     | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given).                                                                                                                                                                 |
 | `--exporter {nagios,prometheus}`      | Emit machine-readable monitoring output (ignores `--quiet`).                                                                                                                                                                                                      |
 | `--concurrency N`                     | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved). Also governs `--discover`'s per-domain concurrency.                                                                                                                             |
-| `--state-file PATH`                   | Persist each host target's status across runs at PATH (JSON) and compare against the previous run. Host targets only.                                                                                                                                            |
-| `--only-changed`                      | Show only targets whose status differs from the previous `--state-file` run (a first-seen target counts as changed). Requires `--state-file`; display only.                                                                                                      |
-| `--print-completion {bash,zsh}`       | Print a shell completion script for bash or zsh to stdout, then exit. Generated from the parser, so it always matches the installed flags.                                                                                                                       |
+| `--state-file PATH`                   | Persist each host target's status across runs at PATH (JSON) and compare against the previous run. Host targets only.                                                                                                                                             |
+| `--only-changed`                      | Show only targets whose status differs from the previous `--state-file` run (a first-seen target counts as changed). Requires `--state-file`; display only.                                                                                                       |
+| `--print-completion {bash,zsh}`       | Print a shell completion script for bash or zsh to stdout, then exit. Generated from the parser, so it always matches the installed flags.                                                                                                                        |
 | `--version`                           | Print the version and exit.                                                                                                                                                                                                                                       |
 
 ## Options in action
@@ -663,7 +663,7 @@ Total validity: 90 days
 
 Serial number:  35428337808578903465180920265426569102
 Signature:      ecdsa-with-SHA256
-Key size:       256 bit
+Key size:       256 bit (EC)
 Fingerprint:    BE:AB:14:CF:39:67:8F:DA:0E:F1:60:6E:ED:B8:18:C2:...
 CA:             False
 Self-Signed:    False
@@ -761,6 +761,7 @@ $ certinspect example.com --json
       "is_ca": false,
       "san": ["example.com", "*.example.com"],
       "key": {
+        "type": "EC",
         "size": 256,
         "signature_algorithm": "ecdsa-with-SHA256",
         "usage": ["digital_signature"],
@@ -1021,13 +1022,16 @@ $ echo $?
 
 ### `--min-key-size N`
 
-Fail (exit code 9) when the public key is smaller than N bits — e.g. reject
-any RSA key below 2048 bit. Opt-in.
+Fail (exit code 9) when an RSA or DSA public key is smaller than N bits — e.g.
+reject any RSA key below 2048 bit. EC and EdDSA keys are not compared against
+N (their bit lengths are on a different scale: a 256-bit EC key is roughly as
+strong as 3072-bit RSA); `--fail-weak` still flags an EC key below 256 bit.
+Opt-in.
 
 ```console
 $ certinspect example.com --min-key-size 2048
 ...
-Key size:       1024 bit
+Key size:       1024 bit (RSA)
 ...
 Policy:         FAIL
 WARNING: policy violation (key size 1024 bit is below the 2048-bit minimum)
@@ -1166,7 +1170,7 @@ Precedence and edge cases a sysadmin should know:
 ```console
 $ certinspect example.com --profile standard
 ...
-Key size:       1024 bit
+Key size:       1024 bit (RSA)
 TLS version:    TLSv1.3
 Policy:         FAIL
 WARNING: policy violation (key size 1024 bit is below the 2048-bit minimum)
@@ -1404,7 +1408,7 @@ the repository with the most commonly-set options — copy the ones you want.
 
 ### `--state-file PATH` / `--only-changed`
 
-For a recurring job (cron, CI) where you only care when something *changes* —
+For a recurring job (cron, CI) where you only care when something _changes_ —
 not being reminded every run that a certificate is still fine. `--state-file`
 records each host's status in a small JSON file; `--only-changed` then limits
 the report to targets whose status differs from the previous run (a target
@@ -1516,17 +1520,17 @@ certinspect_policy_ok{target="example.com"} 0
 Designed for automation (cron, CI, monitoring scripts). In batch mode the
 worst code across all targets is returned.
 
-| Code | Meaning                                                                                                                                            |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Valid certificate                                                                                                                                  |
-| 1    | Runtime error (network, file, parse)                                                                                                               |
-| 2    | Command-line usage error                                                                                                                           |
-| 3    | Expiring within the `--days` threshold                                                                                                             |
-| 4    | Expired, not yet valid, or with invalid dates                                                                                                      |
-| 5    | Hostname does not match the certificate                                                                                                            |
-| 6    | Chain not trusted or revoked (`--verify`)                                                                                                          |
-| 7    | Fingerprint does not match `--pin`                                                                                                                 |
-| 8    | Expected SAN missing (`--expect-san`)                                                                                                              |
+| Code | Meaning                                                                                                                                                                          |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Valid certificate                                                                                                                                                                |
+| 1    | Runtime error (network, file, parse)                                                                                                                                             |
+| 2    | Command-line usage error                                                                                                                                                         |
+| 3    | Expiring within the `--days` threshold                                                                                                                                           |
+| 4    | Expired, not yet valid, or with invalid dates                                                                                                                                    |
+| 5    | Hostname does not match the certificate                                                                                                                                          |
+| 6    | Chain not trusted or revoked (`--verify`)                                                                                                                                        |
+| 7    | Fingerprint does not match `--pin`                                                                                                                                               |
+| 8    | Expected SAN missing (`--expect-san`)                                                                                                                                            |
 | 9    | Policy violation (`--not-after-max`/`--cab-forum`, `--min-key-size`, `--fail-weak`, `--require-sct`, `--require-must-staple`, `--require-revocation-check`, `--min-tls-version`) |
 
 Example in a script:

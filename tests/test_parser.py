@@ -3,6 +3,7 @@
 from datetime import date, datetime
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519
 
 from certinspect.parser import (
     CertificateLoadError,
@@ -165,6 +166,7 @@ def test_analyze_keys_match_expected_set(der_cert):
         "signature_algorithm",
         "days_to_expire",
         "validity_days",
+        "key_type",
         "key_size",
         "san",
         "fingerprint_sha256",
@@ -652,3 +654,34 @@ def test_cab_forum_max_validity_follows_schedule(today, expected):
 def test_cab_forum_max_validity_defaults_to_today():
     # Without an argument it must return one of the scheduled caps.
     assert cab_forum_max_validity() in {398, 200, 100, 47}
+
+
+def test_analyze_reports_key_type(make_cert):
+    assert analyze(load_certificate(make_cert()))["key_type"] == "RSA"
+    ec_cert = make_cert(ec_curve=ec.SECP256R1())
+    assert analyze(load_certificate(ec_cert))["key_type"] == "EC"
+
+
+@pytest.mark.parametrize(
+    "key, key_type",
+    [
+        (ed25519.Ed25519PrivateKey.generate(), "Ed25519"),
+        (ed448.Ed448PrivateKey.generate(), "Ed448"),
+    ],
+)
+def test_analyze_eddsa_key_has_no_size(make_cert, key, key_type):
+    info = analyze(load_certificate(make_cert(private_key=key)))
+    assert info["key_type"] == key_type
+    assert info["key_size"] is None
+    assert info["weak"] == []
+
+
+def test_policy_violations_min_key_size_ignores_ec_keys(make_cert):
+    info = analyze(load_certificate(make_cert(ec_curve=ec.SECP256R1())))
+    assert policy_violations(info, min_key_size=2048) == []
+
+
+def test_policy_violations_min_key_size_ignores_eddsa_keys(make_cert):
+    key = ed25519.Ed25519PrivateKey.generate()
+    info = analyze(load_certificate(make_cert(private_key=key)))
+    assert policy_violations(info, min_key_size=2048) == []

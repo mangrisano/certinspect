@@ -7,7 +7,7 @@ formatted for the user.
 from datetime import date, datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import dsa, ec, rsa
+from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, rsa
 from cryptography.x509.oid import AuthorityInformationAccessOID, ExtensionOID, NameOID
 from certinspect.exit_codes import Status
 from certinspect.models import CertificateInfo
@@ -257,6 +257,25 @@ def _weak_key(public_key) -> str | None:
     return None
 
 
+# Key families whose size is comparable to an RSA bit length for --min-key-size.
+_SIZE_CHECKED_KEY_TYPES = ("RSA", "DSA")
+
+
+def _key_type(public_key) -> str:
+    """Return the public key family: RSA, EC, DSA, Ed25519 or Ed448."""
+    if isinstance(public_key, rsa.RSAPublicKey):
+        return "RSA"
+    if isinstance(public_key, ec.EllipticCurvePublicKey):
+        return "EC"
+    if isinstance(public_key, dsa.DSAPublicKey):
+        return "DSA"
+    if isinstance(public_key, ed25519.Ed25519PublicKey):
+        return "Ed25519"
+    if isinstance(public_key, ed448.Ed448PublicKey):
+        return "Ed448"
+    return type(public_key).__name__
+
+
 def load_certificate(data: bytes) -> x509.Certificate:
     """Load a certificate from DER or PEM bytes."""
     if not data:
@@ -372,9 +391,10 @@ def analyze(cert: x509.Certificate) -> CertificateInfo:
         san = []
 
     is_ca = _is_ca(cert)
+    public_key = cert.public_key()
 
     weak = []
-    reason = _weak_key(cert.public_key())
+    reason = _weak_key(public_key)
     if reason:
         weak.append(reason)
     sig_name = _oid_name(cert.signature_algorithm_oid, _SIGNATURE_ALGORITHM_NAMES)
@@ -390,7 +410,9 @@ def analyze(cert: x509.Certificate) -> CertificateInfo:
         "signature_algorithm": sig_name,
         "days_to_expire": days_to_expire,
         "validity_days": validity_days,
-        "key_size": cert.public_key().key_size,
+        "key_type": _key_type(public_key),
+        # EdDSA keys have a fixed size and expose no key_size.
+        "key_size": getattr(public_key, "key_size", None),
         "san": san,
         "fingerprint_sha256": format_fingerprint(cert),
         "is_ca": is_ca,
@@ -496,7 +518,9 @@ def policy_violations(
 
     * ``not_after_max`` — the total validity must not exceed this many days
       (e.g. 398 for the current CA/Browser Forum maximum).
-    * ``min_key_size`` — the public key must be at least this many bits.
+    * ``min_key_size`` — an RSA or DSA public key must be at least this many
+      bits. EC and EdDSA keys are not compared (their bit lengths are not on
+      the RSA scale); ``fail_weak`` still catches an EC key below 256 bit.
     * ``fail_weak`` — promote the warnings already collected in ``info["weak"]``
       (weak key size, SHA-1/MD5 signature) to hard violations.
     * ``require_sct`` — the certificate must embed at least one Signed
@@ -515,7 +539,11 @@ def policy_violations(
             f"total validity {info['validity_days']} days exceeds the "
             f"{not_after_max}-day maximum"
         )
-    if min_key_size is not None and info["key_size"] < min_key_size:
+    if (
+        min_key_size is not None
+        and info["key_type"] in _SIZE_CHECKED_KEY_TYPES
+        and info["key_size"] < min_key_size
+    ):
         violations.append(
             f"key size {info['key_size']} bit is below the {min_key_size}-bit minimum"
         )

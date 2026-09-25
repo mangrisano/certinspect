@@ -10,7 +10,7 @@ import ipaddress
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, rsa
 from cryptography.x509.oid import (
     AuthorityInformationAccessOID,
     ExtendedKeyUsageOID,
@@ -31,6 +31,7 @@ def build_certificate(
     sig_hash: hashes.HashAlgorithm | None = None,
     encoding: serialization.Encoding = serialization.Encoding.DER,
     ec_curve: ec.EllipticCurve | None = None,
+    private_key=None,
     key_usage: x509.KeyUsage | None = None,
     extended_key_usage: list | None = None,
     must_staple: bool = False,
@@ -51,8 +52,11 @@ def build_certificate(
         sig_hash: hash algorithm used to sign (defaults to SHA-256).
         encoding: DER or PEM output encoding.
         ec_curve: if set, generate an EC key on this curve instead of RSA.
+        private_key: if set, use this key (e.g. Ed25519) instead of generating one.
     """
-    if ec_curve is not None:
+    if private_key is not None:
+        key = private_key
+    elif ec_curve is not None:
         key = ec.generate_private_key(ec_curve)
     else:
         key = rsa.generate_private_key(public_exponent=65537, key_size=key_size)
@@ -109,7 +113,9 @@ def build_certificate(
             critical=False,
         )
 
-    cert = builder.sign(key, sig_hash or hashes.SHA256())
+    # EdDSA keys embed their hash, so cryptography requires algorithm=None.
+    eddsa = isinstance(key, (ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey))
+    cert = builder.sign(key, None if eddsa else sig_hash or hashes.SHA256())
     return cert.public_bytes(encoding)
 
 

@@ -5,6 +5,7 @@ import io
 import json
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 from certinspect.formatter import (
     NAGIOS_CRITICAL,
@@ -195,6 +196,15 @@ def test_format_human_warns_on_weak_key(make_cert):
     text = format_human(_info(make_cert(key_size=1024)))
     assert "WARNING" in text
     assert "key" in text.lower()
+
+
+def test_format_human_shows_key_type(make_cert):
+    assert "2048 bit (RSA)" in format_human(_info(make_cert()))
+
+
+def test_format_human_eddsa_key_has_no_size(make_cert):
+    key = ed25519.Ed25519PrivateKey.generate()
+    assert "n/a (Ed25519)" in format_human(_info(make_cert(private_key=key)))
 
 
 def test_format_human_no_weak_warning_for_strong_cert(make_cert):

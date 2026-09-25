@@ -23,7 +23,8 @@ class CertificateInfo(TypedDict, total=False):
     signature_algorithm: str
     days_to_expire: int
     validity_days: int
-    key_size: int
+    key_type: str
+    key_size: int | None
     san: list[str]
     fingerprint_sha256: str
     is_ca: bool

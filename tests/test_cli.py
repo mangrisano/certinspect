@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 
 from certinspect.cli import _split_target, build_parser, main
 
@@ -855,6 +856,27 @@ def test_main_min_key_size_flags_small_key(monkeypatch, capsys, make_cert):
     out = capsys.readouterr().out
     assert code == 9
     assert "below the 2048-bit minimum" in out
+
+
+def test_main_inspects_eddsa_certificate(monkeypatch, capsys, make_cert):
+    key = ed25519.Ed25519PrivateKey.generate()
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], private_key=key)),
+    )
+    code = _run_main(monkeypatch, ["example.com", "--json"])
+    result = json.loads(capsys.readouterr().out)["results"][0]
+    assert code == 0
+    assert result["key"]["type"] == "Ed25519"
+    assert result["key"]["size"] is None
+
+
+def test_main_standard_profile_accepts_ec_key(monkeypatch, make_cert):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        _const_fetch(make_cert(san=["example.com"], ec_curve=ec.SECP256R1())),
+    )
+    assert _run_main(monkeypatch, ["example.com", "--profile", "standard"]) == 0
 
 
 def test_main_fail_weak_promotes_warning_to_failure(monkeypatch, capsys, make_cert):
