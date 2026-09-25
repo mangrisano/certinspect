@@ -135,14 +135,23 @@ def _split_timeout(timeout: float | tuple[float, float]) -> tuple[float, float]:
     return timeout, timeout
 
 
+# Bounds on what a (possibly hostile) server may send during STARTTLS. RFC 5321
+# caps an SMTP reply line at 512 bytes and a real EHLO reply has ~10 lines.
+_MAX_STARTTLS_LINE_BYTES = 8192
+_MAX_STARTTLS_REPLY_LINES = 100
+
+
 def _readline(sock: socket.socket) -> bytes:
     """Read one line (up to and including ``\\n``) from a plaintext socket.
 
     Reads a byte at a time so we never consume data past the STARTTLS
     negotiation: the server stays silent until we begin the TLS handshake.
+    Raises ValueError when the line exceeds ``_MAX_STARTTLS_LINE_BYTES``.
     """
     buf = bytearray()
     while not buf.endswith(b"\n"):
+        if len(buf) >= _MAX_STARTTLS_LINE_BYTES:
+            raise ValueError("STARTTLS reply line too long")
         chunk = sock.recv(1)
         if not chunk:
             break
@@ -154,12 +163,14 @@ def _read_reply(sock: socket.socket) -> bytes:
     """Read a possibly multiline SMTP/FTP reply and return its final line.
 
     Continuation lines use ``-`` as the fourth character (e.g. ``250-``); the
-    last line uses a space (``250 ``).
+    last line uses a space (``250 ``). Raises ValueError when the reply has
+    more than ``_MAX_STARTTLS_REPLY_LINES`` lines.
     """
-    while True:
+    for _ in range(_MAX_STARTTLS_REPLY_LINES):
         line = _readline(sock)
         if len(line) < 4 or line[3:4] != b"-":
             return line
+    raise ValueError("STARTTLS reply has too many lines")
 
 
 def _expect(line: bytes, prefix: bytes) -> None:
@@ -193,13 +204,14 @@ def _negotiate_starttls(sock: socket.socket, protocol: str) -> None:
     elif proto == "imap":
         _expect(_readline(sock), b"* OK")
         sock.sendall(b"a001 STARTTLS\r\n")
-        while True:
+        for _ in range(_MAX_STARTTLS_REPLY_LINES):
             line = _readline(sock)
             if not line:
                 raise ValueError("connection closed during STARTTLS")
             if line.startswith(b"a001 "):
                 _expect(line, b"a001 OK")
-                break
+                return
+        raise ValueError("STARTTLS reply has too many lines")
     else:
         raise ValueError(f"unsupported STARTTLS protocol: {protocol}")
 

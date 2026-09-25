@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL was screened, so a public host could redirect certinspect to loopback or
   the cloud metadata endpoint (`169.254.169.254`). Redirects are also limited
   to http/https and to 5 hops.
+- A hostile server can no longer stall or exhaust the memory of a `--starttls`
+  inspection: the plaintext negotiation now rejects a reply line longer than
+  8 KB and a reply of more than 100 lines (a line with no newline, an endless
+  `250-` continuation or endless untagged IMAP lines used to be read forever).
 
 ## [2.3.3] - 2026-09-22
 

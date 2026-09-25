@@ -256,6 +256,51 @@ def test_negotiate_starttls_unsupported_protocol():
         _negotiate_starttls(_FakeSocket(b""), "xmpp")
 
 
+class _EndlessSocket(_FakeSocket):
+    """A hostile server that repeats ``pattern`` forever after an optional prefix."""
+
+    _SAFETY_CAP = 1_000_000
+
+    def __init__(self, pattern: bytes, prefix: bytes = b""):
+        super().__init__(b"")
+        self._stream = prefix
+        self._pattern = pattern
+        self.read = 0
+
+    def recv(self, n: int) -> bytes:
+        if self.read >= self._SAFETY_CAP:
+            raise AssertionError("client kept reading an endless STARTTLS stream")
+        if self.read < len(self._stream):
+            byte = self._stream[self.read]
+        else:
+            byte = self._pattern[(self.read - len(self._stream)) % len(self._pattern)]
+        self.read += 1
+        return bytes([byte])
+
+
+def test_negotiate_starttls_rejects_an_endless_line():
+    from certinspect.fetch import _negotiate_starttls
+
+    with pytest.raises(ValueError, match="line too long"):
+        _negotiate_starttls(_EndlessSocket(b"A", prefix=b"220 "), "smtp")
+
+
+@pytest.mark.parametrize(
+    "protocol, prefix, pattern",
+    [
+        ("smtp", b"", b"220-greeting\r\n"),
+        ("smtp", b"220 ready\r\n", b"250-EXTENSION\r\n"),
+        ("ftp", b"", b"220-banner\r\n"),
+        ("imap", b"* OK ready\r\n", b"* CAPABILITY IMAP4rev1\r\n"),
+    ],
+)
+def test_negotiate_starttls_rejects_endless_replies(protocol, prefix, pattern):
+    from certinspect.fetch import _negotiate_starttls
+
+    with pytest.raises(ValueError, match="too many lines"):
+        _negotiate_starttls(_EndlessSocket(pattern, prefix=prefix), protocol)
+
+
 def test_verify_chain_uses_custom_ca(monkeypatch):
     """--cafile/--capath must build the SSL context from the given bundle."""
     import ssl
