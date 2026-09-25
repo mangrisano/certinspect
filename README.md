@@ -462,11 +462,11 @@ certinspect internal.example.lan --verify --cafile ./internal-ca.pem
 
 ### Catch a revoked certificate
 
-`--verify` queries OCSP and falls back to the CRL; a revoked leaf fails with
-exit `6`:
+Verification is on by default: it queries OCSP and falls back to the CRL, and a
+revoked leaf fails with exit `6`:
 
 ```bash
-certinspect revoked.example.com --verify
+certinspect revoked.example.com
 ```
 
 ### Spot an expired intermediate before it breaks the chain
@@ -681,6 +681,10 @@ SAN:
 ```
 
 Passing several hosts prints one `=== host ===` block per target (batch mode).
+A target on a non-default port is labelled `host:port` (e.g.
+`=== example.com:8443 ===`) there and in every other output, the
+`--state-file` and the Prometheus `target` label, so several services on the
+same host stay apart.
 
 ### `--file PATH` — inspect a local certificate
 
@@ -790,6 +794,10 @@ The `status` field mirrors the human report's `Status` line (`VALID`,
 honors `--days` / `--critical-days`, so a JSON consumer gets the verdict
 without re-deriving it from the dates.
 
+`key.type` is the key family (`RSA`, `EC`, `DSA`, `Ed25519` or `Ed448`).
+EdDSA keys have a fixed size, so for them `key.size` is `null` (`n/a` in the
+text report).
+
 Need the pre-2.0 flat array (no envelope, dates via `str()`, integer serial)?
 Pass `--schema 1`:
 
@@ -865,6 +873,19 @@ $ certinspect --file ./bundle.pem --verify
 ...
 Chain trusted:  True
 ```
+
+For a host, revocation is checked over OCSP first, falling back to the CRL. An
+answer only counts when it is authentic: the OCSP response must be about this
+certificate and signed by its issuer (or by a responder the issuer delegated
+with the OCSP Signing EKU); the CRL must be signed by the issuer, name it and
+cover this kind of certificate. The issuer itself, taken from the verified
+chain or downloaded from the certificate's AIA URL, must have signed the leaf.
+Anything else is reported as `UNAVAILABLE` — a browser-like soft-fail that
+leaves the exit code alone; add
+[`--require-revocation-check`](#--require-revocation-check) to make it fail.
+The OCSP, CRL and issuer URLs come from the certificate, so certinspect
+refuses to fetch loopback, link-local (cloud metadata) or other internal
+addresses — also after an HTTP redirect — and caps each response at 16 MB.
 
 ### `--chain`
 
@@ -1146,13 +1167,13 @@ you had passed the flags yourself.
 
 Each stricter tier is a superset of the one below it:
 
-| Check (flag)                                  | `lenient` | `standard` |  `strict`   |
-| --------------------------------------------- | :-------: | :--------: | :---------: |
-| Minimum TLS version (`--min-tls-version`)     |  TLSv1.2  |  TLSv1.2   | **TLSv1.3** |
-| Fail on weak crypto (`--fail-weak`)           |    yes    |    yes     |     yes     |
-| Minimum key size (`--min-key-size`)           |     —     |  2048 bit  |  2048 bit   |
-| Require CT SCTs (`--require-sct`)             |     —     |     —      |     yes     |
-| CA/Browser Forum validity cap (`--cab-forum`) |     —     |     —      |     yes     |
+| Check (flag)                                  | `lenient` |     `standard`     |      `strict`      |
+| --------------------------------------------- | :-------: | :----------------: | :----------------: |
+| Minimum TLS version (`--min-tls-version`)     |  TLSv1.2  |      TLSv1.2       |    **TLSv1.3**     |
+| Fail on weak crypto (`--fail-weak`)           |    yes    |        yes         |        yes         |
+| Minimum key size (`--min-key-size`)           |     —     | 2048 bit (RSA/DSA) | 2048 bit (RSA/DSA) |
+| Require CT SCTs (`--require-sct`)             |     —     |         —          |        yes         |
+| CA/Browser Forum validity cap (`--cab-forum`) |     —     |         —          |        yes         |
 
 Precedence and edge cases a sysadmin should know:
 
@@ -1261,7 +1282,9 @@ summary: 1 valid · 0 expiring · 0 expired · 1 error (2 targets)
 Print only the fields you ask for, one tab-separated line per target, so you
 can pull values straight into a script without a JSON tool. Repeat `--field`
 for several columns; the pseudo-field `target` is the inspected host and list
-fields (like `san`) are comma-joined.
+fields (like `san`) are comma-joined. Any key of the `--json --schema 1`
+output is a valid name (e.g. `issuer`, `key_type`, `key_size`,
+`revocation_status`).
 
 ```console
 $ certinspect example.com github.com --field target --field days_to_expire --field status
@@ -1468,6 +1491,11 @@ OK: example.com certificate VALID (217 days to expiry) | days=217;30:;0:
 CRITICAL: expired.example.com certificate EXPIRED (-3 days to expiry) | days=-3;30:;0:
 ```
 
+The perfdata thresholds use the `N:` range form, "alert below N": `30:` is the
+`--days` warning, `0:` the critical one (expired), or `--critical-days` when set
+(`days=12;30:;7:`), so graphers colour each series exactly as the plugin rates
+it.
+
 `prometheus` emits textfile-collector metrics (`certinspect_up`,
 `certinspect_cert_expiry_days`, `certinspect_cert_valid`), keeping the normal
 worst-status exit code:
@@ -1487,7 +1515,7 @@ certinspect_cert_valid{target="example.com"} 1
 
 Three further gauges appear only for the targets whose check actually ran, so a
 scrape never carries a misleading `0` for a check that was not requested:
-`certinspect_hostname_match` (host targets), and — with `--verify` —
+`certinspect_hostname_match` (host targets), and — unless `--no-verify` —
 `certinspect_chain_trusted` and `certinspect_cert_revoked` (the latter only when
 OCSP/CRL returns a definitive answer). This lets you alert directly on chain,
 hostname and revocation problems without parsing text:
@@ -1532,18 +1560,22 @@ severe first:
 hostname mismatch → `1` runtime error (e.g. unreachable host) → `8` SAN
 missing → `9` policy → `3` expiring → `0` valid.
 
-| Code | Meaning                                                                                                                                                                          |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | Valid certificate                                                                                                                                                                |
-| 1    | Runtime error (network, file, parse)                                                                                                                                             |
-| 2    | Command-line usage error                                                                                                                                                         |
-| 3    | Expiring within the `--days` threshold                                                                                                                                           |
-| 4    | Expired, not yet valid, or with invalid dates                                                                                                                                    |
-| 5    | Hostname does not match the certificate                                                                                                                                          |
-| 6    | Chain not trusted or revoked (`--verify`)                                                                                                                                        |
-| 7    | Fingerprint does not match `--pin`                                                                                                                                               |
-| 8    | Expected SAN missing (`--expect-san`)                                                                                                                                            |
-| 9    | Policy violation (`--not-after-max`/`--cab-forum`, `--min-key-size`, `--fail-weak`, `--require-sct`, `--require-must-staple`, `--require-revocation-check`, `--min-tls-version`) |
+Two options replace these codes: `--exporter nagios` exits with the plugin
+convention (`0` OK, `1` WARNING, `2` CRITICAL) and `--exit-zero` always exits
+`0`.
+
+| Code | Meaning                                                                                                                                                                                                                                                       |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Valid certificate                                                                                                                                                                                                                                             |
+| 1    | Runtime error (network, file, parse)                                                                                                                                                                                                                          |
+| 2    | Command-line usage error                                                                                                                                                                                                                                      |
+| 3    | Expiring within the `--days` threshold                                                                                                                                                                                                                        |
+| 4    | Expired, not yet valid, with invalid dates, or expiring within `--critical-days`                                                                                                                                                                              |
+| 5    | Hostname does not match the certificate                                                                                                                                                                                                                       |
+| 6    | Chain not trusted or certificate revoked (verification is on by default; `--no-verify` skips it)                                                                                                                                                              |
+| 7    | Fingerprint does not match `--pin`                                                                                                                                                                                                                            |
+| 8    | Expected SAN missing (`--expect-san`)                                                                                                                                                                                                                         |
+| 9    | Policy violation (`--profile`, `--not-after-max`/`--cab-forum`, `--min-key-size`, `--fail-weak`, `--require-sct`, `--require-must-staple`, `--require-revocation-check`, `--min-tls-version`), or an unexpected issuer with `--discover-only --expect-issuer` |
 
 Example in a script:
 
