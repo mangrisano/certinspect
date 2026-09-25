@@ -18,12 +18,19 @@ from certinspect.parser import certificate_status, common_name
 LABEL_WIDTH = 16
 
 
+def _status_of(
+    info: CertificateInfo, warn_days: int, critical_days: int | None = None
+) -> str:
+    """Return the status set during inspection, or derive it for a bare analyze()."""
+    return info.get("status") or certificate_status(info, warn_days, critical_days)
+
+
 def format_human(
     info: CertificateInfo, warn_days: int = 30, critical_days: int | None = None
 ) -> str:
     """Return a human-readable text representation."""
     days = info["days_to_expire"]
-    status = info.get("status") or certificate_status(info, warn_days, critical_days)
+    status = _status_of(info, warn_days, critical_days)
 
     def row(label: str, value: object) -> str:
         return f"{label + ':':<{LABEL_WIDTH}}{value}"
@@ -283,19 +290,20 @@ def format_fields(
 
 
 # Columns emitted by format_csv, in order. The first element is the header
-# label; the second pulls the value out of a (target, info) pair. The columns
+# label; the second pulls the value out of a (target, info, status) triple. The
+# columns
 # are deliberately lean (CN only, no full DN, serial or fingerprint) so the
 # file opens cleanly in a spreadsheet; a name that itself contains a comma is
 # quoted by the csv writer. The dropped fields remain available via --json.
 _CSV_COLUMNS = (
-    ("target", lambda target, info: target or ""),
-    ("common_name", lambda target, info: _common_name(info["subject"])),
-    ("status", lambda target, info: info["_status"]),
-    ("days_to_expire", lambda target, info: info["days_to_expire"]),
-    ("valid_from", lambda target, info: info["not_valid_before"]),
-    ("valid_until", lambda target, info: info["not_valid_after"]),
-    ("issuer", lambda target, info: _common_name(info["issuer"])),
-    ("hostname_match", lambda target, info: info.get("hostname_match")),
+    ("target", lambda target, info, status: target or ""),
+    ("common_name", lambda target, info, status: _common_name(info["subject"])),
+    ("status", lambda target, info, status: status),
+    ("days_to_expire", lambda target, info, status: info["days_to_expire"]),
+    ("valid_from", lambda target, info, status: info["not_valid_before"]),
+    ("valid_until", lambda target, info, status: info["not_valid_after"]),
+    ("issuer", lambda target, info, status: _common_name(info["issuer"])),
+    ("hostname_match", lambda target, info, status: info.get("hostname_match")),
 )
 
 
@@ -328,11 +336,8 @@ def format_csv(
     writer = csv.writer(buffer, delimiter=delimiter, lineterminator="\n")
     writer.writerow([label for label, _ in _CSV_COLUMNS])
     for target, info, _ in results:
-        status = info.get("status") or certificate_status(
-            info, warn_days, critical_days
-        )
-        info = {**info, "_status": status}
-        writer.writerow([getter(target, info) for _, getter in _CSV_COLUMNS])
+        status = _status_of(info, warn_days, critical_days)
+        writer.writerow([getter(target, info, status) for _, getter in _CSV_COLUMNS])
     return buffer.getvalue()
 
 
@@ -380,9 +385,7 @@ def format_summary(
     counts: dict[str, int] = dict.fromkeys(_SUMMARY_ORDER, 0)
     for _, info, code in results:
         if code == ExitCode.INVALID:
-            status = info.get("status") or certificate_status(
-                info, warn_days, critical_days
-            )
+            status = _status_of(info, warn_days, critical_days)
             if status == Status.CRITICAL:
                 counts["critical"] += 1
             elif status == Status.NOT_YET_VALID:
@@ -454,9 +457,7 @@ def format_nagios(
         severity = _nagios_severity(code)
         worst = max(worst, severity)
         name = target or info["subject"]
-        status = info.get("status") or certificate_status(
-            info, warn_days, critical_days
-        )
+        status = _status_of(info, warn_days, critical_days)
         days = info["days_to_expire"]
         # "N:" alerts below N; a bare "N" would alert above it (plugin range rules).
         critical = critical_days if critical_days is not None else 0
@@ -512,8 +513,7 @@ def format_prometheus(
         days = info["days_to_expire"]
         is_valid = (
             0
-            if certificate_status(info, warn_days)
-            in (Status.EXPIRED, Status.INVALID_DATES)
+            if _status_of(info, warn_days) in (Status.EXPIRED, Status.INVALID_DATES)
             else 1
         )
         up.append(f'certinspect_up{{target="{label}"}} 1')
