@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794913534085,
+  "lastUpdate": 1794916001303,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -1080,6 +1080,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 9.80985066313684e-7",
             "extra": "mean: 8.183896981314605 usec\nrounds: 25044"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "8635cf42ef76a5c43f3347c0b723fb800b903c55",
+          "message": "chore(release): 2.5.1",
+          "timestamp": "2026-11-17T12:46:13+01:00",
+          "tree_id": "7d99a5ff9040c080376fefd8162767a8fc31d15e",
+          "url": "https://github.com/mangrisano/certinspect/commit/8635cf42ef76a5c43f3347c0b723fb800b903c55"
+        },
+        "date": 1794916000598,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 148368.7011515312,
+            "unit": "iter/sec",
+            "range": "stddev: 8.999461624537769e-7",
+            "extra": "mean: 6.739965991740299 usec\nrounds: 13291"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 31957.614541289404,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009560003022060732",
+            "extra": "mean: 31.2914469478939 usec\nrounds: 1376"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 148110.3031429246,
+            "unit": "iter/sec",
+            "range": "stddev: 9.151368799563908e-7",
+            "extra": "mean: 6.7517247536453455 usec\nrounds: 27499"
           }
         ]
       }
