@@ -1351,9 +1351,14 @@ it); add `--include-root` to write it too. If an issuer cannot be found, the
 chain built so far is still written and a warning goes to stderr. It takes a
 single `--file`.
 
+With verification on (the default), the chain that was just built is the one
+verified, so `Chain trusted` and exit code 6 describe what you are saving
+rather than the incomplete input file.
+
 ```console
-$ certinspect --file ./cert.pem --no-verify --export-chain ./fullchain.pem
+$ certinspect --file ./cert.pem --export-chain ./fullchain.pem
 ...
+Chain trusted:  True
 $ grep -c BEGIN ./fullchain.pem
 2
 ```

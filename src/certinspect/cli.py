@@ -260,7 +260,8 @@ def _inspect(
     if opts.file and (opts.verify or opts.chain or opts.export_chain):
         file_bundle = load_certificates(der)
     if opts.export_chain and file_bundle is not None:
-        _export_chain(file_bundle, opts.export_chain, opts)
+        # Verify the chain that was just built, not only what the file carried.
+        file_bundle = _export_chain(file_bundle, opts.export_chain, opts)
 
     override, chain_certs = _check_chain(
         info, target, port, cert, conn, opts, file_bundle
@@ -294,14 +295,16 @@ def _inspect(
     return info, most_severe(code for code in codes if code is not None)
 
 
-def _export_chain(bundle: list, path: str, opts: InspectOptions) -> None:
+def _export_chain(bundle: list, path: str, opts: InspectOptions) -> list:
     """Write the completed chain of ``bundle`` to ``path`` as PEM.
 
     The root is written only with ``--include-root`` (and never dropped when it
     is the only certificate). An incomplete chain is still written, with a
-    warning on stderr, so the caller can see how far it got.
+    warning on stderr, so the caller can see how far it got. Return the whole
+    completed chain, root included, so the caller can verify what was built.
     """
     chain, complete = complete_chain(bundle, opts.timeout)
+    to_write = chain
     if not complete:
         last = common_name(chain[-1].subject)
         print(
@@ -309,9 +312,10 @@ def _export_chain(bundle: list, path: str, opts: InspectOptions) -> None:
             file=sys.stderr,
         )
     elif len(chain) > 1 and not opts.include_root:
-        chain = chain[:-1]
+        to_write = chain[:-1]
     with open(path, "wb") as f:
-        f.writelines(to_pem(c) for c in chain)
+        f.writelines(to_pem(c) for c in to_write)
+    return chain
 
 
 def _check_chain(

@@ -2589,3 +2589,27 @@ def test_main_export_chain_warns_when_the_issuer_cannot_be_found(
 )
 def test_main_export_chain_rejects_bad_combinations(monkeypatch, extra):
     assert _run_main(monkeypatch, extra) == 2
+
+
+def test_main_export_chain_verifies_the_chain_it_built(
+    monkeypatch, capsys, tmp_path, make_chain
+):
+    leaf, intermediate, root = make_chain()
+    issuers = {leaf.issuer: intermediate, intermediate.issuer: root}
+    monkeypatch.setattr(
+        "certinspect.revocation._fetch_issuer",
+        lambda cert, timeout: issuers[cert.issuer],
+    )
+    cert_path = tmp_path / "leaf.pem"
+    cert_path.write_bytes(_pem_bundle(leaf))
+    cafile = tmp_path / "root.pem"
+    cafile.write_bytes(_pem_bundle(root))
+    argv = ["--file", str(cert_path), "--cafile", str(cafile), "--json"]
+
+    assert _run_main(monkeypatch, argv) == 6
+    capsys.readouterr()
+
+    out_path = tmp_path / "chain.pem"
+    assert _run_main(monkeypatch, [*argv, "--export-chain", str(out_path)]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["results"][0]["chain"]["trusted"] is True
