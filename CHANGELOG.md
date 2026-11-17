@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--export-chain PATH` (with `--include-root`) rebuilds the chain of a
+  `--file` certificate and saves it as PEM, leaf first. Missing issuers are
+  downloaded from the AIA "CA Issuers" URLs and accepted only if they signed
+  the previous certificate. The self-signed root is left out unless
+  `--include-root` is given; an incomplete chain is written with a warning.
+
 ## [2.4.5] - 2026-09-25
 
 ### Fixed

@@ -1656,3 +1656,24 @@ def test_verify_chain_offline_empty_bundle():
     assert trusted is False
     assert reason
     assert chain == []
+
+
+def test_complete_chain_downloads_the_missing_issuer(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key, ca_issuers=True)
+    _serve(monkeypatch, {ISSUER_URL: _der(ca)})
+
+    assert revocation.complete_chain([leaf], 1.0) == ([leaf, ca], True)
+
+
+def test_complete_chain_reports_incomplete_when_the_download_is_forged(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    mallory, _ = _ca()
+    leaf = _leaf(ca, ca_key, ca_issuers=True)
+    _serve(monkeypatch, {ISSUER_URL: _der(mallory)})
+
+    assert revocation.complete_chain([leaf], 1.0) == ([leaf], False)

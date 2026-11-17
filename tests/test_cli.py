@@ -2520,3 +2520,72 @@ def test_main_critical_days_in_summary(monkeypatch, capsys, make_cert):
     monkeypatch.setattr("certinspect.cli.get_server_cert", _fake_fetch(certs))
     _run_main(monkeypatch, ["soon.com", "--critical-days", "7", "--summary"])
     assert "1 critical" in capsys.readouterr().err
+
+
+def _pem_bundle(*certs):
+    from cryptography.hazmat.primitives import serialization
+
+    return b"".join(c.public_bytes(serialization.Encoding.PEM) for c in certs)
+
+
+def _count_certs(path):
+    return path.read_bytes().count(b"-----BEGIN CERTIFICATE-----")
+
+
+def test_main_export_chain_leaves_the_root_out_by_default(
+    monkeypatch, tmp_path, make_chain
+):
+    leaf, intermediate, root = make_chain()
+    bundle = tmp_path / "bundle.pem"
+    bundle.write_bytes(_pem_bundle(leaf, intermediate, root))
+    out_path = tmp_path / "chain.pem"
+
+    code = _run_main(
+        monkeypatch,
+        ["--file", str(bundle), "--no-verify", "--export-chain", str(out_path)],
+    )
+
+    assert code == 0
+    assert out_path.read_bytes() == _pem_bundle(leaf, intermediate)
+
+
+def test_main_export_chain_include_root_adds_the_root(
+    monkeypatch, tmp_path, make_chain
+):
+    leaf, intermediate, root = make_chain()
+    bundle = tmp_path / "bundle.pem"
+    bundle.write_bytes(_pem_bundle(leaf, intermediate, root))
+    out_path = tmp_path / "chain.pem"
+    argv = ["--file", str(bundle), "--no-verify", "--export-chain", str(out_path)]
+
+    assert _run_main(monkeypatch, [*argv, "--include-root"]) == 0
+    assert out_path.read_bytes() == _pem_bundle(leaf, intermediate, root)
+
+
+def test_main_export_chain_warns_when_the_issuer_cannot_be_found(
+    monkeypatch, capsys, tmp_path, make_chain
+):
+    leaf, _, _ = make_chain()
+    cert_path = tmp_path / "leaf.pem"
+    cert_path.write_bytes(_pem_bundle(leaf))
+    out_path = tmp_path / "chain.pem"
+
+    code = _run_main(
+        monkeypatch,
+        ["--file", str(cert_path), "--no-verify", "--export-chain", str(out_path)],
+    )
+
+    assert code == 0
+    assert "chain incomplete" in capsys.readouterr().err
+    assert _count_certs(out_path) == 1
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["leaf.example.com", "--export-chain", "chain.pem"],
+        ["--include-root", "--file", "x.pem"],
+    ],
+)
+def test_main_export_chain_rejects_bad_combinations(monkeypatch, extra):
+    assert _run_main(monkeypatch, extra) == 2

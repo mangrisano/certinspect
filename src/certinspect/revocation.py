@@ -61,6 +61,33 @@ def _fetch_issuer(cert: x509.Certificate, timeout: float) -> x509.Certificate | 
     return None
 
 
+def complete_chain(
+    certs: list[x509.Certificate], timeout: float, max_depth: int = 10
+) -> tuple[list[x509.Certificate], bool]:
+    """Build the chain for ``certs[0]``, downloading missing issuers via AIA.
+
+    ``certs`` is a bundle with the leaf first; the other certificates are used
+    as issuers before anything is downloaded. Every link is checked by signature
+    (see ``_signed_by``), so a bad download is never trusted. Return
+    ``(chain, complete)``: the chain leaf first, up to and including a
+    self-signed root when one is reached, and False when an issuer could not be
+    found or ``max_depth`` was exceeded.
+    """
+    chain = [certs[0]]
+    pool = certs[1:]
+    while len(chain) < max_depth:
+        current = chain[-1]
+        if _signed_by(current, current):
+            return chain, True
+        issuer = next((c for c in pool if _signed_by(current, c)), None)
+        if issuer is None:
+            issuer = _fetch_issuer(current, timeout)
+        if issuer is None:
+            return chain, False
+        chain.append(issuer)
+    return chain, False
+
+
 def _crl_urls(cert: x509.Certificate) -> list[str]:
     """Return the HTTP(S) CRL distribution-point URLs from the certificate.
 

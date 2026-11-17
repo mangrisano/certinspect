@@ -453,6 +453,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--export-chain",
+        metavar="PATH",
+        dest="export_chain",
+        help=(
+            "Rebuild the certificate chain of the --file certificate and save "
+            "it as a PEM file at PATH (leaf first). Missing intermediates are "
+            'downloaded from the AIA "CA Issuers" URLs and checked by '
+            "signature. The self-signed root is left out unless "
+            "--include-root is given. Needs a single --file."
+        ),
+    )
+    parser.add_argument(
+        "--include-root",
+        action="store_true",
+        dest="include_root",
+        help="Also write the self-signed root to the --export-chain file.",
+    )
+    parser.add_argument(
         "--starttls",
         choices=tuple(STARTTLS_PORTS),
         help=(

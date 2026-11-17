@@ -29,7 +29,7 @@ from certinspect.fetch import (
     verify_chain_offline,
 )
 from certinspect import httpfetch
-from certinspect.revocation import check_revocation
+from certinspect.revocation import check_revocation, complete_chain
 from certinspect.parser import (
     load_certificate,
     load_certificates,
@@ -41,6 +41,7 @@ from certinspect.parser import (
     hostname_matches,
     missing_san_names,
     chain_summary,
+    common_name,
     pin_matches,
     policy_violations,
     POLICY_PROFILES,
@@ -75,6 +76,8 @@ class InspectOptions:
     days: int = 30
     critical_days: int | None = None
     export: str | None = None
+    export_chain: str | None = None
+    include_root: bool = False
     timeout: float = 5.0
     connect_timeout: float | None = None
     read_timeout: float | None = None
@@ -254,8 +257,10 @@ def _inspect(
 
     # A --file bundle may carry the whole chain; parse it once when it is needed.
     file_bundle: list | None = None
-    if opts.file and (opts.verify or opts.chain):
+    if opts.file and (opts.verify or opts.chain or opts.export_chain):
         file_bundle = load_certificates(der)
+    if opts.export_chain and file_bundle is not None:
+        _export_chain(file_bundle, opts.export_chain, opts)
 
     override, chain_certs = _check_chain(
         info, target, port, cert, conn, opts, file_bundle
@@ -287,6 +292,26 @@ def _inspect(
         _check_policy(info, opts),
     ]
     return info, most_severe(code for code in codes if code is not None)
+
+
+def _export_chain(bundle: list, path: str, opts: InspectOptions) -> None:
+    """Write the completed chain of ``bundle`` to ``path`` as PEM.
+
+    The root is written only with ``--include-root`` (and never dropped when it
+    is the only certificate). An incomplete chain is still written, with a
+    warning on stderr, so the caller can see how far it got.
+    """
+    chain, complete = complete_chain(bundle, opts.timeout)
+    if not complete:
+        last = common_name(chain[-1].subject)
+        print(
+            f"warning: chain incomplete: no issuer found for '{last}'",
+            file=sys.stderr,
+        )
+    elif len(chain) > 1 and not opts.include_root:
+        chain = chain[:-1]
+    with open(path, "wb") as f:
+        f.writelines(to_pem(c) for c in chain)
 
 
 def _check_chain(
@@ -585,6 +610,10 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error(
             "--client-cert/--proxy/--no-proxy apply to host targets, not --file."
         )
+    if args.export_chain and not args.file:
+        parser.error("--export-chain applies to --file, not host targets.")
+    if args.include_root and not args.export_chain:
+        parser.error("--include-root requires --export-chain.")
     if args.discover and args.file:
         parser.error("--discover applies to host targets, not --file.")
     if args.discover_only and not args.discover:
@@ -667,6 +696,8 @@ def _collect_targets(
         parser.error("--file '-' (standard input) may be given at most once.")
     if args.export and len(host_targets) + len(file_targets) > 1:
         parser.error("--export saves a single certificate; give one target.")
+    if args.export_chain and len(file_targets) > 1:
+        parser.error("--export-chain saves a single chain; give one --file.")
     return host_targets, file_targets
 
 

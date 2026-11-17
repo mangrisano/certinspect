@@ -103,6 +103,7 @@ $ echo $?      # 0 = healthy, 3 = expiring, 4 = expired, 6 = revoked, ...
   - [`--field`](#--field-name)
   - [`--exit-zero`](#--exit-zero)
   - [`--export`](#--export-path)
+  - [`--export-chain`](#--export-chain-path)
   - [`--starttls`](#--starttls-smtpimappop3ftp)
   - [`--concurrency`](#--concurrency-n)
   - [`--exporter`](#--exporter-nagiosprometheus)
@@ -639,6 +640,7 @@ certinspect example.com --export ./example.com.pem
 | `--field NAME`                        | Print only the given field(s), one tab-separated line per target (repeatable; `target` for the host). For scripting without a JSON tool.                                                                                                                                       |
 | `--exit-zero`                         | Always exit 0, even on problems or fetch errors. Report-only mode for dashboards/CI that read the output, not the exit code.                                                                                                                                                   |
 | `--export PATH`                       | Save the inspected certificate as a PEM file at PATH. Single target only.                                                                                                                                                                                                      |
+| `--export-chain PATH`                 | Rebuild the chain of the `--file` certificate (missing issuers fetched via AIA) and save it as PEM. Add `--include-root` to include the root. Single `--file` only. |
 | `--starttls {smtp,imap,pop3,ftp}`     | Upgrade a plaintext connection to TLS before inspecting (standard port unless `--port` is given).                                                                                                                                                                              |
 | `--exporter {nagios,prometheus}`      | Emit machine-readable monitoring output (ignores `--quiet`).                                                                                                                                                                                                                   |
 | `--concurrency N`                     | Inspect up to N hosts in parallel in batch mode (default: 1; order is preserved). Also governs `--discover`'s per-domain concurrency.                                                                                                                                          |
@@ -1337,6 +1339,23 @@ Status:         VALID
 ...
 $ head -1 ./fetched.pem
 -----BEGIN CERTIFICATE-----
+```
+
+### `--export-chain PATH`
+
+Rebuild the chain of a certificate file that holds only the leaf (or a partial
+bundle) and save it as PEM, leaf first. Missing issuers are downloaded from the
+certificate's AIA "CA Issuers" URL and kept only if they really signed the
+previous certificate. The self-signed root is left out (clients already trust
+it); add `--include-root` to write it too. If an issuer cannot be found, the
+chain built so far is still written and a warning goes to stderr. It takes a
+single `--file`.
+
+```console
+$ certinspect --file ./cert.pem --no-verify --export-chain ./fullchain.pem
+...
+$ grep -c BEGIN ./fullchain.pem
+2
 ```
 
 ### `--starttls {smtp,imap,pop3,ftp}`
