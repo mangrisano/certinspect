@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-11-17
+
 ### Added
 
 - `--export-chain PATH` (with `--include-root`) rebuilds the chain of a
@@ -667,7 +669,8 @@ notes under each item.
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.4.5...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.5.0...HEAD
+[2.5.0]: https://github.com/mangrisano/certinspect/compare/v2.4.5...v2.5.0
 [2.4.5]: https://github.com/mangrisano/certinspect/compare/v2.4.4...v2.4.5
 [2.4.4]: https://github.com/mangrisano/certinspect/compare/v2.4.3...v2.4.4
 [2.4.3]: https://github.com/mangrisano/certinspect/compare/v2.4.2...v2.4.3
