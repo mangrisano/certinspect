@@ -458,8 +458,9 @@ def build_parser() -> argparse.ArgumentParser:
         dest="export_chain",
         help=(
             "Rebuild the certificate chain of the --file certificate and save "
-            "it as a PEM file at PATH (leaf first). Missing intermediates are "
-            'downloaded from the AIA "CA Issuers" URLs and checked by '
+            "it as a PEM file at PATH (leaf first). Missing issuers are taken "
+            "from the trust store (or --cafile/--capath), else downloaded from "
+            'the AIA "CA Issuers" URLs; every link is checked by '
             "signature. The self-signed root is left out unless "
             "--include-root is given. Needs a single --file."
         ),

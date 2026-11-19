@@ -62,19 +62,24 @@ def _fetch_issuer(cert: x509.Certificate, timeout: float) -> x509.Certificate | 
 
 
 def complete_chain(
-    certs: list[x509.Certificate], timeout: float, max_depth: int = 10
+    certs: list[x509.Certificate],
+    timeout: float,
+    max_depth: int = 10,
+    anchors: list[x509.Certificate] | None = None,
 ) -> tuple[list[x509.Certificate], bool]:
     """Build the chain for ``certs[0]``, downloading missing issuers via AIA.
 
     ``certs`` is a bundle with the leaf first; the other certificates are used
-    as issuers before anything is downloaded. Every link is checked by signature
+    as issuers first, then the trusted ``anchors`` (the trust store's roots,
+    which covers a cross-signed certificate that carries no "CA Issuers" URL),
+    and only then is anything downloaded. Every link is checked by signature
     (see ``_signed_by``), so a bad download is never trusted. Return
     ``(chain, complete)``: the chain leaf first, up to and including a
     self-signed root when one is reached, and False when an issuer could not be
     found or ``max_depth`` was exceeded.
     """
     chain = [certs[0]]
-    pool = certs[1:]
+    pool = certs[1:] + (anchors or [])
     while len(chain) < max_depth:
         current = chain[-1]
         if _signed_by(current, current):

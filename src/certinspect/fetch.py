@@ -400,7 +400,7 @@ def verify_chain(
         return False, err.verify_message or str(err), []
 
 
-def _trust_anchors(cafile: str | None, capath: str | None) -> list[x509.Certificate]:
+def trust_anchors(cafile: str | None, capath: str | None) -> list[x509.Certificate]:
     """Return the trusted root certificates for offline verification.
 
     Mirror the trust decision of the live ``verify_chain``: use ``cafile`` /
@@ -497,7 +497,7 @@ def verify_chain_offline(
             "the certificate has no DNS name or IP address to anchor verification",
             [],
         )
-    anchors = _trust_anchors(cafile, capath)
+    anchors = trust_anchors(cafile, capath)
     if not anchors:
         return False, "no trusted CA certificates were available", []
     store = verification.Store(anchors)

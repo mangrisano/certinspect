@@ -1668,6 +1668,20 @@ def test_complete_chain_downloads_the_missing_issuer(monkeypatch):
     assert revocation.complete_chain([leaf], 1.0) == ([leaf, ca], True)
 
 
+def test_complete_chain_takes_the_issuer_from_the_trust_anchors(monkeypatch):
+    from certinspect import revocation
+
+    ca, ca_key = _ca()
+    leaf = _leaf(ca, ca_key)
+    monkeypatch.setattr(revocation, "fetch", _no_fetch)
+
+    assert revocation.complete_chain([leaf], 1.0, anchors=[ca]) == ([leaf, ca], True)
+
+
+def _no_fetch(url, **kwargs):
+    raise AssertionError(f"unexpected download of {url}")
+
+
 def test_complete_chain_reports_incomplete_when_the_download_is_forged(monkeypatch):
     from certinspect import revocation
 

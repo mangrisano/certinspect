@@ -25,6 +25,7 @@ from certinspect.fetch import (
     STARTTLS_PORTS,
     get_server_cert,
     retry_network,
+    trust_anchors,
     verify_chain,
     verify_chain_offline,
 )
@@ -303,7 +304,9 @@ def _export_chain(bundle: list, path: str, opts: InspectOptions) -> list:
     warning on stderr, so the caller can see how far it got. Return the whole
     completed chain, root included, so the caller can verify what was built.
     """
-    chain, complete = complete_chain(bundle, opts.timeout)
+    chain, complete = complete_chain(
+        bundle, opts.timeout, anchors=trust_anchors(opts.cafile, opts.capath)
+    )
     to_write = chain
     if not complete:
         last = common_name(chain[-1].subject)
