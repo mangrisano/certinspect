@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-11-19
+
+### Changed
+
+- `--export-chain` now takes a missing issuer from the trust store (or
+  `--cafile`/`--capath`) before trying the AIA "CA Issuers" download. A
+  cross-signed certificate without a "CA Issuers" URL, such as Actalis TLS
+  Server RSA Root CA 2025 signed by Actalis Authentication Root CA, used to
+  stop the chain with `chain incomplete`; its trusted issuer is now found
+  locally. Every link is still checked by signature.
+
 ## [2.5.1] - 2026-11-17
 
 ### Fixed
@@ -678,7 +689,8 @@ notes under each item.
 - Initial release: core TLS certificate inspector with human-readable and JSON
   output.
 
-[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.5.1...HEAD
+[Unreleased]: https://github.com/mangrisano/certinspect/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/mangrisano/certinspect/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/mangrisano/certinspect/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/mangrisano/certinspect/compare/v2.4.5...v2.5.0
 [2.4.5]: https://github.com/mangrisano/certinspect/compare/v2.4.4...v2.4.5
