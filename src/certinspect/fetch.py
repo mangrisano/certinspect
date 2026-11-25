@@ -69,12 +69,25 @@ def _resolve_proxy(host: str, proxy: str | None, no_proxy: bool) -> str | None:
     return candidate
 
 
+def resolve_host_ips(
+    host: str, port: int = 443, family: int = socket.AF_UNSPEC
+) -> list[str]:
+    """Resolve ``host`` and return deduplicated IP addresses in DNS order.
+
+    ``family`` filters the address family (``AF_INET``, ``AF_INET6``, or
+    ``AF_UNSPEC`` for both). Raises ``OSError`` when resolution fails.
+    """
+    infos = socket.getaddrinfo(host, port, family=family, type=socket.SOCK_STREAM)
+    return list(dict.fromkeys(str(info[4][0]) for info in infos))
+
+
 def _open_socket(
     host: str,
     port: int,
     connect_timeout: float,
     read_timeout: float,
     proxy: str | None = None,
+    family: int = socket.AF_UNSPEC,
 ) -> socket.socket:
     """Open a TCP socket to ``host:port``, directly or via an HTTP proxy.
 
@@ -87,7 +100,22 @@ def _open_socket(
     ValueError if the proxy refuses the tunnel.
     """
     if not proxy:
-        sock = socket.create_connection((host, port), timeout=connect_timeout)
+        if family == socket.AF_UNSPEC:
+            sock = socket.create_connection((host, port), timeout=connect_timeout)
+        else:
+            last_err: OSError | None = None
+            opened: socket.socket | None = None
+            for ip in resolve_host_ips(host, port, family=family):
+                try:
+                    opened = socket.create_connection(
+                        (ip, port), timeout=connect_timeout
+                    )
+                    break
+                except OSError as err:
+                    last_err = err
+            if opened is None:
+                raise last_err or OSError(f"could not connect to {host}")
+            sock = opened
         sock.settimeout(read_timeout)
         return sock
 
@@ -325,6 +353,7 @@ def _handshake(
     client_key: str | None = None,
     proxy: str | None = None,
     no_proxy: bool = False,
+    family: int = socket.AF_UNSPEC,
     include_verified_chain: bool = False,
 ) -> tuple[bytes, ConnectionInfo, list[x509.Certificate]]:
     if client_cert:
@@ -332,7 +361,7 @@ def _handshake(
     connect_timeout, read_timeout = _split_timeout(timeout)
     resolved_proxy = _resolve_proxy(host, proxy, no_proxy)
     with _open_socket(
-        host, port, connect_timeout, read_timeout, resolved_proxy
+        host, port, connect_timeout, read_timeout, resolved_proxy, family=family
     ) as sock:
         if starttls:
             _negotiate_starttls(sock, starttls, read_timeout)
@@ -355,6 +384,7 @@ def get_server_cert(
     client_key: str | None = None,
     proxy: str | None = None,
     no_proxy: bool = False,
+    family: int = socket.AF_UNSPEC,
 ) -> tuple[bytes, ConnectionInfo]:
     """Return the server certificate (DER bytes) and connection info.
 
@@ -388,6 +418,7 @@ def get_server_cert(
         client_key=client_key,
         proxy=proxy,
         no_proxy=no_proxy,
+        family=family,
     )
     return der, conn
 
@@ -404,6 +435,7 @@ def fetch_verified_cert(
     client_key: str | None = None,
     proxy: str | None = None,
     no_proxy: bool = False,
+    family: int = socket.AF_UNSPEC,
 ) -> tuple[bytes, ConnectionInfo, bool, str | None, list[x509.Certificate]]:
     """Fetch and verify the server certificate in a single TLS handshake.
 
@@ -429,6 +461,7 @@ def fetch_verified_cert(
             client_key=client_key,
             proxy=proxy,
             no_proxy=no_proxy,
+            family=family,
             include_verified_chain=True,
         )
         verified = verified or [x509.load_der_x509_certificate(der)]
@@ -445,6 +478,7 @@ def fetch_verified_cert(
             client_key=client_key,
             proxy=proxy,
             no_proxy=no_proxy,
+            family=family,
         )
         return der, conn, False, reason, []
 
@@ -492,6 +526,7 @@ def verify_chain(
     client_key: str | None = None,
     proxy: str | None = None,
     no_proxy: bool = False,
+    family: int = socket.AF_UNSPEC,
 ) -> tuple[bool, str | None, list[x509.Certificate]]:
     """Check whether the server's certificate chain is trusted.
 
@@ -530,6 +565,7 @@ def verify_chain(
             client_key=client_key,
             proxy=proxy,
             no_proxy=no_proxy,
+            family=family,
             include_verified_chain=True,
         )
         chain = verified or [x509.load_der_x509_certificate(der)]

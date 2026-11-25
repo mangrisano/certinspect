@@ -30,6 +30,7 @@ from certinspect.exit_codes import RUNTIME_ERROR, ExitCode, most_severe
 from certinspect.fetch import (
     STARTTLS_PORTS,
     get_server_cert,
+    resolve_host_ips,
     trust_anchors,
     verify_chain,
     verify_chain_offline,
@@ -291,6 +292,10 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("--expect-issuer requires --discover-only.")
     if args.only_changed and not args.state_file:
         parser.error("--only-changed requires --state-file.")
+    if (args.ipv4 or args.ipv6 or args.all_ips) and args.file:
+        parser.error("-4/-6/--all-ips apply to host targets, not --file.")
+    if args.all_ips and args.export:
+        parser.error("--export cannot be combined with --all-ips.")
     if args.state_file and args.file:
         parser.error("--state-file applies to host targets, not --file.")
 
@@ -401,6 +406,34 @@ def _default_port(args: argparse.Namespace) -> int:
     return args.port
 
 
+def _expand_host_items(
+    host_targets: list[str],
+    default_port: int,
+    opts: InspectOptions,
+    all_ips: bool,
+) -> tuple[list[tuple[bool, str, int, str, InspectOptions]], list[tuple[str, str]]]:
+    """Build host work items, expanding each host to all resolved IPs when ``all_ips``."""
+    items: list[tuple[bool, str, int, str, InspectOptions]] = []
+    resolve_errors: list[tuple[str, str]] = []
+    family = opts.connection.ip_family
+    for raw in host_targets:
+        target, port = _split_target(raw, default_port)
+        base_label = _target_label(target, port, default_port)
+        if not all_ips:
+            items.append((False, target, port, base_label, opts))
+            continue
+        try:
+            ips = resolve_host_ips(target, port, family=family)
+        except OSError as err:
+            resolve_errors.append((base_label, str(err)))
+            continue
+        sni = opts.servername or target
+        ip_opts = replace(opts, servername=sni)
+        for ip in ips:
+            items.append((False, ip, port, f"{base_label} [{ip}]", ip_opts))
+    return items, resolve_errors
+
+
 def _inspect_all(
     args: argparse.Namespace, host_targets: list[str], file_targets: list[str]
 ) -> tuple[list[InspectionResult], list[tuple[str | None, str]], list[int]]:
@@ -415,29 +448,26 @@ def _inspect_all(
     # A single --file source keeps the old unlabelled output; with several
     # files (or several hosts) each result is labelled to tell them apart.
     single_file = len(file_targets) == 1
-    work_items: list[tuple[bool, str]] = [(True, path) for path in file_targets]
-    work_items += [(False, raw) for raw in host_targets]
+    work_items: list[tuple[bool, str, int, str, InspectOptions]] = [
+        (True, path, default_port, path, replace(opts, file=path))
+        for path in file_targets
+    ]
+    host_items, resolve_errors = _expand_host_items(
+        host_targets, default_port, opts, args.all_ips
+    )
+    work_items.extend(host_items)
 
-    def _run(item: tuple[bool, str]) -> tuple[str, InspectionResult | None, str | None]:
-        """Inspect one work item, returning (name, result, error).
-
-        ``item`` is ``(is_file, raw)``: a file path or a host target string.
-        ``name`` labels the item (``host[:port]`` for a host, the path for a
-        file). ``result`` is None on failure, in which case ``error`` carries
-        the message. Runs in worker threads, so it must not perform any I/O on
-        shared streams.
-        """
-        is_file, raw = item
-        name = raw
+    def _run(
+        item: tuple[bool, str, int, str, InspectOptions],
+    ) -> tuple[str, InspectionResult | None, str | None]:
+        """Inspect one work item, returning (name, result, error)."""
+        is_file, target, port, name, item_opts = item
         try:
             if is_file:
-                file_opts = replace(opts, file=raw)
-                info, code = _inspect(None, default_port, file_opts)
-                label = None if single_file else raw
+                info, code = _inspect(None, port, item_opts)
+                label = None if single_file else name
                 return name, InspectionResult(label, info, code), None
-            target, port = _split_target(raw, default_port)
-            name = _target_label(target, port, default_port)
-            info, code = _inspect(target, port, opts)
+            info, code = _inspect(target, port, item_opts)
         except (OSError, ssl.SSLError, ValueError, OverflowError) as err:
             return name, None, str(err)
         return name, InspectionResult(name, info, code), None
@@ -445,6 +475,11 @@ def _inspect_all(
     results: list[InspectionResult] = []
     errors: list[tuple[str | None, str]] = []
     codes: list[int] = []
+    for name, err in resolve_errors:
+        if not args.exporter:
+            print(f"error: {name}: {err}", file=sys.stderr)
+        errors.append((name, err))
+        codes.append(RUNTIME_ERROR)
     for name, result, err in _map(_run, work_items, args.concurrency):
         if err is not None:
             if not args.exporter:

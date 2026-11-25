@@ -2724,3 +2724,70 @@ def test_main_config_cli_no_proxy_overrides_config_proxy(
 )
 def test_main_rejects_out_of_range_numeric_flags(monkeypatch, bad_args):
     assert _run_main(monkeypatch, bad_args) == 2
+
+
+def test_main_ipv4_and_ipv6_pass_family_and_are_exclusive(monkeypatch, make_cert):
+    import socket
+
+    seen: list[int] = []
+
+    def _fetch(host, port=443, timeout=5.0, **kwargs):
+        seen.append(kwargs.get("family"))
+        return make_cert(san=[host]), {
+            "tls_version": "TLSv1.3",
+            "cipher": None,
+            "chain": [],
+        }
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    assert _run_main(monkeypatch, ["-4", "--no-verify", "example.com"]) == 0
+    assert _run_main(monkeypatch, ["-6", "--no-verify", "example.com"]) == 0
+    assert seen == [socket.AF_INET, socket.AF_INET6]
+    assert _run_main(monkeypatch, ["-4", "-6", "example.com"]) == 2
+    assert _run_main(monkeypatch, ["-4", "--file", "cert.pem"]) == 2
+
+
+def test_main_all_ips_inspects_each_backend_with_original_sni(
+    monkeypatch, capsys, make_cert
+):
+    calls: list[tuple[str, str | None]] = []
+
+    def _resolve(host, port=443, family=0):
+        return ["192.0.2.1", "2001:db8::1"]
+
+    def _fetch(host, port=443, timeout=5.0, **kwargs):
+        calls.append((host, kwargs.get("servername")))
+        # Second backend serves an expired cert to verify worst-code aggregation.
+        cert = (
+            make_cert(san=["example.com"])
+            if host == "192.0.2.1"
+            else make_cert(san=["example.com"], days_valid=-5, days_ago_start=365)
+        )
+        return cert, {"tls_version": "TLSv1.3", "cipher": None, "chain": []}
+
+    monkeypatch.setattr("certinspect.cli.resolve_host_ips", _resolve)
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    code = _run_main(monkeypatch, ["--all-ips", "--no-verify", "--json", "example.com"])
+    assert code == 4
+    assert calls == [("192.0.2.1", "example.com"), ("2001:db8::1", "example.com")]
+    data = json.loads(capsys.readouterr().out)
+    assert [r["target"] for r in data["results"]] == [
+        "example.com [192.0.2.1]",
+        "example.com [2001:db8::1]",
+    ]
+    assert all(r["hostname_match"] is True for r in data["results"])
+
+
+def test_main_all_ips_reports_dns_failure_and_rejects_file_or_export(
+    monkeypatch, capsys
+):
+    def _boom(host, port=443, family=0):
+        raise OSError("Name or service not known")
+
+    monkeypatch.setattr("certinspect.cli.resolve_host_ips", _boom)
+    assert _run_main(monkeypatch, ["--all-ips", "--no-verify", "missing.example"]) == 1
+    assert "missing.example" in capsys.readouterr().err
+    assert _run_main(monkeypatch, ["--all-ips", "--file", "cert.pem"]) == 2
+    assert (
+        _run_main(monkeypatch, ["--all-ips", "--export", "out.pem", "example.com"]) == 2
+    )

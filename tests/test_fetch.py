@@ -1849,3 +1849,23 @@ def test_trust_anchors_caches_parsed_bundle(monkeypatch, make_chain, tmp_path):
     second = fetch_mod.trust_anchors(str(cafile), None)
     assert first == second
     assert calls == 1
+
+
+def test_resolve_host_ips_deduplicates_and_passes_family(monkeypatch):
+    import socket
+    from certinspect import fetch as fetch_mod
+
+    seen: dict = {}
+
+    def _fake_getaddrinfo(host, port, family=0, type=0):
+        seen["family"] = family
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.35", port)),
+        ]
+
+    monkeypatch.setattr(fetch_mod.socket, "getaddrinfo", _fake_getaddrinfo)
+    ips = fetch_mod.resolve_host_ips("example.com", 443, family=socket.AF_INET)
+    assert seen["family"] == socket.AF_INET
+    assert ips == ["93.184.216.34", "93.184.216.35"]

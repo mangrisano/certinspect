@@ -6,6 +6,7 @@ views (ISP), and accepts injectable network/revocation callables (DIP).
 """
 
 import argparse
+import socket
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, fields
@@ -62,6 +63,16 @@ class ConnectionOptions:
     client_key: str | None = None
     proxy: str | None = None
     no_proxy: bool = False
+    ipv4: bool = False
+    ipv6: bool = False
+
+    @property
+    def ip_family(self) -> int:
+        if self.ipv4:
+            return socket.AF_INET
+        if self.ipv6:
+            return socket.AF_INET6
+        return socket.AF_UNSPEC
 
     @property
     def effective_connect_timeout(self) -> float:
@@ -93,6 +104,10 @@ class ConnectionOptions:
             kwargs["proxy"] = self.proxy
         if self.no_proxy:
             kwargs["no_proxy"] = True
+        if self.ipv4:
+            kwargs["family"] = socket.AF_INET
+        elif self.ipv6:
+            kwargs["family"] = socket.AF_INET6
         return kwargs
 
 
@@ -166,6 +181,8 @@ class InspectOptions:
     client_key: str | None = None
     proxy: str | None = None
     no_proxy: bool = False
+    ipv4: bool = False
+    ipv6: bool = False
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "InspectOptions":
@@ -189,6 +206,8 @@ class InspectOptions:
             client_key=self.client_key,
             proxy=self.proxy,
             no_proxy=self.no_proxy,
+            ipv4=self.ipv4,
+            ipv6=self.ipv6,
         )
 
     @property

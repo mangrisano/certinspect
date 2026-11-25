@@ -257,6 +257,31 @@ def build_parser() -> argparse.ArgumentParser:
             "hostname match is checked against this name instead of the target."
         ),
     )
+    ip_group = parser.add_mutually_exclusive_group()
+    ip_group.add_argument(
+        "-4",
+        "--ipv4",
+        action="store_true",
+        dest="ipv4",
+        help="Force IPv4 connections only (host targets only).",
+    )
+    ip_group.add_argument(
+        "-6",
+        "--ipv6",
+        action="store_true",
+        dest="ipv6",
+        help="Force IPv6 connections only (host targets only).",
+    )
+    parser.add_argument(
+        "--all-ips",
+        action="store_true",
+        dest="all_ips",
+        help=(
+            "Resolve every IP address (A/AAAA, honouring -4/-6) for each host "
+            "target and inspect each backend separately while preserving the "
+            "original SNI hostname (host targets only)."
+        ),
+    )
     parser.add_argument(
         "--expect-san",
         metavar="NAME",
