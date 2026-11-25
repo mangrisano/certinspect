@@ -2900,3 +2900,65 @@ def test_main_check_legacy_tls_fails_when_deprecated_protocol_accepted(
     )
     assert "Legacy TLS:     disabled" in capsys.readouterr().out
     assert _run_main(monkeypatch, ["--check-legacy-tls", "--file", "cert.pem"]) == 2
+
+
+def test_metrics_server_serves_cached_metrics_and_healthz():
+    import threading
+    import urllib.error
+    import urllib.request
+    from certinspect.server import create_metrics_server, parse_listen_address
+
+    assert parse_listen_address(":9117") == ("127.0.0.1", 9117)
+    assert parse_listen_address("0.0.0.0:9117") == ("0.0.0.0", 9117)
+    assert parse_listen_address("[::1]:9117") == ("::1", 9117)
+    with pytest.raises(ValueError):
+        parse_listen_address(":99999")
+
+    calls = 0
+
+    def _collect() -> str:
+        nonlocal calls
+        calls += 1
+        return f"certinspect_up 1 # run {calls}\n"
+
+    # Bind ephemeral port via 127.0.0.1:0 by constructing after validation or port 0
+    server = create_metrics_server("127.0.0.1:19117", _collect, interval=60.0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        with urllib.request.urlopen(f"{base}/healthz", timeout=2.0) as resp:
+            assert resp.status == 200
+            assert resp.read() == b"ok\n"
+        with urllib.request.urlopen(f"{base}/metrics", timeout=2.0) as resp:
+            assert resp.status == 200
+            first = resp.read().decode()
+        with urllib.request.urlopen(f"{base}/metrics", timeout=2.0) as resp:
+            second = resp.read().decode()
+        assert first == second
+        assert calls == 1
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(f"{base}/unknown", timeout=2.0)
+        assert exc_info.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+
+def test_main_serve_metrics_validates_address_and_interval(monkeypatch):
+    assert _run_main(monkeypatch, ["--serve-metrics", "bad:addr", "example.com"]) == 2
+    assert (
+        _run_main(
+            monkeypatch,
+            ["--serve-metrics", ":9117", "--interval", "0", "example.com"],
+        )
+        == 2
+    )
+    assert (
+        _run_main(
+            monkeypatch,
+            ["--serve-metrics", ":9117", "--json", "example.com"],
+        )
+        == 2
+    )

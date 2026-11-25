@@ -551,6 +551,23 @@ def build_parser() -> argparse.ArgumentParser:
             "--quiet so every target is always reported."
         ),
     )
+    output_group.add_argument(
+        "--serve-metrics",
+        metavar="ADDR",
+        dest="serve_metrics",
+        help=(
+            "Run a standalone Prometheus HTTP exporter listening on ADDR "
+            "(e.g. '127.0.0.1:9117', '0.0.0.0:9117', or ':9117') exposing "
+            "/metrics and /healthz. Results are cached for --interval seconds."
+        ),
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=300.0,
+        metavar="SECONDS",
+        help=("Refresh interval in seconds for --serve-metrics (default: 300)."),
+    )
     parser.add_argument(
         "--concurrency",
         type=int,

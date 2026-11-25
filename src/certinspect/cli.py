@@ -37,7 +37,7 @@ from certinspect.fetch import (
     verify_chain,
     verify_chain_offline,
 )
-from certinspect.formatter import format_ct_inventory
+from certinspect.formatter import format_ct_inventory, format_prometheus
 from certinspect.inspector import (
     InspectOptions,
     default_backend_for,
@@ -47,6 +47,7 @@ from certinspect.models import CertificateInfo, InspectionResult
 from certinspect.parser import POLICY_PROFILES
 from certinspect.render import OutputOptions, render
 from certinspect.revocation import check_revocation, complete_chain
+from certinspect.server import parse_listen_address, serve_metrics
 from certinspect.state import update_state
 
 
@@ -257,6 +258,13 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("--read-timeout must be a finite number greater than 0.")
     if not math.isfinite(args.discover_timeout) or args.discover_timeout <= 0:
         parser.error("--discover-timeout must be a finite number greater than 0.")
+    if not math.isfinite(args.interval) or args.interval <= 0:
+        parser.error("--interval must be a finite number greater than 0.")
+    if args.serve_metrics is not None:
+        try:
+            parse_listen_address(args.serve_metrics)
+        except ValueError as err:
+            parser.error(f"--serve-metrics: {err}")
     if args.retries < 0:
         parser.error("--retries must be 0 or greater.")
     if args.concurrency < 1:
@@ -533,6 +541,15 @@ def main() -> None:
         sys.exit(0 if args.exit_zero else code)
 
     host_targets, file_targets = _collect_targets(args, parser)
+    if args.serve_metrics:
+
+        def _collect() -> str:
+            res, errs, _ = _inspect_all(args, host_targets, file_targets)
+            return format_prometheus(res, errs, warn_days=args.days) + "\n"
+
+        serve_metrics(args.serve_metrics, _collect, interval=args.interval)
+        sys.exit(0)
+
     results, errors, codes = _inspect_all(args, host_targets, file_targets)
 
     changed_targets = None

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--all-ips` and `-4`/`--ipv4`, `-6`/`--ipv6` to filter IP families and
+  inspect every backend IP resolved for a host while preserving the original
+  SNI hostname.
+- PKCS#12 (`.p12`/`.pfx`) support in `--file`, with `--password-env VAR` to
+  read archive passphrases securely from the environment.
+- `--markdown` (GitHub-Flavored Markdown table) and `--sarif` (SARIF 2.1.0
+  findings for GitHub Code Scanning) output formats.
+- `--check-legacy-tls` to actively probe deprecated TLS 1.0 and TLS 1.1
+  support and fail with policy exit code 9 when accepted.
+- `--serve-metrics ADDR` (with `--interval SECONDS`) to run a standalone
+  Prometheus HTTP exporter serving `/metrics` and `/healthz`.
+
 ### Fixed
 
 - Hardened HTTP `CONNECT` proxying against CRLF/header injection, added IPv6
