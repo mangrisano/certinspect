@@ -2666,6 +2666,7 @@ def test_main_config_cli_overrides_conflicting_validity_option(
         'days = "30"\n',
         'profile = "nonexistent"\n',
         "json = 1\n",
+        'version = "1.0"\n',
     ],
 )
 def test_main_config_invalid_value_type_or_choice_exits_two(
@@ -2676,15 +2677,46 @@ def test_main_config_invalid_value_type_or_choice_exits_two(
     assert _run_main(monkeypatch, ["--config", str(cfg), "example.com"]) == 2
 
 
+def test_main_config_cli_no_proxy_overrides_config_proxy(
+    monkeypatch, tmp_path, make_cert
+):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text('proxy = "http://corp:8080"\n', encoding="utf-8")
+    seen: dict = {}
+
+    def _fetch(host, port=443, timeout=5.0, **kwargs):
+        seen.update(kwargs)
+        return make_cert(san=[host]), {
+            "tls_version": "TLSv1.3",
+            "cipher": None,
+            "chain": [],
+        }
+
+    monkeypatch.setattr("certinspect.cli.get_server_cert", _fetch)
+    assert (
+        _run_main(
+            monkeypatch,
+            ["--config", str(cfg), "--no-proxy", "--no-verify", "example.com"],
+        )
+        == 0
+    )
+    assert seen.get("no_proxy") is True
+    assert "proxy" not in seen
+
+
 @pytest.mark.parametrize(
     "bad_args",
     [
         ["--port", "0", "example.com"],
         ["--port", "70000", "example.com"],
         ["--timeout", "0", "example.com"],
+        ["--timeout", "nan", "example.com"],
+        ["--timeout", "inf", "example.com"],
         ["--connect-timeout", "-1", "example.com"],
+        ["--connect-timeout", "nan", "example.com"],
         ["--read-timeout", "-1", "example.com"],
         ["--discover-timeout", "0", "example.com"],
+        ["--discover-timeout", "inf", "example.com"],
         ["--retries", "-1", "example.com"],
         ["--concurrency", "0", "example.com"],
         ["--config", "", "example.com"],

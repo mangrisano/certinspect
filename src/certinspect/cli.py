@@ -9,6 +9,7 @@ with a status code reflecting the worst certificate state found.
 
 import argparse
 import functools
+import math
 import ssl
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -240,14 +241,18 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     """
     if not (1 <= args.port <= 65535):
         parser.error("--port must be between 1 and 65535.")
-    if args.timeout <= 0:
-        parser.error("--timeout must be greater than 0.")
-    if args.connect_timeout is not None and args.connect_timeout <= 0:
-        parser.error("--connect-timeout must be greater than 0.")
-    if args.read_timeout is not None and args.read_timeout <= 0:
-        parser.error("--read-timeout must be greater than 0.")
-    if args.discover_timeout <= 0:
-        parser.error("--discover-timeout must be greater than 0.")
+    if not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("--timeout must be a finite number greater than 0.")
+    if args.connect_timeout is not None and (
+        not math.isfinite(args.connect_timeout) or args.connect_timeout <= 0
+    ):
+        parser.error("--connect-timeout must be a finite number greater than 0.")
+    if args.read_timeout is not None and (
+        not math.isfinite(args.read_timeout) or args.read_timeout <= 0
+    ):
+        parser.error("--read-timeout must be a finite number greater than 0.")
+    if not math.isfinite(args.discover_timeout) or args.discover_timeout <= 0:
+        parser.error("--discover-timeout must be a finite number greater than 0.")
     if args.retries < 0:
         parser.error("--retries must be 0 or greater.")
     if args.concurrency < 1:

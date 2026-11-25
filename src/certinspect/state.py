@@ -76,6 +76,7 @@ def save_state(path: str, state: dict[str, str]) -> None:
             tmp_path = f.name
             json.dump(state, f, indent=2, sort_keys=True)
             f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, target)
     except OSError as err:
         if tmp_path is not None:

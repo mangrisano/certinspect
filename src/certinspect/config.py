@@ -14,6 +14,10 @@ from pathlib import Path
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "certinspect" / "config.toml"
 
 
+# Mutually exclusive pairs enforced in _validate_args rather than argparse.
+_EXTRA_EXCLUSIVE_GROUPS: tuple[tuple[str, ...], ...] = (("proxy", "no_proxy"),)
+
+
 def exclusive_groups(parser: argparse.ArgumentParser) -> list[tuple[str, ...]]:
     """Return mutually exclusive destination groups derived from ``parser``."""
     groups: list[tuple[str, ...]] = []
@@ -21,6 +25,7 @@ def exclusive_groups(parser: argparse.ArgumentParser) -> list[tuple[str, ...]]:
         dests = tuple(dict.fromkeys(action.dest for action in group._group_actions))
         if len(dests) > 1:
             groups.append(dests)
+    groups.extend(_EXTRA_EXCLUSIVE_GROUPS)
     return groups
 
 
@@ -97,7 +102,8 @@ def load_config(path: str, parser: argparse.ArgumentParser) -> dict:
     actions_by_dest = {
         action.dest: action
         for action in parser._actions
-        if action.dest not in ("help", "target", "config", "print_completion")
+        if action.dest
+        not in ("help", "version", "target", "config", "print_completion")
     }
     unknown = sorted(set(data) - set(actions_by_dest))
     if unknown:
