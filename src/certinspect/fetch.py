@@ -512,8 +512,14 @@ def probe_legacy_tls(
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
         try:
-            context.minimum_version = version
-            context.maximum_version = version
+            context.set_ciphers("DEFAULT:@SECLEVEL=0")
+        except ssl.SSLError:
+            pass
+        try:
+            with _WARNINGS_LOCK, warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                context.minimum_version = version
+                context.maximum_version = version
         except ValueError:
             continue
         try:

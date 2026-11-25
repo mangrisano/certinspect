@@ -6,6 +6,7 @@ trigger a storm of live TLS handshakes.
 """
 
 import http.server
+import socket
 import sys
 import threading
 import time
@@ -63,6 +64,10 @@ class MetricsCache:
             return self._payload
 
 
+class _IPv6ThreadingHTTPServer(http.server.ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
 def create_metrics_server(
     listen: str,
     collect: Callable[[], str],
@@ -96,7 +101,10 @@ def create_metrics_server(
         def log_message(self, format: str, *args: object) -> None:
             return
 
-    return http.server.ThreadingHTTPServer((host, port), _Handler)
+    server_cls = (
+        _IPv6ThreadingHTTPServer if ":" in host else http.server.ThreadingHTTPServer
+    )
+    return server_cls((host, port), _Handler)
 
 
 def serve_metrics(
@@ -108,8 +116,9 @@ def serve_metrics(
     server = create_metrics_server(listen, collect, interval=interval)
     host, port = server.server_address[:2]
     host_str = host.decode("ascii", "replace") if isinstance(host, bytes) else host
+    display_host = f"[{host_str}]" if ":" in host_str else host_str
     print(
-        f"certinspect metrics server listening on http://{host_str}:{port}/metrics "
+        f"certinspect metrics server listening on http://{display_host}:{port}/metrics "
         f"(refresh interval: {interval:g}s)",
         file=sys.stderr,
     )

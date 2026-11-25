@@ -2962,3 +2962,58 @@ def test_main_serve_metrics_validates_address_and_interval(monkeypatch):
         )
         == 2
     )
+
+
+def test_metrics_server_binds_ipv6_loopback():
+    from certinspect.server import create_metrics_server
+
+    server = create_metrics_server("[::1]:19118", lambda: "certinspect_up 1\n")
+    try:
+        assert server.server_address[0] == "::1"
+        assert server.server_address[1] == 19118
+    finally:
+        server.server_close()
+
+
+def test_main_malformed_target_reports_error_and_continues(
+    monkeypatch, capsys, make_cert
+):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        lambda host, port=443, timeout=5.0, **kw: (
+            make_cert(san=[host]),
+            {"tls_version": "TLSv1.3", "cipher": None, "chain": []},
+        ),
+    )
+    code = _run_main(
+        monkeypatch, ["--no-verify", "--json", "bad.example:notaport", "good.example"]
+    )
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "bad.example:notaport" in captured.err
+    data = json.loads(captured.out)
+    assert [r["target"] for r in data["results"]] == ["good.example"]
+
+
+def test_main_serve_metrics_fails_fast_on_unset_password_env(monkeypatch, tmp_path):
+    cert_path = tmp_path / "cert.p12"
+    cert_path.write_bytes(b"placeholder")
+    monkeypatch.delenv("MISSING_P12_ENV", raising=False)
+    monkeypatch.setattr(
+        "certinspect.cli.serve_metrics",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not start")),
+    )
+    assert (
+        _run_main(
+            monkeypatch,
+            [
+                "--serve-metrics",
+                ":9117",
+                "--file",
+                str(cert_path),
+                "--password-env",
+                "MISSING_P12_ENV",
+            ],
+        )
+        == 1
+    )

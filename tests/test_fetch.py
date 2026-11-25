@@ -1869,3 +1869,33 @@ def test_resolve_host_ips_deduplicates_and_passes_family(monkeypatch):
     ips = fetch_mod.resolve_host_ips("example.com", 443, family=socket.AF_INET)
     assert seen["family"] == socket.AF_INET
     assert ips == ["93.184.216.34", "93.184.216.35"]
+
+
+def test_probe_legacy_tls_lowers_seclevel_to_allow_tls10_handshake(monkeypatch):
+    import socket
+    from certinspect import fetch as fetch_mod
+
+    seen_client_hellos: list[bytes] = []
+
+    def _capture_handshake(host, port, timeout, context, **kwargs):
+        a, b = socket.socketpair()
+        try:
+            a.settimeout(0.2)
+            b.settimeout(0.2)
+            ssock = context.wrap_socket(
+                a, server_hostname=host, do_handshake_on_connect=False
+            )
+            try:
+                ssock.do_handshake()
+            except OSError:
+                pass
+            seen_client_hellos.append(b.recv(64))
+        finally:
+            a.close()
+            b.close()
+        return b"", {"tls_version": None, "cipher": None, "chain": []}, []
+
+    monkeypatch.setattr(fetch_mod, "_handshake", _capture_handshake)
+    accepted = fetch_mod.probe_legacy_tls("example.com")
+    assert accepted == ["TLSv1", "TLSv1.1"]
+    assert all(hello.startswith(b"\x16\x03") for hello in seen_client_hellos)

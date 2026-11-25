@@ -432,7 +432,11 @@ def _expand_host_items(
     resolve_errors: list[tuple[str, str]] = []
     family = opts.connection.ip_family
     for raw in host_targets:
-        target, port = _split_target(raw, default_port)
+        try:
+            target, port = _split_target(raw, default_port)
+        except ValueError as err:
+            resolve_errors.append((raw, str(err)))
+            continue
         base_label = _target_label(target, port, default_port)
         if not all_ips:
             items.append((False, target, port, base_label, opts))
@@ -464,7 +468,11 @@ def _resolve_file_password(args: argparse.Namespace) -> bytes | None:
 
 
 def _inspect_all(
-    args: argparse.Namespace, host_targets: list[str], file_targets: list[str]
+    args: argparse.Namespace,
+    host_targets: list[str],
+    file_targets: list[str],
+    *,
+    password: bytes | None = None,
 ) -> tuple[list[InspectionResult], list[tuple[str | None, str]], list[int]]:
     """Inspect every target, returning ``(results, errors, codes)``.
 
@@ -472,7 +480,6 @@ def _inspect_all(
     counted as RUNTIME_ERROR; ``codes`` holds one exit code per target.
     """
     default_port = _default_port(args)
-    password = _resolve_file_password(args)
     opts = replace(InspectOptions.from_args(args), password=password)
 
     # A single --file source keeps the old unlabelled output; with several
@@ -541,16 +548,21 @@ def main() -> None:
         sys.exit(0 if args.exit_zero else code)
 
     host_targets, file_targets = _collect_targets(args, parser)
+    password = _resolve_file_password(args)
     if args.serve_metrics:
 
         def _collect() -> str:
-            res, errs, _ = _inspect_all(args, host_targets, file_targets)
+            res, errs, _ = _inspect_all(
+                args, host_targets, file_targets, password=password
+            )
             return format_prometheus(res, errs, warn_days=args.days) + "\n"
 
         serve_metrics(args.serve_metrics, _collect, interval=args.interval)
         sys.exit(0)
 
-    results, errors, codes = _inspect_all(args, host_targets, file_targets)
+    results, errors, codes = _inspect_all(
+        args, host_targets, file_targets, password=password
+    )
 
     changed_targets = None
     if args.state_file:
