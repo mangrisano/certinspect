@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1795077498662,
+  "lastUpdate": 1795619987111,
   "repoUrl": "https://github.com/mangrisano/certinspect",
   "entries": {
     "certinspect benchmarks": [
@@ -1170,6 +1170,51 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 9.424607149943606e-7",
             "extra": "mean: 6.946647219416471 usec\nrounds: 25642"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "committer": {
+            "email": "michele.angrisano@gmail.com",
+            "name": "Michele Angrisano",
+            "username": "mangrisano"
+          },
+          "distinct": true,
+          "id": "17fc965373d6b18fcb79c90965af43e7685c6e08",
+          "message": "fix(cli): reject non-finite timeouts, config version key, and proxy override\n\nReject NaN/inf timeout flags, disallow 'version' in config.toml, include\n(proxy, no_proxy) in exclusive_groups so CLI --no-proxy overrides config\nproxy, and fsync atomic state-file writes before os.replace.",
+          "timestamp": "2026-11-25T16:17:39+01:00",
+          "tree_id": "03ce4492372ce9479e2f70e23662d9102d2fb6f9",
+          "url": "https://github.com/mangrisano/certinspect/commit/17fc965373d6b18fcb79c90965af43e7685c6e08"
+        },
+        "date": 1795619986276,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/bench_perf.py::test_load_certificate",
+            "value": 133983.9149601552,
+            "unit": "iter/sec",
+            "range": "stddev: 9.010826795620588e-7",
+            "extra": "mean: 7.463582477772685 usec\nrounds: 14222"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_analyze",
+            "value": 28067.153152334082,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002889632473484189",
+            "extra": "mean: 35.62883611930693 usec\nrounds: 1196"
+          },
+          {
+            "name": "benchmarks/bench_perf.py::test_format_json",
+            "value": 123608.38061925702,
+            "unit": "iter/sec",
+            "range": "stddev: 8.362657284877888e-7",
+            "extra": "mean: 8.090066344936886 usec\nrounds: 22383"
           }
         ]
       }
