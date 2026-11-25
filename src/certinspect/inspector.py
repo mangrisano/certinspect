@@ -22,6 +22,7 @@ from certinspect.exit_codes import (
 from certinspect.fetch import (
     fetch_verified_cert,
     get_server_cert,
+    probe_legacy_tls,
     retry_network,
     trust_anchors,
     verify_chain,
@@ -123,6 +124,7 @@ class PolicyOptions:
     require_must_staple: bool = False
     require_revocation_check: bool = False
     min_tls_version: str | None = None
+    check_legacy_tls: bool = False
 
     @property
     def requested(self) -> bool:
@@ -178,6 +180,7 @@ class InspectOptions:
     require_must_staple: bool = False
     require_revocation_check: bool = False
     min_tls_version: str | None = None
+    check_legacy_tls: bool = False
     client_cert: str | None = None
     client_key: str | None = None
     proxy: str | None = None
@@ -226,6 +229,7 @@ class InspectOptions:
             require_must_staple=self.require_must_staple,
             require_revocation_check=self.require_revocation_check,
             min_tls_version=self.min_tls_version,
+            check_legacy_tls=self.check_legacy_tls,
         )
 
     @property
@@ -266,6 +270,7 @@ class InspectionBackend:
         check_revocation
     )
     complete_chain: Callable[..., tuple[list, bool]] = complete_chain
+    probe_legacy_tls: Callable[..., list[str]] = probe_legacy_tls
 
 
 _DEFAULT_BACKEND = InspectionBackend()
@@ -441,6 +446,7 @@ def _check_policy(info: CertificateInfo, policy_opts: PolicyOptions) -> ExitCode
         require_must_staple=policy_opts.require_must_staple,
         min_tls_version=policy_opts.min_tls_version,
         require_revocation_check=policy_opts.require_revocation_check,
+        check_legacy_tls=policy_opts.check_legacy_tls,
     )
     info["policy_violations"] = violations
     return ExitCode.POLICY if violations else None
@@ -460,6 +466,11 @@ def inspect_target(
     if conn:
         info["tls_version"] = conn["tls_version"]
         info["cipher"] = conn["cipher"]
+    if opts.check_legacy_tls and target and not opts.file:
+        conn_opts = opts.connection
+        info["legacy_tls_accepted"] = backend.probe_legacy_tls(
+            target, port, conn_opts.timeouts, **conn_opts.to_kwargs()
+        )
     if opts.export:
         with open(opts.export, "wb") as f:
             f.write(to_pem(cert))
@@ -516,6 +527,7 @@ def default_backend_for(
     trust_anchors_fn: Callable[..., list],
     check_revocation_fn: Callable[..., tuple[RevocationStatus, str | None]],
     complete_chain_fn: Callable[..., tuple[list, bool]],
+    probe_legacy_tls_fn: Callable[..., list[str]] = probe_legacy_tls,
 ) -> InspectionBackend:
     """Build a backend using single-handshake mode unless fetch/verify are patched."""
     use_single_handshake = (
@@ -532,6 +544,7 @@ def default_backend_for(
         trust_anchors=trust_anchors_fn,
         check_revocation=check_revocation_fn,
         complete_chain=complete_chain_fn,
+        probe_legacy_tls=probe_legacy_tls_fn,
     )
 
 

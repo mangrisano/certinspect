@@ -2865,3 +2865,38 @@ def test_main_markdown_and_sarif_output_flags(monkeypatch, capsys, tmp_path, mak
     assert sarif["runs"][0]["results"][0]["ruleId"] == "CERT002"
 
     assert _run_main(monkeypatch, ["--markdown", "--sarif", "example.com"]) == 2
+
+
+def test_main_check_legacy_tls_fails_when_deprecated_protocol_accepted(
+    monkeypatch, capsys, make_cert
+):
+    monkeypatch.setattr(
+        "certinspect.cli.get_server_cert",
+        lambda host, port=443, timeout=5.0, **kw: (
+            make_cert(san=[host]),
+            {"tls_version": "TLSv1.3", "cipher": "TLS_AES_256_GCM_SHA384", "chain": []},
+        ),
+    )
+    monkeypatch.setattr(
+        "certinspect.cli.probe_legacy_tls", lambda *a, **kw: ["TLSv1", "TLSv1.1"]
+    )
+    code = _run_main(
+        monkeypatch, ["--check-legacy-tls", "--no-verify", "--json", "example.com"]
+    )
+    assert code == 9
+    data = json.loads(capsys.readouterr().out)
+    assert data["results"][0]["connection"]["legacy_tls_accepted"] == [
+        "TLSv1",
+        "TLSv1.1",
+    ]
+    assert any(
+        "deprecated TLS" in v for v in data["results"][0]["policy"]["violations"]
+    )
+
+    monkeypatch.setattr("certinspect.cli.probe_legacy_tls", lambda *a, **kw: [])
+    assert (
+        _run_main(monkeypatch, ["--check-legacy-tls", "--no-verify", "example.com"])
+        == 0
+    )
+    assert "Legacy TLS:     disabled" in capsys.readouterr().out
+    assert _run_main(monkeypatch, ["--check-legacy-tls", "--file", "cert.pem"]) == 2

@@ -45,6 +45,7 @@ class CertificateInfo(TypedDict, total=False):
     status: Status
     tls_version: str | None
     cipher: str | None
+    legacy_tls_accepted: list[str]
     hostname_match: bool | None
     chain_trusted: bool
     chain_error: str | None

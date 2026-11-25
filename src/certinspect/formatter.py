@@ -75,6 +75,11 @@ def _extension_lines(info: CertificateInfo) -> list[str]:
         lines.append(_row("TLS version", info["tls_version"]))
     if info.get("cipher"):
         lines.append(_row("Cipher", info["cipher"]))
+    if "legacy_tls_accepted" in info:
+        accepted = info["legacy_tls_accepted"]
+        lines.append(
+            _row("Legacy TLS", ", ".join(accepted) if accepted else "disabled")
+        )
     if info["key_usage"]:
         lines.append(_row("Key usage", ", ".join(info["key_usage"])))
     if info["extended_key_usage"]:
@@ -233,10 +238,13 @@ def _result_to_v2(target: str | None, info: CertificateInfo) -> dict:
         "hostname_match": info.get("hostname_match"),
     }
     if info.get("tls_version"):
-        result["connection"] = {
+        conn_section: dict = {
             "tls_version": info.get("tls_version"),
             "cipher": info.get("cipher"),
         }
+        if "legacy_tls_accepted" in info:
+            conn_section["legacy_tls_accepted"] = info["legacy_tls_accepted"]
+        result["connection"] = conn_section
     if "chain_trusted" in info or "chain" in info or "chain_warnings" in info:
         chain: dict = {}
         if "chain_trusted" in info:

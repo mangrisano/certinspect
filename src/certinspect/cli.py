@@ -31,6 +31,7 @@ from certinspect.exit_codes import RUNTIME_ERROR, ExitCode, most_severe
 from certinspect.fetch import (
     STARTTLS_PORTS,
     get_server_cert,
+    probe_legacy_tls,
     resolve_host_ips,
     trust_anchors,
     verify_chain,
@@ -85,6 +86,7 @@ def _inspect(
         trust_anchors_fn=trust_anchors,
         check_revocation_fn=check_revocation,
         complete_chain_fn=complete_chain,
+        probe_legacy_tls_fn=probe_legacy_tls,
     )
     return inspect_target(target, port, opts, backend=backend)
 
@@ -269,6 +271,8 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("--servername applies to host targets, not --file.")
     if args.min_tls_version and args.file:
         parser.error("--min-tls-version applies to host targets, not --file.")
+    if args.check_legacy_tls and args.file:
+        parser.error("--check-legacy-tls applies to host targets, not --file.")
     if args.require_revocation_check and args.file:
         parser.error("--require-revocation-check applies to host targets, not --file.")
     if args.require_revocation_check and not args.verify:

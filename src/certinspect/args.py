@@ -496,6 +496,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--check-legacy-tls",
+        action="store_true",
+        dest="check_legacy_tls",
+        help=(
+            "Actively probe whether the server still accepts deprecated TLS 1.0 "
+            "or TLS 1.1 connections and fail (exit code 9) if either is accepted. "
+            "Host targets only."
+        ),
+    )
+    parser.add_argument(
         "--export",
         metavar="PATH",
         help=(

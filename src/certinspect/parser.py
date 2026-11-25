@@ -665,6 +665,13 @@ def _rule_require_revocation_check(info: CertificateInfo) -> list[str]:
     return [f"revocation check did not return GOOD ({status or 'not run'})"]
 
 
+def _rule_legacy_tls(info: CertificateInfo) -> list[str]:
+    accepted = info.get("legacy_tls_accepted") or []
+    if accepted:
+        return [f"server accepts deprecated TLS version(s): {', '.join(accepted)}"]
+    return []
+
+
 def build_policy_rules(
     *,
     not_after_max: int | None = None,
@@ -674,6 +681,7 @@ def build_policy_rules(
     require_must_staple: bool = False,
     min_tls_version: str | None = None,
     require_revocation_check: bool = False,
+    check_legacy_tls: bool = False,
 ) -> list[PolicyRule]:
     """Assemble the ordered list of enabled policy specifications."""
     rules: list[PolicyRule] = []
@@ -691,6 +699,8 @@ def build_policy_rules(
         rules.append(_rule_min_tls_version(min_tls_version))
     if require_revocation_check:
         rules.append(_rule_require_revocation_check)
+    if check_legacy_tls:
+        rules.append(_rule_legacy_tls)
     return rules
 
 
@@ -704,6 +714,7 @@ def policy_violations(
     require_must_staple: bool = False,
     min_tls_version: str | None = None,
     require_revocation_check: bool = False,
+    check_legacy_tls: bool = False,
 ) -> list[str]:
     """Return the opt-in policy violations for the analyzed certificate.
 
@@ -737,6 +748,7 @@ def policy_violations(
         require_must_staple=require_must_staple,
         min_tls_version=min_tls_version,
         require_revocation_check=require_revocation_check,
+        check_legacy_tls=check_legacy_tls,
     )
     violations: list[str] = []
     for rule in rules:

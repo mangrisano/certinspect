@@ -483,6 +483,59 @@ def fetch_verified_cert(
         return der, conn, False, reason, []
 
 
+_LEGACY_TLS_VERSIONS: tuple[tuple[str, ssl.TLSVersion], ...] = (
+    ("TLSv1", ssl.TLSVersion.TLSv1),
+    ("TLSv1.1", ssl.TLSVersion.TLSv1_1),
+)
+
+
+def probe_legacy_tls(
+    host: str,
+    port: int = 443,
+    timeout: float | tuple[float, float] = 5.0,
+    starttls: str | None = None,
+    servername: str | None = None,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+    proxy: str | None = None,
+    no_proxy: bool = False,
+    family: int = socket.AF_UNSPEC,
+) -> list[str]:
+    """Return the deprecated TLS versions (TLSv1, TLSv1.1) accepted by ``host``.
+
+    Each legacy version is probed with an explicit min/max version pin. A
+    server rejection or local OpenSSL restriction counts as not accepted.
+    """
+    accepted: list[str] = []
+    for label, version in _LEGACY_TLS_VERSIONS:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        try:
+            context.minimum_version = version
+            context.maximum_version = version
+        except ValueError:
+            continue
+        try:
+            _handshake(
+                host,
+                port,
+                timeout,
+                context,
+                starttls=starttls,
+                servername=servername,
+                client_cert=client_cert,
+                client_key=client_key,
+                proxy=proxy,
+                no_proxy=no_proxy,
+                family=family,
+            )
+        except (OSError, ssl.SSLError, ValueError):
+            continue
+        accepted.append(label)
+    return accepted
+
+
 def _peer_der(ssock: ssl.SSLSocket) -> bytes:
     """Return the server certificate (DER) of a completed handshake."""
     der = ssock.getpeercert(binary_form=True)
