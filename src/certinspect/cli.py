@@ -265,6 +265,16 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
             parse_listen_address(args.serve_metrics)
         except ValueError as err:
             parser.error(f"--serve-metrics: {err}")
+        if args.file and "-" in args.file:
+            parser.error("--serve-metrics cannot be combined with --file '-'.")
+        if args.export or args.export_chain:
+            parser.error(
+                "--serve-metrics cannot be combined with --export/--export-chain."
+            )
+        if args.state_file or args.only_changed:
+            parser.error(
+                "--serve-metrics cannot be combined with --state-file/--only-changed."
+            )
     if args.retries < 0:
         parser.error("--retries must be 0 or greater.")
     if args.concurrency < 1:
@@ -512,14 +522,15 @@ def _inspect_all(
     results: list[InspectionResult] = []
     errors: list[tuple[str | None, str]] = []
     codes: list[int] = []
+    suppress_stderr = bool(args.exporter or args.serve_metrics)
     for name, err in resolve_errors:
-        if not args.exporter:
+        if not suppress_stderr:
             print(f"error: {name}: {err}", file=sys.stderr)
         errors.append((name, err))
         codes.append(RUNTIME_ERROR)
     for name, result, err in _map(_run, work_items, args.concurrency):
         if err is not None:
-            if not args.exporter:
+            if not suppress_stderr:
                 label = f"{name}: " if name else ""
                 print(f"error: {label}{err}", file=sys.stderr)
             errors.append((name, err))
@@ -557,7 +568,13 @@ def main() -> None:
             )
             return format_prometheus(res, errs, warn_days=args.days) + "\n"
 
-        serve_metrics(args.serve_metrics, _collect, interval=args.interval)
+        try:
+            serve_metrics(args.serve_metrics, _collect, interval=args.interval)
+        except OSError as err:
+            print(
+                f"error: --serve-metrics {args.serve_metrics}: {err}", file=sys.stderr
+            )
+            sys.exit(1)
         sys.exit(0)
 
     results, errors, codes = _inspect_all(

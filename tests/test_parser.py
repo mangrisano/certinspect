@@ -737,3 +737,9 @@ def test_load_certificates_reads_pkcs12_with_chain_and_password(make_chain):
         leaf.serial_number,
         inter.serial_number,
     ]
+
+    # When CA precedes leaf in a keyless PKCS#12, non-CA leaf is still returned first.
+    p12_ca_first = pkcs12.serialize_key_and_certificates(
+        b"ca-first", None, None, [root, inter, leaf], serialization.NoEncryption()
+    )
+    assert load_certificates(p12_ca_first)[0] == leaf

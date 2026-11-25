@@ -2913,6 +2913,10 @@ def test_metrics_server_serves_cached_metrics_and_healthz():
     assert parse_listen_address("[::1]:9117") == ("::1", 9117)
     with pytest.raises(ValueError):
         parse_listen_address(":99999")
+    with pytest.raises(ValueError):
+        parse_listen_address("[]:9117")
+    with pytest.raises(ValueError):
+        parse_listen_address("::1:9117")
 
     calls = 0
 
@@ -3017,3 +3021,43 @@ def test_main_serve_metrics_fails_fast_on_unset_password_env(monkeypatch, tmp_pa
         )
         == 1
     )
+    assert _run_main(monkeypatch, ["--serve-metrics", ":9117", "--file", "-"]) == 2
+    assert (
+        _run_main(
+            monkeypatch,
+            ["--serve-metrics", ":9117", "--export", "out.pem", "example.com"],
+        )
+        == 2
+    )
+    assert (
+        _run_main(
+            monkeypatch,
+            ["--serve-metrics", ":9117", "--state-file", "st.json", "example.com"],
+        )
+        == 2
+    )
+
+
+def test_metrics_server_returns_500_when_collector_raises():
+    import threading
+    import urllib.error
+    import urllib.request
+    from certinspect.server import create_metrics_server
+
+    def _boom() -> str:
+        raise RuntimeError("collector exploded")
+
+    server = create_metrics_server("127.0.0.1:19119", _boom, interval=60.0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen("http://127.0.0.1:19119/metrics", timeout=2.0)
+        assert exc_info.value.code == 500
+        body = exc_info.value.read().decode()
+        assert body == "metrics collection failed\n"
+        assert "collector exploded" not in body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)

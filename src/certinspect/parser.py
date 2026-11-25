@@ -336,8 +336,13 @@ def load_pkcs12_certificates(
             certs: list[x509.Certificate] = []
             if leaf is not None:
                 certs.append(leaf)
-            if additional:
-                certs.extend(additional)
+                if additional:
+                    certs.extend(additional)
+            elif additional:
+                # Without a private key, place non-CA leaf certs ahead of CAs.
+                non_ca = [c for c in additional if not is_ca_certificate(c)]
+                ca_only = [c for c in additional if is_ca_certificate(c)]
+                certs.extend(non_ca + ca_only)
             if not certs:
                 raise CertificateLoadError(
                     "The PKCS#12 archive contains no certificates."
