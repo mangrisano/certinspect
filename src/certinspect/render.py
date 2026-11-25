@@ -17,8 +17,10 @@ from certinspect.formatter import (
     format_human,
     format_json,
     format_json_v2,
+    format_markdown,
     format_nagios,
     format_prometheus,
+    format_sarif,
     format_summary,
 )
 from certinspect.models import InspectionResult
@@ -32,6 +34,8 @@ class OutputOptions:
     critical_days: int | None = None
     as_json: bool = False
     as_csv: bool = False
+    as_markdown: bool = False
+    as_sarif: bool = False
     csv_delimiter: str = ","
     schema: int = 2
     exporter: str | None = None
@@ -49,6 +53,8 @@ class OutputOptions:
             critical_days=args.critical_days,
             as_json=args.json,
             as_csv=args.csv,
+            as_markdown=args.markdown,
+            as_sarif=args.sarif,
             csv_delimiter=args.csv_delimiter,
             schema=args.schema,
             exporter=args.exporter,
@@ -66,6 +72,10 @@ class OutputOptions:
             return "fields"
         if self.as_csv:
             return "csv"
+        if self.as_markdown:
+            return "markdown"
+        if self.as_sarif:
+            return "sarif"
         if self.as_json:
             return "json"
         return "human"
@@ -74,7 +84,9 @@ class OutputOptions:
 ExporterRenderer = Callable[
     [list[InspectionResult], list[tuple[str | None, str]], OutputOptions], int | None
 ]
-OutputRenderer = Callable[[list[InspectionResult], OutputOptions], None]
+OutputRenderer = Callable[
+    [list[InspectionResult], list[tuple[str | None, str]], OutputOptions], None
+]
 
 
 def _render_nagios(
@@ -98,13 +110,21 @@ def _render_prometheus(
     return None
 
 
-def _render_fields(results: list[InspectionResult], opts: OutputOptions) -> None:
+def _render_fields(
+    results: list[InspectionResult],
+    _errors: list[tuple[str | None, str]],
+    opts: OutputOptions,
+) -> None:
     text = format_fields(results, opts.fields or [])
     if text:
         print(text)
 
 
-def _render_csv(results: list[InspectionResult], opts: OutputOptions) -> None:
+def _render_csv(
+    results: list[InspectionResult],
+    _errors: list[tuple[str | None, str]],
+    opts: OutputOptions,
+) -> None:
     print(
         format_csv(
             results,
@@ -116,14 +136,53 @@ def _render_csv(results: list[InspectionResult], opts: OutputOptions) -> None:
     )
 
 
-def _render_json(results: list[InspectionResult], opts: OutputOptions) -> None:
+def _render_markdown(
+    results: list[InspectionResult],
+    errors: list[tuple[str | None, str]],
+    opts: OutputOptions,
+) -> None:
+    print(
+        format_markdown(
+            results,
+            errors,
+            warn_days=opts.days,
+            critical_days=opts.critical_days,
+        )
+    )
+
+
+def _render_sarif(
+    results: list[InspectionResult],
+    errors: list[tuple[str | None, str]],
+    opts: OutputOptions,
+) -> None:
+    print(
+        format_sarif(
+            results,
+            errors,
+            version=__version__,
+            warn_days=opts.days,
+            critical_days=opts.critical_days,
+        )
+    )
+
+
+def _render_json(
+    results: list[InspectionResult],
+    _errors: list[tuple[str | None, str]],
+    opts: OutputOptions,
+) -> None:
     if opts.schema == 1:
         print(format_json([info for _, info, _ in results]))
     else:
         print(format_json_v2(results, version=__version__))
 
 
-def _render_human(results: list[InspectionResult], opts: OutputOptions) -> None:
+def _render_human(
+    results: list[InspectionResult],
+    _errors: list[tuple[str | None, str]],
+    opts: OutputOptions,
+) -> None:
     blocks = []
     for target, info, _ in results:
         text = format_human(info, warn_days=opts.days, critical_days=opts.critical_days)
@@ -140,6 +199,8 @@ _EXPORTER_RENDERERS: dict[str, ExporterRenderer] = {
 _OUTPUT_RENDERERS: dict[str, OutputRenderer] = {
     "fields": _render_fields,
     "csv": _render_csv,
+    "markdown": _render_markdown,
+    "sarif": _render_sarif,
     "json": _render_json,
     "human": _render_human,
 }
@@ -193,7 +254,7 @@ def render(
     )
 
     filtered = _filter_and_sort(results, opts, changed_targets)
-    _OUTPUT_RENDERERS[opts.format_name](filtered, opts)
+    _OUTPUT_RENDERERS[opts.format_name](filtered, errors, opts)
 
     if summary_line:
         print(summary_line, file=sys.stderr)

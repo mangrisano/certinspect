@@ -617,3 +617,54 @@ def test_format_fields_and_nagios_sanitize_control_characters(make_cert):
     assert len(lines) == 2
     assert lines[0].count("|") == 1
     assert "|" not in lines[1]
+
+
+def test_format_markdown_table_and_escaping(make_cert):
+    from certinspect.formatter import format_markdown
+
+    ok = _info(make_cert(san=["ok.example.com"], days_valid=90))
+    bad = _info(
+        make_cert(common_name="evil|name\nline", days_valid=-2, days_ago_start=90)
+    )
+    bad["hostname_match"] = False
+    md = format_markdown(
+        [("ok.example.com", ok, 0), ("bad.example.com", bad, 4)],
+        [("down.example.com", "timed | out")],
+    )
+    rows = md.splitlines()
+    assert rows[0].startswith("| Target | Status |")
+    assert "| ok.example.com | VALID |" in rows[2]
+    assert "| bad.example.com | EXPIRED |" in rows[3]
+    assert "hostname mismatch" in rows[3]
+    assert "| down.example.com | ERROR |" in rows[4]
+    assert "timed \\| out" in rows[4]
+
+
+def test_format_sarif_emits_valid_2_1_0_findings(make_cert):
+    from certinspect.formatter import format_sarif
+
+    valid = _info(make_cert(san=["ok.example.com"], days_valid=90))
+    expired = _info(
+        make_cert(san=["bad.example.com"], days_valid=-5, days_ago_start=90)
+    )
+    expired["hostname_match"] = False
+    expired["policy_violations"] = ["TLS version TLSv1.1 is below the required TLSv1.2"]
+
+    doc = json.loads(
+        format_sarif(
+            [("ok.example.com", valid, 0), ("bad.example.com", expired, 4)],
+            [("down.example.com", "connection refused")],
+            version="2.7.0",
+        )
+    )
+    assert doc["version"] == "2.1.0"
+    run = doc["runs"][0]
+    assert run["tool"]["driver"]["name"] == "certinspect"
+    assert run["tool"]["driver"]["version"] == "2.7.0"
+    rule_ids = {r["ruleId"] for r in run["results"]}
+    assert {"CERT001", "CERT003", "CERT008", "CERT010"} <= rule_ids
+    assert all(
+        r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        != "ok.example.com"
+        for r in run["results"]
+    )

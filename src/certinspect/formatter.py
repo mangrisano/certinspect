@@ -677,3 +677,200 @@ def format_prometheus(
             *policy_ok,
         ]
     return "\n".join(lines)
+
+
+def _sanitize_md(value: object) -> str:
+    """Escape pipes and collapse newlines so a cell cannot break a Markdown table."""
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\r", " ")
+        .replace("\n", " ")
+    )
+
+
+def _result_issues(info: CertificateInfo) -> list[str]:
+    """Collect short human-readable issue descriptions for summary tables."""
+    issues: list[str] = []
+    if info.get("hostname_match") is False:
+        issues.append("hostname mismatch")
+    if info.get("chain_trusted") is False:
+        err = info.get("chain_error")
+        issues.append(f"untrusted chain ({err})" if err else "untrusted chain")
+    if info.get("revocation_status") == RevocationStatus.REVOKED:
+        issues.append("revoked")
+    if info.get("pin_match") is False:
+        issues.append("pin mismatch")
+    missing_san = info.get("expected_san_missing") or []
+    if missing_san:
+        issues.append(f"missing SAN: {', '.join(missing_san)}")
+    for violation in info.get("policy_violations") or []:
+        issues.append(f"policy: {violation}")
+    for weak in info.get("weak") or []:
+        issues.append(weak)
+    return issues
+
+
+def format_markdown(
+    results: list[InspectionResult],
+    errors: Sequence[tuple[str | None, str]] = (),
+    warn_days: int = 30,
+    critical_days: int | None = None,
+) -> str:
+    """Render results as a GitHub-Flavored Markdown table."""
+    lines = [
+        "| Target | Status | Days | Valid Until | Issuer | Issues |",
+        "| --- | --- | ---: | --- | --- | --- |",
+    ]
+    for target, info, _ in results:
+        status = _status_of(info, warn_days, critical_days)
+        label = _sanitize_md(target or _common_name(info["subject"]))
+        issuer = _sanitize_md(_common_name(info["issuer"]))
+        valid_until = info["not_valid_after"].strftime("%Y-%m-%d")
+        issues = _sanitize_md("; ".join(_result_issues(info)) or "-")
+        lines.append(
+            f"| {label} | {_sanitize_md(status)} | {info['days_to_expire']} "
+            f"| {valid_until} | {issuer} | {issues} |"
+        )
+    for target, message in errors:
+        label = _sanitize_md(target or "target")
+        lines.append(f"| {label} | ERROR | - | - | - | {_sanitize_md(message)} |")
+    return "\n".join(lines)
+
+
+_SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
+
+_SARIF_RULES: tuple[tuple[str, str, str], ...] = (
+    ("CERT001", "CertificateInvalid", "Certificate is expired, critical, or not valid"),
+    ("CERT002", "CertificateExpiring", "Certificate is approaching expiration"),
+    ("CERT003", "HostnameMismatch", "Certificate SAN does not cover target hostname"),
+    ("CERT004", "UntrustedChain", "Certificate chain is not trusted"),
+    ("CERT005", "CertificateRevoked", "Certificate has been revoked"),
+    ("CERT006", "PinMismatch", "Certificate fingerprint does not match expected pin"),
+    ("CERT007", "SanMismatch", "Certificate is missing one or more expected SANs"),
+    ("CERT008", "PolicyViolation", "Certificate violates an enabled policy rule"),
+    ("CERT009", "WeakCryptography", "Certificate uses weak cryptographic parameters"),
+    ("CERT010", "InspectionError", "Target could not be inspected"),
+)
+
+
+def _sarif_finding(rule_id: str, level: str, uri: str, message: str) -> dict:
+    return {
+        "ruleId": rule_id,
+        "level": level,
+        "message": {"text": message},
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": uri},
+                }
+            }
+        ],
+    }
+
+
+def format_sarif(
+    results: list[InspectionResult],
+    errors: Sequence[tuple[str | None, str]] = (),
+    *,
+    version: str,
+    warn_days: int = 30,
+    critical_days: int | None = None,
+) -> str:
+    """Render certificate findings as a SARIF 2.1.0 JSON document."""
+    findings: list[dict] = []
+    for target, info, _ in results:
+        uri = target or _common_name(info["subject"])
+        status = _status_of(info, warn_days, critical_days)
+        days = info["days_to_expire"]
+        if status in (
+            Status.EXPIRED,
+            Status.INVALID_DATES,
+            Status.NOT_YET_VALID,
+            Status.CRITICAL,
+        ):
+            findings.append(
+                _sarif_finding(
+                    "CERT001",
+                    "error",
+                    uri,
+                    f"{uri}: certificate status is {status} ({days} days to expiry)",
+                )
+            )
+        elif status == Status.EXPIRING:
+            findings.append(
+                _sarif_finding(
+                    "CERT002",
+                    "warning",
+                    uri,
+                    f"{uri}: certificate expires in {days} days",
+                )
+            )
+        if info.get("hostname_match") is False:
+            findings.append(
+                _sarif_finding(
+                    "CERT003", "error", uri, f"{uri}: hostname does not match SAN"
+                )
+            )
+        if info.get("chain_trusted") is False:
+            reason = info.get("chain_error") or "chain verification failed"
+            findings.append(_sarif_finding("CERT004", "error", uri, f"{uri}: {reason}"))
+        if info.get("revocation_status") == RevocationStatus.REVOKED:
+            detail = info.get("revocation_detail") or "revoked"
+            findings.append(_sarif_finding("CERT005", "error", uri, f"{uri}: {detail}"))
+        if info.get("pin_match") is False:
+            findings.append(
+                _sarif_finding(
+                    "CERT006",
+                    "error",
+                    uri,
+                    f"{uri}: fingerprint does not match expected pin",
+                )
+            )
+        for missing in info.get("expected_san_missing") or []:
+            findings.append(
+                _sarif_finding(
+                    "CERT007",
+                    "error",
+                    uri,
+                    f"{uri}: expected SAN {missing!r} is missing",
+                )
+            )
+        for violation in info.get("policy_violations") or []:
+            findings.append(
+                _sarif_finding(
+                    "CERT008", "error", uri, f"{uri}: policy violation: {violation}"
+                )
+            )
+        for weak in info.get("weak") or []:
+            findings.append(_sarif_finding("CERT009", "warning", uri, f"{uri}: {weak}"))
+
+    for target, message in errors:
+        uri = target or "target"
+        findings.append(_sarif_finding("CERT010", "error", uri, f"{uri}: {message}"))
+
+    document = {
+        "$schema": _SARIF_SCHEMA,
+        "version": "2.1.0",
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "certinspect",
+                        "version": version,
+                        "rules": [
+                            {
+                                "id": rule_id,
+                                "name": name,
+                                "shortDescription": {"text": desc},
+                            }
+                            for rule_id, name, desc in _SARIF_RULES
+                        ],
+                    }
+                },
+                "results": findings,
+            }
+        ],
+    }
+    return json.dumps(document, indent=2, ensure_ascii=False)

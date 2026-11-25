@@ -135,6 +135,22 @@ def build_parser() -> argparse.ArgumentParser:
             "convenient for spreadsheets."
         ),
     )
+    output_group.add_argument(
+        "--markdown",
+        action="store_true",
+        help=(
+            "Output the results as a GitHub-Flavored Markdown table, ready for "
+            "$GITHUB_STEP_SUMMARY or pull request comments."
+        ),
+    )
+    output_group.add_argument(
+        "--sarif",
+        action="store_true",
+        help=(
+            "Output findings as SARIF 2.1.0 JSON for CI/CD and GitHub Code "
+            "Scanning integration."
+        ),
+    )
     parser.add_argument(
         "--csv-delimiter",
         default=",",

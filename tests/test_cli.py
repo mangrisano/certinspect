@@ -2842,3 +2842,26 @@ def test_main_file_pkcs12_with_password_env_verifies_bundle(
     assert (
         _run_main(monkeypatch, ["--password-env", "TEST_P12_PASS", "example.com"]) == 2
     )
+
+
+def test_main_markdown_and_sarif_output_flags(monkeypatch, capsys, tmp_path, make_cert):
+    cert_path = tmp_path / "cert.pem"
+    cert_path.write_bytes(make_cert(san=["example.com"], days_valid=10))
+
+    assert (
+        _run_main(monkeypatch, ["--markdown", "--no-verify", "--file", str(cert_path)])
+        == 3
+    )
+    md = capsys.readouterr().out
+    assert "| Target | Status |" in md
+    assert "| EXPIRING |" in md
+
+    assert (
+        _run_main(monkeypatch, ["--sarif", "--no-verify", "--file", str(cert_path)])
+        == 3
+    )
+    sarif = json.loads(capsys.readouterr().out)
+    assert sarif["version"] == "2.1.0"
+    assert sarif["runs"][0]["results"][0]["ruleId"] == "CERT002"
+
+    assert _run_main(monkeypatch, ["--markdown", "--sarif", "example.com"]) == 2
