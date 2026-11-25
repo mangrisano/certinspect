@@ -129,7 +129,10 @@ def pin_matches(info: CertificateInfo, pin: str) -> bool:
     ``aabb..`` forms are accepted.
     """
     normalized = info["fingerprint_sha256"].replace(":", "").lower()
-    return hmac.compare_digest(normalized, pin.replace(":", "").lower())
+    return hmac.compare_digest(
+        normalized.encode("ascii"),
+        pin.replace(":", "").lower().encode("utf-8"),
+    )
 
 
 def chain_summary(cert: x509.Certificate) -> dict:

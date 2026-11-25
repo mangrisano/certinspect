@@ -701,3 +701,8 @@ def test_hostname_matches_canonicalizes_ipv6_trailing_dot_and_idna(make_cert):
 
     idna_info = analyze(load_certificate(make_cert(san=["xn--mnchen-3ya.de"])))
     assert hostname_matches(idna_info, "münchen.de") is True
+
+
+def test_pin_matches_handles_non_ascii_pin(make_cert):
+    info = analyze(load_certificate(make_cert()))
+    assert pin_matches(info, "non-ascii-é-pin") is False

@@ -1769,21 +1769,26 @@ def test_httpfetch_sanitize_url_redacts_userinfo():
     )
 
 
-def test_fetch_verified_cert_uses_single_handshake_when_trusted(monkeypatch, make_cert):
+def test_fetch_verified_cert_uses_single_handshake_when_trusted(
+    monkeypatch, make_chain
+):
+    from cryptography.hazmat.primitives import serialization
     from certinspect import fetch as fetch_mod
 
-    der = make_cert(san=["example.com"])
-    cert = load_certificate(der)
+    leaf, inter, root = make_chain()
+    der = leaf.public_bytes(serialization.Encoding.DER)
     calls = 0
 
     def _fake_handshake(*args, **kwargs):
         nonlocal calls
         calls += 1
-        return der, {
+        assert kwargs.get("include_verified_chain") is True
+        conn = {
             "tls_version": "TLSv1.3",
             "cipher": "TLS_AES_256_GCM_SHA384",
-            "chain": [cert],
+            "chain": [leaf, inter],
         }
+        return der, conn, [leaf, inter, root]
 
     monkeypatch.setattr(fetch_mod, "_handshake", _fake_handshake)
     got_der, conn, trusted, reason, verified = fetch_mod.fetch_verified_cert(
@@ -1792,9 +1797,10 @@ def test_fetch_verified_cert_uses_single_handshake_when_trusted(monkeypatch, mak
     assert calls == 1
     assert got_der == der
     assert conn["tls_version"] == "TLSv1.3"
+    assert conn["chain"] == [leaf, inter]
     assert trusted is True
     assert reason is None
-    assert verified == [cert]
+    assert verified == [leaf, inter, root]
 
 
 def test_fetch_verified_cert_falls_back_on_verification_error(monkeypatch, make_cert):

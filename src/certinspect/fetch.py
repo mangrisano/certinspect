@@ -304,12 +304,12 @@ def _run_starttls(sock: socket.socket, protocol: str, timeout: float | None) -> 
     spec.negotiate(sock, reply)
 
 
-def _connection_info(ssock: ssl.SSLSocket, chain_method: str) -> ConnectionInfo:
+def _connection_info(ssock: ssl.SSLSocket) -> ConnectionInfo:
     cipher = ssock.cipher()
     return ConnectionInfo(
         tls_version=ssock.version(),
         cipher=cipher[0] if cipher else None,
-        chain=_chain(ssock, chain_method),
+        chain=_chain(ssock, "get_unverified_chain"),
     )
 
 
@@ -325,8 +325,8 @@ def _handshake(
     client_key: str | None = None,
     proxy: str | None = None,
     no_proxy: bool = False,
-    chain_method: str = "get_unverified_chain",
-) -> tuple[bytes, ConnectionInfo]:
+    include_verified_chain: bool = False,
+) -> tuple[bytes, ConnectionInfo, list[x509.Certificate]]:
     if client_cert:
         context.load_cert_chain(certfile=client_cert, keyfile=client_key)
     connect_timeout, read_timeout = _split_timeout(timeout)
@@ -337,7 +337,12 @@ def _handshake(
         if starttls:
             _negotiate_starttls(sock, starttls, read_timeout)
         with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
-            return _peer_der(ssock), _connection_info(ssock, chain_method)
+            der = _peer_der(ssock)
+            conn = _connection_info(ssock)
+            verified = (
+                _chain(ssock, "get_verified_chain") if include_verified_chain else []
+            )
+            return der, conn, verified
 
 
 def get_server_cert(
@@ -372,7 +377,7 @@ def get_server_cert(
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    return _handshake(
+    der, conn, _ = _handshake(
         host,
         port,
         timeout,
@@ -383,8 +388,8 @@ def get_server_cert(
         client_key=client_key,
         proxy=proxy,
         no_proxy=no_proxy,
-        chain_method="get_unverified_chain",
     )
+    return der, conn
 
 
 def fetch_verified_cert(
@@ -403,15 +408,17 @@ def fetch_verified_cert(
     """Fetch and verify the server certificate in a single TLS handshake.
 
     When the chain is trusted, this completes in one round-trip and returns
-    ``(der, conn, True, None, verified_chain)``. Only when chain verification
-    fails (``SSLCertVerificationError``) does it fall back to an unverified
-    handshake so expired or self-signed certificates can still be inspected,
-    returning ``(der, conn, False, reason, [])``.
+    ``(der, conn, True, None, verified_chain)`` where ``conn["chain"]`` holds
+    the chain presented by the server and ``verified_chain`` holds OpenSSL's
+    verified chain. Only when chain verification fails
+    (``SSLCertVerificationError``) does it fall back to an unverified handshake
+    so expired or self-signed certificates can still be inspected, returning
+    ``(der, conn, False, reason, [])``.
     """
     context = _trust_context(cafile, capath)
     context.check_hostname = False
     try:
-        der, conn = _handshake(
+        der, conn, verified = _handshake(
             host,
             port,
             timeout,
@@ -422,9 +429,9 @@ def fetch_verified_cert(
             client_key=client_key,
             proxy=proxy,
             no_proxy=no_proxy,
-            chain_method="get_verified_chain",
+            include_verified_chain=True,
         )
-        verified = conn["chain"] or [x509.load_der_x509_certificate(der)]
+        verified = verified or [x509.load_der_x509_certificate(der)]
         return der, conn, True, None, verified
     except ssl.SSLCertVerificationError as err:
         reason = err.verify_message or str(err)
@@ -512,7 +519,7 @@ def verify_chain(
     # Verify chain trust only; the hostname is reported separately as hostname_match.
     context.check_hostname = False
     try:
-        der, conn = _handshake(
+        der, _, verified = _handshake(
             host,
             port,
             timeout,
@@ -523,9 +530,9 @@ def verify_chain(
             client_key=client_key,
             proxy=proxy,
             no_proxy=no_proxy,
-            chain_method="get_verified_chain",
+            include_verified_chain=True,
         )
-        chain = conn["chain"] or [x509.load_der_x509_certificate(der)]
+        chain = verified or [x509.load_der_x509_certificate(der)]
         return True, None, chain
     except ssl.SSLCertVerificationError as err:
         return False, err.verify_message or str(err), []
