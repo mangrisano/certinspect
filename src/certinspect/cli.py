@@ -10,6 +10,7 @@ with a status code reflecting the worst certificate state found.
 import argparse
 import functools
 import math
+import os
 import ssl
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -280,6 +281,8 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error(
             "--client-cert/--proxy/--no-proxy apply to host targets, not --file."
         )
+    if args.password_env and not args.file:
+        parser.error("--password-env applies to --file, not host targets.")
     if args.export_chain and not args.file:
         parser.error("--export-chain applies to --file, not host targets.")
     if args.include_root and not args.export_chain:
@@ -434,6 +437,20 @@ def _expand_host_items(
     return items, resolve_errors
 
 
+def _resolve_file_password(args: argparse.Namespace) -> bytes | None:
+    """Read the PKCS#12 passphrase from the env var named by ``--password-env``."""
+    if not args.password_env:
+        return None
+    secret = os.environ.get(args.password_env)
+    if secret is None:
+        print(
+            f"error: --password-env variable {args.password_env!r} is not set",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return secret.encode("utf-8")
+
+
 def _inspect_all(
     args: argparse.Namespace, host_targets: list[str], file_targets: list[str]
 ) -> tuple[list[InspectionResult], list[tuple[str | None, str]], list[int]]:
@@ -443,7 +460,8 @@ def _inspect_all(
     counted as RUNTIME_ERROR; ``codes`` holds one exit code per target.
     """
     default_port = _default_port(args)
-    opts = InspectOptions.from_args(args)
+    password = _resolve_file_password(args)
+    opts = replace(InspectOptions.from_args(args), password=password)
 
     # A single --file source keeps the old unlabelled output; with several
     # files (or several hosts) each result is labelled to tell them apart.

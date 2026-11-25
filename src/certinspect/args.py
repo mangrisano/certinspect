@@ -58,11 +58,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--file",
         action="append",
         help=(
-            "Path to a local certificate file (PEM or DER) to inspect "
-            "instead of a host; use '-' to read the certificate from standard "
-            "input. Repeat the flag to inspect several files in one run (each "
-            "is reported separately); at most one may be '-'. Cannot be "
-            "combined with host targets."
+            "Path to a local certificate file (PEM, DER, or PKCS#12 .p12/.pfx) "
+            "to inspect instead of a host; use '-' to read the certificate from "
+            "standard input. Repeat the flag to inspect several files in one "
+            "run (each is reported separately); at most one may be '-'. Cannot "
+            "be combined with host targets."
+        ),
+    )
+    parser.add_argument(
+        "--password-env",
+        metavar="VAR",
+        dest="password_env",
+        help=(
+            "Read the passphrase for encrypted PKCS#12 (.p12/.pfx) --file "
+            "inputs from environment variable VAR, avoiding secrets in the "
+            "command line. Applies to --file only."
         ),
     )
     parser.add_argument(

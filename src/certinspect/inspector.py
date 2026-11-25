@@ -152,6 +152,7 @@ class InspectOptions:
     """
 
     file: str | None = None
+    password: bytes | None = None
     days: int = 30
     critical_days: int | None = None
     export: str | None = None
@@ -188,7 +189,11 @@ class InspectOptions:
     def from_args(cls, args: argparse.Namespace) -> "InspectOptions":
         """Build the options from parsed CLI arguments."""
         return cls(
-            **{f.name: getattr(args, f.name) for f in fields(cls) if f.name != "file"}
+            **{
+                f.name: getattr(args, f.name)
+                for f in fields(cls)
+                if f.name not in ("file", "password")
+            }
         )
 
     @property
@@ -450,7 +455,7 @@ def inspect_target(
 ) -> tuple[CertificateInfo, int]:
     """Inspect one host or local file source and return ``(info, exit_code)``."""
     der, conn, inline_verify = _fetch_source(target, port, opts, backend)
-    cert = load_certificate(der)
+    cert = load_certificate(der, password=opts.password)
     info = analyze(cert)
     if conn:
         info["tls_version"] = conn["tls_version"]
@@ -468,7 +473,7 @@ def inspect_target(
 
     file_bundle: list | None = None
     if opts.file and (opts.verify or opts.chain or opts.export_chain):
-        file_bundle = load_certificates(der)
+        file_bundle = load_certificates(der, password=opts.password)
     if opts.export_chain and file_bundle is not None:
         file_bundle = _export_chain(
             file_bundle, opts.export_opts, opts.connection, backend

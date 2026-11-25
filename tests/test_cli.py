@@ -2791,3 +2791,54 @@ def test_main_all_ips_reports_dns_failure_and_rejects_file_or_export(
     assert (
         _run_main(monkeypatch, ["--all-ips", "--export", "out.pem", "example.com"]) == 2
     )
+
+
+def test_main_file_pkcs12_with_password_env_verifies_bundle(
+    monkeypatch, capsys, tmp_path, make_chain
+):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12
+
+    leaf, inter, root = make_chain()
+    p12 = pkcs12.serialize_key_and_certificates(
+        b"svc",
+        None,
+        leaf,
+        [inter],
+        serialization.BestAvailableEncryption(b"p12-pass"),
+    )
+    p12_path = tmp_path / "bundle.p12"
+    p12_path.write_bytes(p12)
+    ca_path = tmp_path / "root.pem"
+    ca_path.write_bytes(root.public_bytes(serialization.Encoding.PEM))
+
+    monkeypatch.setenv("TEST_P12_PASS", "p12-pass")
+    code = _run_main(
+        monkeypatch,
+        [
+            "--file",
+            str(p12_path),
+            "--password-env",
+            "TEST_P12_PASS",
+            "--cafile",
+            str(ca_path),
+            "--chain",
+            "--json",
+        ],
+    )
+    assert code == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["results"][0]["chain"]["trusted"] is True
+    assert len(data["results"][0]["chain"]["certificates"]) == 2
+
+    monkeypatch.delenv("TEST_P12_PASS", raising=False)
+    assert (
+        _run_main(
+            monkeypatch,
+            ["--file", str(p12_path), "--password-env", "TEST_P12_PASS"],
+        )
+        == 1
+    )
+    assert (
+        _run_main(monkeypatch, ["--password-env", "TEST_P12_PASS", "example.com"]) == 2
+    )

@@ -11,6 +11,7 @@ from datetime import date, datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, rsa
+from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
 from certinspect.exit_codes import RevocationStatus, Status
 from certinspect.models import CertificateInfo
@@ -321,28 +322,66 @@ def _key_type(public_key) -> str:
     return type(public_key).__name__
 
 
-def load_certificate(data: bytes) -> x509.Certificate:
-    """Load a certificate from DER or PEM bytes."""
+def load_pkcs12_certificates(
+    data: bytes, password: bytes | None = None
+) -> list[x509.Certificate]:
+    """Load the leaf and additional certificates from a PKCS#12 (.p12/.pfx) archive."""
+    attempts: list[bytes | None] = [password]
+    if password is None:
+        attempts.append(b"")
+    last_err: Exception | None = None
+    for secret in attempts:
+        try:
+            _, leaf, additional = pkcs12.load_key_and_certificates(data, secret)
+            certs: list[x509.Certificate] = []
+            if leaf is not None:
+                certs.append(leaf)
+            if additional:
+                certs.extend(additional)
+            if not certs:
+                raise CertificateLoadError(
+                    "The PKCS#12 archive contains no certificates."
+                )
+            return certs
+        except CertificateLoadError:
+            raise
+        except (ValueError, TypeError) as exc:
+            last_err = exc
+    raise CertificateLoadError(
+        f"The PKCS#12 archive could not be parsed (wrong passphrase or invalid format): {last_err}"
+    ) from last_err
+
+
+def load_certificate(data: bytes, *, password: bytes | None = None) -> x509.Certificate:
+    """Load a certificate from DER, PEM, or PKCS#12 (.p12/.pfx) bytes."""
     if not data:
         raise CertificateLoadError("There is no certificate to load.")
     try:
         return x509.load_der_x509_certificate(data)
     except ValueError:
+        pass
+    try:
+        return x509.load_pem_x509_certificate(data)
+    except ValueError as pem_exc:
         try:
-            return x509.load_pem_x509_certificate(data)
-        except ValueError as exc:
+            return load_pkcs12_certificates(data, password=password)[0]
+        except CertificateLoadError:
+            if password is not None:
+                raise
             raise CertificateLoadError(
-                f"The certificate could not be parsed: {exc}"
-            ) from exc
+                f"The certificate could not be parsed: {pem_exc}"
+            ) from pem_exc
 
 
-def load_certificates(data: bytes) -> list[x509.Certificate]:
-    """Load every certificate from a bundle (leaf first), or a single DER cert.
+def load_certificates(
+    data: bytes, *, password: bytes | None = None
+) -> list[x509.Certificate]:
+    """Load every certificate from a PEM bundle, single DER cert, or PKCS#12 archive.
 
     A ``--file`` source may hold the full chain — leaf, intermediates and root —
-    concatenated in PEM form, optionally wrapped with the ``Bag Attributes``
-    preamble that OpenSSL writes when exporting a PKCS#12. A lone DER file
-    carries a single certificate. Certificates are returned in file order.
+    concatenated in PEM form (optionally wrapped with OpenSSL ``Bag Attributes``),
+    a lone DER certificate, or a PKCS#12 (``.p12``/``.pfx``) archive.
+    Certificates are returned leaf first.
     """
     if not data:
         raise CertificateLoadError("There is no certificate to load.")
@@ -352,9 +391,15 @@ def load_certificates(data: bytes) -> list[x509.Certificate]:
         pass
     try:
         certs = x509.load_pem_x509_certificates(data)
-    except ValueError as exc:
-        message = f"The certificate could not be parsed: {exc}"
-        raise CertificateLoadError(message) from exc
+    except ValueError as pem_exc:
+        try:
+            return load_pkcs12_certificates(data, password=password)
+        except CertificateLoadError:
+            if password is not None:
+                raise
+            raise CertificateLoadError(
+                f"The certificate could not be parsed: {pem_exc}"
+            ) from pem_exc
     if not certs:
         raise CertificateLoadError("There is no certificate to load.")
     return certs

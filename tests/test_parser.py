@@ -706,3 +706,34 @@ def test_hostname_matches_canonicalizes_ipv6_trailing_dot_and_idna(make_cert):
 def test_pin_matches_handles_non_ascii_pin(make_cert):
     info = analyze(load_certificate(make_cert()))
     assert pin_matches(info, "non-ascii-é-pin") is False
+
+
+def test_load_certificates_reads_pkcs12_with_chain_and_password(make_chain):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.serialization import pkcs12
+
+    leaf, inter, root = make_chain()
+    p12_encrypted = pkcs12.serialize_key_and_certificates(
+        b"bundle",
+        None,
+        leaf,
+        [inter, root],
+        serialization.BestAvailableEncryption(b"s3cr3t"),
+    )
+    loaded = load_certificates(p12_encrypted, password=b"s3cr3t")
+    assert [c.serial_number for c in loaded] == [
+        leaf.serial_number,
+        inter.serial_number,
+        root.serial_number,
+    ]
+    assert load_certificate(p12_encrypted, password=b"s3cr3t") == leaf
+    with pytest.raises(CertificateLoadError):
+        load_certificates(p12_encrypted, password=b"wrong")
+
+    p12_plain = pkcs12.serialize_key_and_certificates(
+        b"plain", None, leaf, [inter], serialization.NoEncryption()
+    )
+    assert [c.serial_number for c in load_certificates(p12_plain)] == [
+        leaf.serial_number,
+        inter.serial_number,
+    ]
