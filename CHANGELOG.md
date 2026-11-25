@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Hardened HTTP `CONNECT` proxying against CRLF/header injection, added IPv6
+  bracket formatting, percent-decoded proxy credentials, and switched the
+  CONNECT response reader to 1-byte reads so server-first STARTTLS banners are
+  not consumed.
+- Neutralized CSV formula injection and sanitized control characters in TSV and
+  Nagios output; fixed `certinspect_cert_valid` in Prometheus output for
+  `NOT YET VALID` certificates.
+- Ensured explicit CLI flags override mutually exclusive defaults from
+  `--config`, validated config option types and choices, and enforced numeric
+  bounds on `--port`, timeouts, `--retries`, and `--concurrency`.
+- Hardened OCSP/CRL revocation checking (all AIA OCSP URLs tried, RSA-PSS and
+  DSA signature support, cross-signing cycle detection), atomic `--state-file`
+  writes, `crt.sh` non-dict record rejection, canonical IPv6/trailing-dot/IDNA
+  hostname matching, constant-time pin comparison, and URL userinfo redaction
+  in HTTP fetch errors.
+
+### Changed
+
+- Verified host inspections now complete in a single TLS handshake
+  (`fetch_verified_cert`), falling back to an unverified handshake only on
+  verification failure, and offline verification caches parsed `trust_anchors`.
+- Extracted the inspection pipeline into `certinspect.inspector` with cohesive
+  option views (`ConnectionOptions`, `PolicyOptions`, `ExportOptions`), an
+  injectable `InspectionBackend`, `HttpClient` in `httpfetch`, a STARTTLS
+  protocol registry, a renderer registry in `render`, and composable policy
+  rules in `parser`.
+- Enabled `flake8-bugbear` (`B`) rules in Ruff configuration.
+
 ## [2.6.0] - 2026-11-19
 
 ### Changed
