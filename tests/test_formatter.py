@@ -590,3 +590,30 @@ def test_format_summary_counts_not_yet_valid(make_cert):
     line = format_summary([("a.com", valid, 0), ("b.com", future, 4)])
     assert "1 not-yet-valid" in line
     assert "1 expired" not in line
+
+
+def test_format_prometheus_marks_not_yet_valid_as_invalid(make_cert):
+    future = _info(
+        make_cert(san=["future.example.com"], days_ago_start=-5, days_valid=90)
+    )
+    text = format_prometheus([("future.example.com", future, 4)])
+    assert 'certinspect_cert_valid{target="future.example.com"} 0' in text
+
+
+def test_format_csv_neutralizes_formula_injection(make_cert):
+    info = _info(make_cert(common_name="=CMD|' /C calc'!A0"))
+    rows = _parse_csv(format_csv([("example.com", info, 0)]))
+    assert rows[0]["common_name"].startswith("'=")
+
+
+def test_format_fields_and_nagios_sanitize_control_characters(make_cert):
+    info = _info(make_cert(common_name="evil\tname\nline|perf=1"))
+    tsv = format_fields([("example.com", info, 0)], ["target", "subject"])
+    assert tsv.count("\n") == 0
+    assert tsv.count("\t") == 1
+
+    nagios_text, _ = format_nagios([(None, info, 0)], [("bad\n|host", "err\n|fake=1")])
+    lines = nagios_text.splitlines()
+    assert len(lines) == 2
+    assert lines[0].count("|") == 1
+    assert "|" not in lines[1]

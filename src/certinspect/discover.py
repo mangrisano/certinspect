@@ -76,6 +76,8 @@ def _fetch_records(domain: str, timeout: float) -> list[dict]:
         raise ValueError(f"could not parse the crt.sh response: {err}") from err
     if not isinstance(records, list):
         raise ValueError("unexpected crt.sh response: expected a JSON array")
+    if any(not isinstance(record, dict) for record in records):
+        raise ValueError("unexpected crt.sh response: expected JSON objects")
     return records
 
 

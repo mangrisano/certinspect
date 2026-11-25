@@ -14,12 +14,19 @@ from typing import cast, get_args
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec, ed448, ed25519, padding, rsa
+from cryptography.hazmat.primitives.asymmetric import (
+    dsa,
+    ec,
+    ed448,
+    ed25519,
+    padding,
+    rsa,
+)
 from cryptography.hazmat.primitives.asymmetric.types import (
     CertificateIssuerPublicKeyTypes,
 )
 from cryptography.x509 import ocsp
-from cryptography.x509.oid import ExtendedKeyUsageOID
+from cryptography.x509.oid import ExtendedKeyUsageOID, SignatureAlgorithmOID
 
 from certinspect.exit_codes import RevocationStatus
 from certinspect.httpfetch import fetch
@@ -27,8 +34,8 @@ from certinspect.parser import aia_urls, is_ca_certificate
 
 _SIGNING_KEY_TYPES = get_args(CertificateIssuerPublicKeyTypes)
 
-# Clock-skew tolerance when judging whether an OCSP response is still fresh.
-_OCSP_CLOCK_SKEW = timedelta(minutes=5)
+# Clock-skew tolerance when judging whether an OCSP response or CRL is still fresh.
+_REVOCATION_CLOCK_SKEW = timedelta(minutes=5)
 
 
 class _UnusableRevocationData(Exception):
@@ -87,7 +94,7 @@ def complete_chain(
         issuer = next((c for c in pool if _signed_by(current, c)), None)
         if issuer is None:
             issuer = _fetch_issuer(current, timeout)
-        if issuer is None:
+        if issuer is None or issuer in chain:
             return chain, False
         chain.append(issuer)
     return chain, False
@@ -131,24 +138,37 @@ def _require_fresh_ocsp_response(response: ocsp.OCSPResponse) -> None:
         next_update = response.next_update_utc
     except (ValueError, AttributeError):
         return
-    if this_update is not None and this_update - _OCSP_CLOCK_SKEW > now:
+    if this_update is not None and this_update - _REVOCATION_CLOCK_SKEW > now:
         raise _UnusableRevocationData(
             f"OCSP response not yet valid (thisUpdate {this_update})"
         )
-    if next_update is not None and next_update + _OCSP_CLOCK_SKEW < now:
+    if next_update is not None and next_update + _REVOCATION_CLOCK_SKEW < now:
         raise _UnusableRevocationData(
             f"OCSP response is stale (nextUpdate {next_update})"
         )
 
 
 def _verify_signature(
-    public_key, signature: bytes, data: bytes, hash_algorithm
+    public_key,
+    signature: bytes,
+    data: bytes,
+    hash_algorithm,
+    signature_algorithm_oid: x509.ObjectIdentifier | None = None,
 ) -> None:
     """Verify ``signature`` over ``data``; raise InvalidSignature if it is wrong."""
     if isinstance(public_key, rsa.RSAPublicKey):
-        public_key.verify(signature, data, padding.PKCS1v15(), hash_algorithm)
+        if signature_algorithm_oid == SignatureAlgorithmOID.RSASSA_PSS:
+            rsa_padding: padding.AsymmetricPadding = padding.PSS(
+                mgf=padding.MGF1(hash_algorithm),
+                salt_length=padding.PSS.AUTO,
+            )
+        else:
+            rsa_padding = padding.PKCS1v15()
+        public_key.verify(signature, data, rsa_padding, hash_algorithm)
     elif isinstance(public_key, ec.EllipticCurvePublicKey):
         public_key.verify(signature, data, ec.ECDSA(hash_algorithm))
+    elif isinstance(public_key, dsa.DSAPublicKey):
+        public_key.verify(signature, data, hash_algorithm)
     elif isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
         public_key.verify(signature, data)
     else:
@@ -223,6 +243,7 @@ def _authenticate_ocsp_response(
             response.signature,
             response.tbs_response_bytes,
             response.signature_hash_algorithm,
+            response.signature_algorithm_oid,
         )
     except UnsupportedAlgorithm as err:
         raise _UnusableRevocationData(
@@ -253,42 +274,44 @@ def _check_ocsp(
     request = builder.build()
     der_request = request.public_bytes(serialization.Encoding.DER)
 
-    try:
-        raw = fetch(ocsp_urls[0], data=der_request, timeout=timeout)
-    except (OSError, ValueError) as err:
-        return RevocationStatus.UNAVAILABLE, f"OCSP request failed: {err}"
+    last_error = "OCSP request failed"
+    for url in ocsp_urls:
+        try:
+            raw = fetch(url, data=der_request, timeout=timeout)
+        except (OSError, ValueError) as err:
+            last_error = f"OCSP request failed: {err}"
+            continue
 
-    # Parsing must soft-fail too: some responders (e.g. DigiCert/GitHub) return
-    # a BasicOCSPResponse whose signatureAlgorithm the strict ASN.1 parser
-    # rejects with a ValueError. A malformed response must not abort the whole
-    # inspection — degrade to UNAVAILABLE and let the CRL fallback take over.
-    try:
-        response = ocsp.load_der_ocsp_response(raw)
-        if response.response_status != ocsp.OCSPResponseStatus.SUCCESSFUL:
-            return (
-                RevocationStatus.UNAVAILABLE,
-                f"OCSP response status: {response.response_status.name}",
-            )
-        # An unauthenticated REVOKED is ignored too, or an attacker could
-        # get healthy certificates reported as revoked.
-        _authenticate_ocsp_response(response, request, issuer)
-        status = response.certificate_status
+        # Parsing must soft-fail too: some responders (e.g. DigiCert/GitHub) return
+        # a BasicOCSPResponse whose signatureAlgorithm the strict ASN.1 parser
+        # rejects with a ValueError. A malformed response must not abort the whole
+        # inspection — try the next responder or let the CRL fallback take over.
+        try:
+            response = ocsp.load_der_ocsp_response(raw)
+            if response.response_status != ocsp.OCSPResponseStatus.SUCCESSFUL:
+                last_error = f"OCSP response status: {response.response_status.name}"
+                continue
+            # An unauthenticated REVOKED is ignored too, or an attacker could
+            # get healthy certificates reported as revoked.
+            _authenticate_ocsp_response(response, request, issuer)
+            status = response.certificate_status
+            if status == ocsp.OCSPCertStatus.GOOD:
+                _require_fresh_ocsp_response(response)
+        except _UnusableRevocationData as err:
+            last_error = str(err)
+            continue
+        except ValueError as err:
+            last_error = f"OCSP response could not be parsed: {err}"
+            continue
+
         if status == ocsp.OCSPCertStatus.GOOD:
-            _require_fresh_ocsp_response(response)
-    except _UnusableRevocationData as err:
-        return RevocationStatus.UNAVAILABLE, str(err)
-    except ValueError as err:
-        return (
-            RevocationStatus.UNAVAILABLE,
-            f"OCSP response could not be parsed: {err}",
-        )
+            return RevocationStatus.GOOD, None
+        if status == ocsp.OCSPCertStatus.REVOKED:
+            when = getattr(response, "revocation_time_utc", None)
+            return RevocationStatus.REVOKED, f"revoked at {when}" if when else "revoked"
+        return RevocationStatus.UNKNOWN, "responder does not know this certificate"
 
-    if status == ocsp.OCSPCertStatus.GOOD:
-        return RevocationStatus.GOOD, None
-    if status == ocsp.OCSPCertStatus.REVOKED:
-        when = getattr(response, "revocation_time_utc", None)
-        return RevocationStatus.REVOKED, f"revoked at {when}" if when else "revoked"
-    return RevocationStatus.UNKNOWN, "responder does not know this certificate"
+    return RevocationStatus.UNAVAILABLE, last_error
 
 
 def _load_crl(raw: bytes) -> x509.CertificateRevocationList | None:
@@ -310,11 +333,11 @@ def _require_fresh_crl(crl: x509.CertificateRevocationList) -> None:
         next_update = crl.next_update_utc
     except (ValueError, AttributeError):
         return
-    if last_update is not None and last_update - _OCSP_CLOCK_SKEW > now:
+    if last_update is not None and last_update - _REVOCATION_CLOCK_SKEW > now:
         raise _UnusableRevocationData(
             f"CRL is not yet valid (lastUpdate {last_update})"
         )
-    if next_update is not None and next_update + _OCSP_CLOCK_SKEW < now:
+    if next_update is not None and next_update + _REVOCATION_CLOCK_SKEW < now:
         raise _UnusableRevocationData(f"CRL is stale (nextUpdate {next_update})")
 
 

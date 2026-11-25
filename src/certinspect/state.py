@@ -1,7 +1,10 @@
 """Persist per-target status across runs for --state-file / --only-changed."""
 
 import json
+import os
 import sys
+import tempfile
+from pathlib import Path
 
 from certinspect.models import InspectionResult
 
@@ -29,25 +32,55 @@ def update_state(
 def load_state(path: str) -> dict[str, str]:
     """Return the target -> status mapping saved by a previous --state-file run.
 
-    A missing, unreadable or malformed file is treated as an empty history (the
-    first run establishes the baseline) rather than an error.
+    A missing file is treated as an empty history (the first run establishes
+    the baseline). A malformed file is also treated as empty, with a warning on
+    stderr so corruption does not go unnoticed.
     """
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, ValueError):
+    except OSError:
         return {}
-    return data if isinstance(data, dict) else {}
+    except ValueError as err:
+        print(
+            f"warning: ignoring malformed --state-file {path}: {err}",
+            file=sys.stderr,
+        )
+        return {}
+    if not isinstance(data, dict):
+        print(
+            f"warning: ignoring malformed --state-file {path}: expected a JSON object",
+            file=sys.stderr,
+        )
+        return {}
+    return data
 
 
 def save_state(path: str, state: dict[str, str]) -> None:
-    """Persist the target -> status mapping for the next --state-file run.
+    """Persist the target -> status mapping atomically for the next run.
 
     Failing to write is reported as a warning rather than aborting the run:
     the inspection results themselves are unaffected.
     """
+    target = Path(path)
+    tmp_path: str | None = None
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=target.parent or Path("."),
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as f:
+            tmp_path = f.name
             json.dump(state, f, indent=2, sort_keys=True)
+            f.flush()
+        os.replace(tmp_path, target)
     except OSError as err:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
         print(f"warning: could not write --state-file {path}: {err}", file=sys.stderr)

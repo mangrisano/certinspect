@@ -119,3 +119,10 @@ def test_discover_certificates_sorts_by_expiry_and_keeps_wildcards(monkeypatch):
         ("*.example.com",),
         ("b.example.com",),
     ]
+
+
+def test_discover_rejects_non_dict_json_elements(monkeypatch):
+    payload = b"[null]"
+    monkeypatch.setattr("certinspect.discover.fetch", lambda url, *, timeout: payload)
+    with pytest.raises(ValueError, match="JSON objects"):
+        discover_certificates("example.com", 5.0)

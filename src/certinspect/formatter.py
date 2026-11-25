@@ -276,6 +276,23 @@ def format_json_v2(results: list[InspectionResult], *, version: str) -> str:
     return json.dumps(document, indent=2, default=str, ensure_ascii=False)
 
 
+def _sanitize_tsv(value: str) -> str:
+    """Replace tabs and newlines so an untrusted field cannot split TSV columns/rows."""
+    return value.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+
+def _sanitize_csv_cell(value: object) -> object:
+    """Neutralize spreadsheet formula injection on string cells."""
+    if isinstance(value, str) and value.startswith(("=", "+", "-", "@", "\t", "\r")):
+        return f"'{value}"
+    return value
+
+
+def _sanitize_nagios(value: str) -> str:
+    """Keep Nagios plugin text single-line and free of injected perfdata pipes."""
+    return value.replace("\r", " ").replace("\n", " ").replace("|", " ")
+
+
 def _field_value(target: str | None, info: CertificateInfo, name: str) -> str:
     """Render one selected field of a result as a single string.
 
@@ -286,8 +303,8 @@ def _field_value(target: str | None, info: CertificateInfo, name: str) -> str:
     if value is None:
         return ""
     if isinstance(value, (list, tuple)):
-        return ",".join(str(item) for item in value)
-    return str(value)
+        return _sanitize_tsv(",".join(str(item) for item in value))
+    return _sanitize_tsv(str(value))
 
 
 def format_fields(results: list[InspectionResult], fields: list[str]) -> str:
@@ -352,7 +369,12 @@ def format_csv(
     writer.writerow([label for label, _ in _CSV_COLUMNS])
     for target, info, _ in results:
         status = _status_of(info, warn_days, critical_days)
-        writer.writerow([getter(target, info, status) for _, getter in _CSV_COLUMNS])
+        writer.writerow(
+            [
+                _sanitize_csv_cell(getter(target, info, status))
+                for _, getter in _CSV_COLUMNS
+            ]
+        )
     return buffer.getvalue()
 
 
@@ -392,7 +414,7 @@ def format_ct_inventory(
             header.append("unexpected_issuer")
         writer.writerow(header)
         for domain, cert, unexpected in rows:
-            fields = [
+            fields: list[object] = [
                 domain,
                 " ".join(cert.hostnames),
                 cert.issuer,
@@ -401,11 +423,14 @@ def format_ct_inventory(
             ]
             if flag_issuer:
                 fields.append("yes" if unexpected else "no")
-            writer.writerow(fields)
+            writer.writerow([_sanitize_csv_cell(field) for field in fields])
         return buffer.getvalue()
     lines = []
     for _, cert, unexpected in rows:
-        line = f"{cert.not_after}\t{cert.issuer}\t{', '.join(cert.hostnames)}"
+        issuer = _sanitize_tsv(cert.issuer)
+        hosts = _sanitize_tsv(", ".join(cert.hostnames))
+        not_after = _sanitize_tsv(cert.not_after)
+        line = f"{not_after}\t{issuer}\t{hosts}"
         lines.append(f"{line}\tUNEXPECTED\n" if unexpected else f"{line}\n")
     return "".join(lines)
 
@@ -525,7 +550,7 @@ def format_nagios(
     for target, info, code in results:
         severity = _nagios_severity(code)
         worst = max(worst, severity)
-        name = target or info["subject"]
+        name = _sanitize_nagios(target or info["subject"])
         status = _status_of(info, warn_days, critical_days)
         days = info["days_to_expire"]
         # "N:" alerts below N; a bare "N" would alert above it (plugin range rules).
@@ -538,9 +563,10 @@ def format_nagios(
 
     for target, message in errors:
         worst = max(worst, NAGIOS_CRITICAL)
-        name = target or "target"
+        name = _sanitize_nagios(target or "target")
+        clean_msg = _sanitize_nagios(message)
         lines.append(
-            f"{_NAGIOS_LABELS[NAGIOS_CRITICAL]}: {name} unreachable ({message})"
+            f"{_NAGIOS_LABELS[NAGIOS_CRITICAL]}: {name} unreachable ({clean_msg})"
         )
 
     if not lines:
@@ -582,7 +608,8 @@ def format_prometheus(
         days = info["days_to_expire"]
         is_valid = (
             0
-            if _status_of(info, warn_days) in (Status.EXPIRED, Status.INVALID_DATES)
+            if _status_of(info, warn_days)
+            in (Status.EXPIRED, Status.INVALID_DATES, Status.NOT_YET_VALID)
             else 1
         )
         up.append(f'certinspect_up{{target="{label}"}} 1')
