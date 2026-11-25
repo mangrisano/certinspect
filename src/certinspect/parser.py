@@ -4,12 +4,15 @@ Turns certificate bytes (DER or PEM) into a dictionary of fields ready to be
 formatted for the user.
 """
 
+import hmac
+import ipaddress
+from collections.abc import Callable
 from datetime import date, datetime, timezone
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import dsa, ec, ed448, ed25519, rsa
 from cryptography.x509.oid import AuthorityInformationAccessOID, NameOID
-from certinspect.exit_codes import Status
+from certinspect.exit_codes import RevocationStatus, Status
 from certinspect.models import CertificateInfo
 
 
@@ -64,9 +67,35 @@ def to_pem(cert: x509.Certificate) -> bytes:
     return cert.public_bytes(serialization.Encoding.PEM)
 
 
+def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """Return the parsed IP address if ``value`` is an IP literal, else None."""
+    try:
+        return ipaddress.ip_address(value)
+    except ValueError:
+        return None
+
+
+def _normalize_dns(name: str) -> str:
+    """Normalize a DNS name: strip trailing root dot, apply IDNA, lowercase."""
+    stripped = name.rstrip(".").lower()
+    if stripped.isascii():
+        return stripped
+    try:
+        if stripped.startswith("*."):
+            return "*." + stripped[2:].encode("idna").decode("ascii")
+        return stripped.encode("idna").decode("ascii")
+    except UnicodeError:
+        return stripped
+
+
 def _name_matches(pattern: str, hostname: str) -> bool:
-    pattern = pattern.lower()
-    hostname = hostname.lower()
+    pattern_ip = _parse_ip(pattern)
+    host_ip = _parse_ip(hostname)
+    if pattern_ip is not None or host_ip is not None:
+        return pattern_ip is not None and pattern_ip == host_ip
+
+    pattern = _normalize_dns(pattern)
+    hostname = _normalize_dns(hostname)
     if pattern.startswith("*."):
         head, _, tail = hostname.partition(".")
         return bool(head) and tail == pattern[2:]
@@ -100,7 +129,7 @@ def pin_matches(info: CertificateInfo, pin: str) -> bool:
     ``aabb..`` forms are accepted.
     """
     normalized = info["fingerprint_sha256"].replace(":", "").lower()
-    return normalized == pin.replace(":", "").lower()
+    return hmac.compare_digest(normalized, pin.replace(":", "").lower())
 
 
 def chain_summary(cert: x509.Certificate) -> dict:
@@ -296,7 +325,12 @@ def load_certificate(data: bytes) -> x509.Certificate:
     try:
         return x509.load_der_x509_certificate(data)
     except ValueError:
-        return x509.load_pem_x509_certificate(data)
+        try:
+            return x509.load_pem_x509_certificate(data)
+        except ValueError as exc:
+            raise CertificateLoadError(
+                f"The certificate could not be parsed: {exc}"
+            ) from exc
 
 
 def load_certificates(data: bytes) -> list[x509.Certificate]:
@@ -501,6 +535,7 @@ _TLS_VERSION_ORDER = (
     "TLSv1.2",
     "TLSv1.3",
 )
+_TLS_VERSION_RANK = {name: rank for rank, name in enumerate(_TLS_VERSION_ORDER)}
 
 
 def tls_version_rank(version: str) -> int | None:
@@ -510,8 +545,105 @@ def tls_version_rank(version: str) -> int | None:
     treated as "TLSv1". Newer versions rank higher.
     """
     normalized = "TLSv1" if version == "TLSv1.0" else version
-    order = {name: rank for rank, name in enumerate(_TLS_VERSION_ORDER)}
-    return order.get(normalized)
+    return _TLS_VERSION_RANK.get(normalized)
+
+
+PolicyRule = Callable[[CertificateInfo], list[str]]
+
+
+def _rule_not_after_max(limit: int) -> PolicyRule:
+    def _check(info: CertificateInfo) -> list[str]:
+        if info["validity_days"] > limit:
+            return [
+                f"total validity {info['validity_days']} days exceeds the "
+                f"{limit}-day maximum"
+            ]
+        return []
+
+    return _check
+
+
+def _rule_min_key_size(minimum: int) -> PolicyRule:
+    def _check(info: CertificateInfo) -> list[str]:
+        if (
+            info["key_type"] in _SIZE_CHECKED_KEY_TYPES
+            and info["key_size"] is not None
+            and info["key_size"] < minimum
+        ):
+            return [
+                f"key size {info['key_size']} bit is below the {minimum}-bit minimum"
+            ]
+        return []
+
+    return _check
+
+
+def _rule_fail_weak(info: CertificateInfo) -> list[str]:
+    return list(info["weak"])
+
+
+def _rule_require_sct(info: CertificateInfo) -> list[str]:
+    if not info["sct_count"]:
+        return ["no embedded Signed Certificate Timestamps (Certificate Transparency)"]
+    return []
+
+
+def _rule_require_must_staple(info: CertificateInfo) -> list[str]:
+    if not info["must_staple"]:
+        return ["missing OCSP Must-Staple extension"]
+    return []
+
+
+def _rule_min_tls_version(min_tls_version: str) -> PolicyRule:
+    min_rank = tls_version_rank(min_tls_version)
+
+    def _check(info: CertificateInfo) -> list[str]:
+        negotiated = info.get("tls_version")
+        neg_rank = tls_version_rank(negotiated) if negotiated else None
+        if neg_rank is not None and min_rank is not None and neg_rank < min_rank:
+            return [f"TLS version {negotiated} is below the required {min_tls_version}"]
+        return []
+
+    return _check
+
+
+def _rule_require_revocation_check(info: CertificateInfo) -> list[str]:
+    status = info.get("revocation_status")
+    if status == RevocationStatus.GOOD:
+        return []
+    detail = info.get("revocation_detail")
+    if detail:
+        return [f"revocation check did not return GOOD ({status}: {detail})"]
+    return [f"revocation check did not return GOOD ({status or 'not run'})"]
+
+
+def build_policy_rules(
+    *,
+    not_after_max: int | None = None,
+    min_key_size: int | None = None,
+    fail_weak: bool = False,
+    require_sct: bool = False,
+    require_must_staple: bool = False,
+    min_tls_version: str | None = None,
+    require_revocation_check: bool = False,
+) -> list[PolicyRule]:
+    """Assemble the ordered list of enabled policy specifications."""
+    rules: list[PolicyRule] = []
+    if not_after_max is not None:
+        rules.append(_rule_not_after_max(not_after_max))
+    if min_key_size is not None:
+        rules.append(_rule_min_key_size(min_key_size))
+    if fail_weak:
+        rules.append(_rule_fail_weak)
+    if require_sct:
+        rules.append(_rule_require_sct)
+    if require_must_staple:
+        rules.append(_rule_require_must_staple)
+    if min_tls_version is not None:
+        rules.append(_rule_min_tls_version(min_tls_version))
+    if require_revocation_check:
+        rules.append(_rule_require_revocation_check)
+    return rules
 
 
 def policy_violations(
@@ -523,6 +655,7 @@ def policy_violations(
     require_sct: bool = False,
     require_must_staple: bool = False,
     min_tls_version: str | None = None,
+    require_revocation_check: bool = False,
 ) -> list[str]:
     """Return the opt-in policy violations for the analyzed certificate.
 
@@ -542,41 +675,24 @@ def policy_violations(
       Must-Staple extension (RFC 7633 TLS Feature ``status_request``).
     * ``min_tls_version`` — the negotiated TLS version (``info["tls_version"]``,
       only present for host targets) must be at least this version.
+    * ``require_revocation_check`` — OCSP or CRL must return a definitive GOOD
+      verdict.
 
     The returned strings are ready to display; the list preserves check order
     and is empty when the certificate satisfies every enabled policy.
     """
+    rules = build_policy_rules(
+        not_after_max=not_after_max,
+        min_key_size=min_key_size,
+        fail_weak=fail_weak,
+        require_sct=require_sct,
+        require_must_staple=require_must_staple,
+        min_tls_version=min_tls_version,
+        require_revocation_check=require_revocation_check,
+    )
     violations: list[str] = []
-    if not_after_max is not None and info["validity_days"] > not_after_max:
-        violations.append(
-            f"total validity {info['validity_days']} days exceeds the "
-            f"{not_after_max}-day maximum"
-        )
-    if (
-        min_key_size is not None
-        and info["key_type"] in _SIZE_CHECKED_KEY_TYPES
-        and info["key_size"] is not None
-        and info["key_size"] < min_key_size
-    ):
-        violations.append(
-            f"key size {info['key_size']} bit is below the {min_key_size}-bit minimum"
-        )
-    if fail_weak:
-        violations.extend(info["weak"])
-    if require_sct and not info["sct_count"]:
-        violations.append(
-            "no embedded Signed Certificate Timestamps (Certificate Transparency)"
-        )
-    if require_must_staple and not info["must_staple"]:
-        violations.append("missing OCSP Must-Staple extension")
-    if min_tls_version is not None:
-        negotiated = info.get("tls_version")
-        min_rank = tls_version_rank(min_tls_version)
-        neg_rank = tls_version_rank(negotiated) if negotiated else None
-        if neg_rank is not None and min_rank is not None and neg_rank < min_rank:
-            violations.append(
-                f"TLS version {negotiated} is below the required {min_tls_version}"
-            )
+    for rule in rules:
+        violations.extend(rule(info))
     return violations
 
 

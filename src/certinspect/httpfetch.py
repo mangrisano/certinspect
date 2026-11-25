@@ -11,7 +11,8 @@ import ipaddress
 import socket
 import threading
 import urllib.request
-from urllib.parse import urlsplit
+from typing import Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 # Cap the size of any certificate-supplied HTTP response (OCSP/CRL/CA-Issuer)
 # so a malicious certificate cannot point us at an unbounded download and
@@ -110,11 +111,31 @@ class _GuardedRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+def _sanitize_url(url: str) -> str:
+    """Redact userinfo from ``url`` before including it in an error message."""
+    parts = urlsplit(url)
+    if parts.username is None and parts.password is None:
+        return url
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"***@{host}"
+    if parts.port is not None:
+        netloc = f"{netloc}:{parts.port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def _track(sock: socket.socket) -> socket.socket:
     """Register ``sock`` with the fetch running in this thread, if any."""
     sockets = getattr(_active, "sockets", None)
     if sockets is not None:
         sockets.append(sock)
+        expired = getattr(_active, "expired", None)
+        if expired is not None and expired.is_set():
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
     return sock
 
 
@@ -197,6 +218,36 @@ def _build_opener(
     return urllib.request.build_opener(*handlers)
 
 
+class HttpFetcher(Protocol):
+    """Injectable HTTP transport interface (DIP)."""
+
+    def fetch(
+        self, url: str, *, data: bytes | None = None, timeout: float
+    ) -> bytes: ...
+
+
+class HttpClient:
+    """SSRF-guarded HTTP(S) client with explicit proxy configuration.
+
+    Use an instance directly when you want isolated proxy state without
+    mutating module globals; the module-level ``fetch`` / ``use_proxy``
+    helpers delegate to a default client.
+    """
+
+    def __init__(
+        self,
+        *,
+        proxy: str | None = None,
+        no_proxy: bool = False,
+        opener: urllib.request.OpenerDirector | None = None,
+    ) -> None:
+        self._opener = opener or _build_opener(proxy, no_proxy)
+
+    def fetch(self, url: str, *, data: bytes | None = None, timeout: float) -> bytes:
+        """Perform an SSRF-guarded HTTP(S) GET/POST and return the response body."""
+        return _fetch_with_opener(self._opener, url, data=data, timeout=timeout)
+
+
 _OPENER = _build_opener()
 
 
@@ -221,6 +272,16 @@ def fetch(url: str, *, data: bytes | None = None, timeout: float) -> bytes:
     ``_FETCH_DEADLINE_SECONDS`` (TimeoutError otherwise); a malformed HTTP
     response raises ValueError.
     """
+    return _fetch_with_opener(_OPENER, url, data=data, timeout=timeout)
+
+
+def _fetch_with_opener(
+    opener: urllib.request.OpenerDirector,
+    url: str,
+    *,
+    data: bytes | None = None,
+    timeout: float,
+) -> bytes:
     _check_url(url)
     headers = {"Content-Type": "application/ocsp-request"} if data else {}
     request = urllib.request.Request(url, data=data, headers=headers)
@@ -238,27 +299,34 @@ def fetch(url: str, *, data: bytes | None = None, timeout: float) -> bytes:
     timer = threading.Timer(_FETCH_DEADLINE_SECONDS, expire)
     timer.daemon = True
     _active.sockets = sockets
+    _active.expired = expired
     timer.start()
     try:
-        with _OPENER.open(request, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
             body = response.read(_MAX_HTTP_RESPONSE_BYTES + 1)
     except (OSError, http.client.HTTPException) as err:
         if expired.is_set():
             raise _deadline_error(url) from err
         if isinstance(err, http.client.HTTPException):
-            raise ValueError(f"malformed HTTP response from {url}: {err!r}") from err
+            raise ValueError(
+                f"malformed HTTP response from {_sanitize_url(url)}: {err!r}"
+            ) from err
         raise
     finally:
         timer.cancel()
         _active.sockets = None
+        _active.expired = None
     if expired.is_set():
         raise _deadline_error(url)
     if len(body) > _MAX_HTTP_RESPONSE_BYTES:
         raise ValueError(
-            f"response from {url} exceeds the {_MAX_HTTP_RESPONSE_BYTES}-byte limit"
+            f"response from {_sanitize_url(url)} exceeds the "
+            f"{_MAX_HTTP_RESPONSE_BYTES}-byte limit"
         )
     return body
 
 
 def _deadline_error(url: str) -> TimeoutError:
-    return TimeoutError(f"fetching {url} took longer than {_FETCH_DEADLINE_SECONDS:g}s")
+    return TimeoutError(
+        f"fetching {_sanitize_url(url)} took longer than {_FETCH_DEADLINE_SECONDS:g}s"
+    )

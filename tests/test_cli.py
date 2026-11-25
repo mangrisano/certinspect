@@ -2613,3 +2613,82 @@ def test_main_export_chain_verifies_the_chain_it_built(
     assert _run_main(monkeypatch, [*argv, "--export-chain", str(out_path)]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["results"][0]["chain"]["trusted"] is True
+
+
+def test_main_config_cli_overrides_conflicting_output_format(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("csv = true\n", encoding="utf-8")
+    cert_path = tmp_path / "cert.pem"
+    cert_path.write_bytes(make_cert())
+
+    assert (
+        _run_main(
+            monkeypatch,
+            ["--config", str(cfg), "--json", "--no-verify", "--file", str(cert_path)],
+        )
+        == 0
+    )
+    data = json.loads(capsys.readouterr().out)
+    assert data["schema_version"] == 2
+
+
+def test_main_config_cli_overrides_conflicting_validity_option(
+    monkeypatch, capsys, tmp_path, make_cert
+):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text("cab_forum = true\n", encoding="utf-8")
+    cert_path = tmp_path / "cert.pem"
+    cert_path.write_bytes(make_cert(days_valid=100))
+
+    assert (
+        _run_main(
+            monkeypatch,
+            [
+                "--config",
+                str(cfg),
+                "--not-after-max",
+                "50",
+                "--no-verify",
+                "--file",
+                str(cert_path),
+            ],
+        )
+        == 9
+    )
+    assert "exceeds the 50-day maximum" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "toml_body",
+    [
+        'days = "30"\n',
+        'profile = "nonexistent"\n',
+        "json = 1\n",
+    ],
+)
+def test_main_config_invalid_value_type_or_choice_exits_two(
+    monkeypatch, tmp_path, toml_body
+):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(toml_body, encoding="utf-8")
+    assert _run_main(monkeypatch, ["--config", str(cfg), "example.com"]) == 2
+
+
+@pytest.mark.parametrize(
+    "bad_args",
+    [
+        ["--port", "0", "example.com"],
+        ["--port", "70000", "example.com"],
+        ["--timeout", "0", "example.com"],
+        ["--connect-timeout", "-1", "example.com"],
+        ["--read-timeout", "-1", "example.com"],
+        ["--discover-timeout", "0", "example.com"],
+        ["--retries", "-1", "example.com"],
+        ["--concurrency", "0", "example.com"],
+        ["--config", "", "example.com"],
+    ],
+)
+def test_main_rejects_out_of_range_numeric_flags(monkeypatch, bad_args):
+    assert _run_main(monkeypatch, bad_args) == 2

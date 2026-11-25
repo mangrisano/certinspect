@@ -9,148 +9,41 @@ with a status code reflecting the worst certificate state found.
 
 import argparse
 import functools
-import sys
 import ssl
+import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, fields, replace
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from certinspect import httpfetch
 from certinspect.args import build_parser
+from certinspect.completion import bash_completion_script, zsh_completion_script
+from certinspect.config import DEFAULT_CONFIG_PATH, exclusive_groups, load_config
 from certinspect.discover import (
     DiscoveredCert,
     discover_certificates,
     discover_hostnames,
 )
+from certinspect.exit_codes import RUNTIME_ERROR, ExitCode, most_severe
 from certinspect.fetch import (
     STARTTLS_PORTS,
     get_server_cert,
-    retry_network,
     trust_anchors,
     verify_chain,
     verify_chain_offline,
 )
-from certinspect import httpfetch
-from certinspect.revocation import check_revocation, complete_chain
-from certinspect.parser import (
-    load_certificate,
-    load_certificates,
-    analyze,
-    cab_forum_max_validity,
-    certificate_status,
-    chain_expiry_warnings,
-    diagnose_chain,
-    hostname_matches,
-    missing_san_names,
-    chain_summary,
-    common_name,
-    pin_matches,
-    policy_violations,
-    POLICY_PROFILES,
-    to_pem,
-)
-from certinspect.exit_codes import (
-    EXIT_BY_STATUS,
-    RUNTIME_ERROR,
-    ExitCode,
-    RevocationStatus,
-    most_severe,
-)
-from certinspect.models import CertificateInfo, ConnectionInfo, InspectionResult
 from certinspect.formatter import format_ct_inventory
-from certinspect.completion import bash_completion_script, zsh_completion_script
-from certinspect.config import DEFAULT_CONFIG_PATH, load_config
-from certinspect.render import OutputOptions, render
-from certinspect.state import update_state
-
-
-@dataclass(frozen=True)
-class InspectOptions:
-    """Per-run inspection options shared by every target in a batch.
-
-    Bundles the flags that do not change from one target to the next so they
-    can be threaded through ``_inspect`` as a single value instead of a long
-    keyword list. Only ``target`` and ``port`` vary per target and stay
-    explicit arguments.
-    """
-
-    file: str | None = None
-    days: int = 30
-    critical_days: int | None = None
-    export: str | None = None
-    export_chain: str | None = None
-    include_root: bool = False
-    timeout: float = 5.0
-    connect_timeout: float | None = None
-    read_timeout: float | None = None
-    retries: int = 0
-    verify: bool = True
-    chain: bool = False
-    pin: str | None = None
-    starttls: str | None = None
-    cafile: str | None = None
-    capath: str | None = None
-    servername: str | None = None
-    expect_san: list[str] | None = None
-    not_after_max: int | None = None
-    cab_forum: bool = False
-    min_key_size: int | None = None
-    fail_weak: bool = False
-    require_sct: bool = False
-    require_must_staple: bool = False
-    require_revocation_check: bool = False
-    min_tls_version: str | None = None
-    client_cert: str | None = None
-    client_key: str | None = None
-    proxy: str | None = None
-    no_proxy: bool = False
-
-    @classmethod
-    def from_args(cls, args: argparse.Namespace) -> "InspectOptions":
-        """Build the options from parsed CLI arguments.
-
-        Every field name matches its argparse destination, so the mapping stays
-        in one place: adding a field here (and the matching argument) is enough.
-        ``file`` is excluded from the mapping: ``args.file`` is a list of paths
-        (one work item each) rather than the single value this field holds, so
-        callers set it per-item with ``dataclasses.replace``.
-        """
-        return cls(
-            **{f.name: getattr(args, f.name) for f in fields(cls) if f.name != "file"}
-        )
-
-    @property
-    def effective_connect_timeout(self) -> float:
-        """Connect timeout, defaulting to ``timeout`` when unset."""
-        return (
-            self.connect_timeout if self.connect_timeout is not None else self.timeout
-        )
-
-    @property
-    def effective_read_timeout(self) -> float:
-        """Read/handshake timeout, defaulting to ``timeout`` when unset."""
-        return self.read_timeout if self.read_timeout is not None else self.timeout
-
-    @property
-    def policy_requested(self) -> bool:
-        """True when at least one opt-in policy check (exit code 9) is enabled."""
-        # Identity checks: a numeric limit of 0 still counts as enabled (0 == False).
-        return any(
-            (value := getattr(self, name)) is not None and value is not False
-            for name in _POLICY_OPTIONS
-        )
-
-
-# The InspectOptions fields that enable an opt-in policy check.
-_POLICY_OPTIONS = (
-    "not_after_max",
-    "cab_forum",
-    "min_key_size",
-    "fail_weak",
-    "require_sct",
-    "require_must_staple",
-    "require_revocation_check",
-    "min_tls_version",
+from certinspect.inspector import (
+    InspectOptions,
+    default_backend_for,
+    inspect_target,
 )
+from certinspect.models import CertificateInfo, InspectionResult
+from certinspect.parser import POLICY_PROFILES
+from certinspect.render import OutputOptions, render
+from certinspect.revocation import check_revocation, complete_chain
+from certinspect.state import update_state
 
 
 def _split_target(raw: str, default_port: int) -> tuple[str, int]:
@@ -176,271 +69,21 @@ def _target_label(host: str, port: int, default_port: int) -> str:
     return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
 
 
-def _connection_kwargs(opts: InspectOptions, *, include_ca: bool = False) -> dict:
-    """Return the TLS connection keyword arguments shared by fetch and verify.
-
-    ``include_ca`` adds the ``cafile``/``capath`` trust overrides that the
-    verification handshake needs but the plain certificate fetch does not.
-    """
-    kwargs: dict = {"starttls": opts.starttls, "servername": opts.servername}
-    if include_ca:
-        kwargs["cafile"] = opts.cafile
-        kwargs["capath"] = opts.capath
-    if opts.client_cert:
-        kwargs["client_cert"] = opts.client_cert
-        kwargs["client_key"] = opts.client_key
-    if opts.proxy:
-        kwargs["proxy"] = opts.proxy
-    if opts.no_proxy:
-        kwargs["no_proxy"] = True
-    return kwargs
-
-
-def _fetch_source(
-    target: str | None,
-    port: int,
-    opts: InspectOptions,
-) -> tuple[bytes, ConnectionInfo | None]:
-    """Return (raw certificate bytes, connection info) for one source.
-
-    Connection info is None for local files (no live TLS handshake).
-    """
-    if opts.file:
-        if opts.file == "-":
-            return sys.stdin.buffer.read(), None
-        with open(opts.file, "rb") as f:
-            return f.read(), None
-    kwargs = _connection_kwargs(opts)
-    timeouts = (opts.effective_connect_timeout, opts.effective_read_timeout)
-    host = target
-    assert host is not None, "a source is either a file or a host"
-    return retry_network(
-        lambda: get_server_cert(host, port, timeouts, **kwargs),
-        opts.retries,
-    )
-
-
 def _inspect(
     target: str | None,
     port: int,
     opts: InspectOptions,
 ) -> tuple[CertificateInfo, int]:
-    """Inspect one source and return its (info, exit_code).
-
-    The hostname match (and its exit code 5) only applies to host targets;
-    with --file it is left as None. When ``servername`` is set it overrides
-    both the SNI hostname and the name the hostname match is checked against.
-    Chain verification (exit code 6) runs for host targets over a verified
-    handshake and, with --file, offline against the certificates bundled in the
-    file. A failed ``pin`` check yields exit code 7. When
-    ``expect_san`` names are not all covered by the certificate's SAN the exit
-    code is 8. The opt-in policy checks (``not_after_max``/``cab_forum``,
-    ``min_key_size``, ``fail_weak``, ``require_sct``, ``require_must_staple``,
-    ``min_tls_version``) yield exit code 9 when any is violated. When several
-    checks fail, the most severe code wins (see ``exit_codes.most_severe``).
-    """
-    der, conn = _fetch_source(target, port, opts)
-    cert = load_certificate(der)
-    info = analyze(cert)
-    if conn:
-        info["tls_version"] = conn["tls_version"]
-        info["cipher"] = conn["cipher"]
-    if opts.export:
-        with open(opts.export, "wb") as f:
-            f.write(to_pem(cert))
-    check_name = opts.servername or target
-    info["hostname_match"] = hostname_matches(info, check_name) if check_name else None
-
-    info["status"] = certificate_status(info, opts.days, opts.critical_days)
-    codes: list[ExitCode | None] = [EXIT_BY_STATUS[info["status"]]]
-    if info["hostname_match"] is False:
-        codes.append(ExitCode.HOSTNAME_MISMATCH)
-
-    # A --file bundle may carry the whole chain; parse it once when it is needed.
-    file_bundle: list | None = None
-    if opts.file and (opts.verify or opts.chain or opts.export_chain):
-        file_bundle = load_certificates(der)
-    if opts.export_chain and file_bundle is not None:
-        # Verify the chain that was just built, not only what the file carried.
-        file_bundle = _export_chain(file_bundle, opts.export_chain, opts)
-
-    override, chain_certs = _check_chain(
-        info, target, port, cert, conn, opts, file_bundle
+    """Inspect one source using the CLI's current backend bindings."""
+    backend = default_backend_for(
+        get_server_cert_fn=get_server_cert,
+        verify_chain_fn=verify_chain,
+        verify_chain_offline_fn=verify_chain_offline,
+        trust_anchors_fn=trust_anchors,
+        check_revocation_fn=check_revocation,
+        complete_chain_fn=complete_chain,
     )
-    codes.append(override)
-    if opts.verify and target:
-        codes.append(_check_revocation(info, cert, chain_certs, opts))
-
-    # The verified chain (when available) is the most accurate source for the
-    # intermediates actually used; fall back to the chain presented by the
-    # server. Either way the leaf is skipped by chain_expiry_warnings.
-    if not chain_certs:
-        if conn:
-            chain_certs = conn.get("chain") or []
-        elif file_bundle is not None:
-            chain_certs = file_bundle
-
-    chain_warnings = chain_expiry_warnings(chain_certs, opts.days)
-    if chain_warnings:
-        info["chain_warnings"] = chain_warnings
-
-    if opts.chain:
-        presented = (conn.get("chain") or [cert]) if conn else (file_bundle or [cert])
-        info["chain"] = [chain_summary(c) for c in presented]
-
-    codes += [
-        _check_pin(info, opts),
-        _check_expect_san(info, opts),
-        _check_policy(info, opts),
-    ]
-    return info, most_severe(code for code in codes if code is not None)
-
-
-def _export_chain(bundle: list, path: str, opts: InspectOptions) -> list:
-    """Write the completed chain of ``bundle`` to ``path`` as PEM.
-
-    The root is written only with ``--include-root`` (and never dropped when it
-    is the only certificate). An incomplete chain is still written, with a
-    warning on stderr, so the caller can see how far it got. Return the whole
-    completed chain, root included, so the caller can verify what was built.
-    """
-    chain, complete = complete_chain(
-        bundle, opts.timeout, anchors=trust_anchors(opts.cafile, opts.capath)
-    )
-    to_write = chain
-    if not complete:
-        last = common_name(chain[-1].subject)
-        print(
-            f"warning: chain incomplete: no issuer found for '{last}'",
-            file=sys.stderr,
-        )
-    elif len(chain) > 1 and not opts.include_root:
-        to_write = chain[:-1]
-    with open(path, "wb") as f:
-        f.writelines(to_pem(c) for c in to_write)
-    return chain
-
-
-def _check_chain(
-    info: CertificateInfo,
-    target: str | None,
-    port: int,
-    cert,
-    conn: ConnectionInfo | None,
-    opts: InspectOptions,
-    file_bundle: list | None,
-) -> tuple[ExitCode | None, list]:
-    """Verify the chain and record the outcome on ``info``.
-
-    A --file bundle is verified offline, a host over a verified handshake.
-    Sets ``chain_trusted``/``chain_error`` and, when it fails,
-    ``chain_diagnosis``. Returns UNTRUSTED_OR_REVOKED when the chain is not
-    trusted (else None) and the verified chain, leaf first ([] when
-    unavailable). A host whose verification handshake presented a different
-    leaf than ``cert`` (a load balancer mid-rotation, say) is not trusted: the
-    verdict would belong to another certificate.
-    """
-    if not opts.verify:
-        return None, []
-    if opts.file and file_bundle is not None:
-        trusted, reason, verified = verify_chain_offline(
-            file_bundle, cafile=opts.cafile, capath=opts.capath
-        )
-        presented: list | None = file_bundle
-    elif target:
-        verify_kwargs = _connection_kwargs(opts, include_ca=True)
-        timeouts = (opts.effective_connect_timeout, opts.effective_read_timeout)
-        trusted, reason, verified = retry_network(
-            lambda: verify_chain(target, port, timeouts, **verify_kwargs),
-            opts.retries,
-        )
-        presented = conn.get("chain") if conn else None
-        if trusted and verified and verified[0] != cert:
-            trusted, verified = False, []
-            reason = (
-                "the server presented a different certificate on the "
-                "verification handshake"
-            )
-    else:
-        return None, []
-
-    info["chain_trusted"] = trusted
-    info["chain_error"] = reason
-    if trusted:
-        return None, verified
-    diagnosis = diagnose_chain(presented) if presented else None
-    if diagnosis:
-        info["chain_diagnosis"] = diagnosis
-    return ExitCode.UNTRUSTED_OR_REVOKED, verified
-
-
-def _check_revocation(
-    info: CertificateInfo, cert, verified: list, opts: InspectOptions
-) -> ExitCode | None:
-    """Query OCSP/CRL and record ``revocation_status``/``revocation_detail``.
-
-    Returns UNTRUSTED_OR_REVOKED when the certificate is revoked, else None.
-    """
-    # Prefer the issuer from the verified chain; fall back to AIA download.
-    issuer = verified[1] if len(verified) > 1 else None
-    status, detail = check_revocation(cert, opts.timeout, issuer=issuer)
-    info["revocation_status"] = status
-    info["revocation_detail"] = detail
-    if status == RevocationStatus.REVOKED:
-        return ExitCode.UNTRUSTED_OR_REVOKED
-    return None
-
-
-def _check_pin(info: CertificateInfo, opts: InspectOptions) -> ExitCode | None:
-    """Record the fingerprint-pin result; return PIN_MISMATCH when it fails."""
-    if not opts.pin:
-        return None
-    info["pin_match"] = pin_matches(info, opts.pin)
-    return None if info["pin_match"] else ExitCode.PIN_MISMATCH
-
-
-def _check_expect_san(info: CertificateInfo, opts: InspectOptions) -> ExitCode | None:
-    """Record the missing expected SAN names; return SAN_MISMATCH when any."""
-    if not opts.expect_san:
-        return None
-    missing = missing_san_names(info, opts.expect_san)
-    info["expected_san_missing"] = missing
-    return ExitCode.SAN_MISMATCH if missing else None
-
-
-def _check_policy(info: CertificateInfo, opts: InspectOptions) -> ExitCode | None:
-    """Record the opt-in policy violations; return POLICY when any applies."""
-    if not opts.policy_requested:
-        return None
-    not_after_max = opts.not_after_max
-    if opts.cab_forum:
-        not_after_max = cab_forum_max_validity()
-    violations = policy_violations(
-        info,
-        not_after_max=not_after_max,
-        min_key_size=opts.min_key_size,
-        fail_weak=opts.fail_weak,
-        require_sct=opts.require_sct,
-        require_must_staple=opts.require_must_staple,
-        min_tls_version=opts.min_tls_version,
-    )
-    if opts.require_revocation_check:
-        violation = _revocation_policy_violation(info)
-        if violation is not None:
-            violations.append(violation)
-    info["policy_violations"] = violations
-    return ExitCode.POLICY if violations else None
-
-
-def _revocation_policy_violation(info: CertificateInfo) -> str | None:
-    """Return a policy violation when revocation was not proven GOOD."""
-    status = info.get("revocation_status")
-    if status == RevocationStatus.GOOD:
-        return None
-    detail = info.get("revocation_detail")
-    if detail:
-        return f"revocation check did not return GOOD ({status}: {detail})"
-    return f"revocation check did not return GOOD ({status or 'not run'})"
+    return inspect_target(target, port, opts, backend=backend)
 
 
 def _read_targets(path: str) -> list[str]:
@@ -595,6 +238,20 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
     verification enabled). Each violation aborts with argparse's usage exit
     code 2.
     """
+    if not (1 <= args.port <= 65535):
+        parser.error("--port must be between 1 and 65535.")
+    if args.timeout <= 0:
+        parser.error("--timeout must be greater than 0.")
+    if args.connect_timeout is not None and args.connect_timeout <= 0:
+        parser.error("--connect-timeout must be greater than 0.")
+    if args.read_timeout is not None and args.read_timeout <= 0:
+        parser.error("--read-timeout must be greater than 0.")
+    if args.discover_timeout <= 0:
+        parser.error("--discover-timeout must be greater than 0.")
+    if args.retries < 0:
+        parser.error("--retries must be 0 or greater.")
+    if args.concurrency < 1:
+        parser.error("--concurrency must be at least 1.")
     if len(args.csv_delimiter) != 1:
         parser.error("--csv-delimiter must be a single character.")
     if args.critical_days is not None and args.critical_days > args.days:
@@ -633,15 +290,32 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         parser.error("--state-file applies to host targets, not --file.")
 
 
+def _cli_explicit_dests(parser: argparse.ArgumentParser, argv: list[str]) -> set[str]:
+    """Return the argparse destinations explicitly passed on ``argv``."""
+    flag_to_dest: dict[str, str] = {}
+    for action in parser._actions:
+        for opt in action.option_strings:
+            flag_to_dest[opt] = action.dest
+    explicit: set[str] = set()
+    for token in argv:
+        if token == "--":
+            break
+        flag = token.split("=", 1)[0]
+        if flag in flag_to_dest:
+            explicit.add(flag_to_dest[flag])
+    return explicit
+
+
 def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
     """Parse the command line on top of the defaults from the config file."""
     # --config must be resolved before the real parse: its values become the
     # argparse defaults, which an explicit command-line flag still overrides.
+    argv = sys.argv[1:]
     config_pre_parser = argparse.ArgumentParser(add_help=False)
     config_pre_parser.add_argument("--config")
-    pre_args, _ = config_pre_parser.parse_known_args()
-    if pre_args.config:
-        if not Path(pre_args.config).is_file():
+    pre_args, _ = config_pre_parser.parse_known_args(argv)
+    if pre_args.config is not None:
+        if not pre_args.config or not Path(pre_args.config).is_file():
             parser.error(f"--config file not found: {pre_args.config}")
         config_path: Path | None = Path(pre_args.config)
     elif DEFAULT_CONFIG_PATH.is_file():
@@ -650,10 +324,17 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
         config_path = None
     if config_path is not None:
         try:
-            parser.set_defaults(**load_config(str(config_path), parser))
+            config_data = load_config(str(config_path), parser)
         except ValueError as err:
             parser.error(str(err))
-    return parser.parse_args()
+        explicit = _cli_explicit_dests(parser, argv)
+        for group in exclusive_groups(parser):
+            if any(dest in explicit for dest in group):
+                for dest in group:
+                    if dest not in explicit:
+                        config_data.pop(dest, None)
+        parser.set_defaults(**config_data)
+    return parser.parse_args(argv)
 
 
 def _completion_script(parser: argparse.ArgumentParser, shell: str) -> str:
@@ -752,7 +433,7 @@ def _inspect_all(
             target, port = _split_target(raw, default_port)
             name = _target_label(target, port, default_port)
             info, code = _inspect(target, port, opts)
-        except (OSError, ssl.SSLError, ValueError) as err:
+        except (OSError, ssl.SSLError, ValueError, OverflowError) as err:
             return name, None, str(err)
         return name, InspectionResult(name, info, code), None
 

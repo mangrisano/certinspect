@@ -1691,3 +1691,155 @@ def test_complete_chain_reports_incomplete_when_the_download_is_forged(monkeypat
     _serve(monkeypatch, {ISSUER_URL: _der(mallory)})
 
     assert revocation.complete_chain([leaf], 1.0) == ([leaf], False)
+
+
+def test_open_socket_proxy_decodes_credentials_and_brackets_ipv6(monkeypatch):
+    import base64
+    from certinspect import fetch as fetch_mod
+
+    sent = bytearray()
+
+    class _FakeSocket:
+        def sendall(self, data: bytes) -> None:
+            sent.extend(data)
+
+        def recv(self, n: int) -> bytes:
+            if not hasattr(self, "_buf"):
+                self._buf = bytearray(
+                    b"HTTP/1.1 200 Connection Established\r\n\r\n220 mail ESMTP\r\n"
+                )
+            chunk = bytes(self._buf[:n])
+            del self._buf[:n]
+            return chunk
+
+        def settimeout(self, timeout: float) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    fake = _FakeSocket()
+    monkeypatch.setattr(
+        fetch_mod.socket, "create_connection", lambda addr, timeout=None: fake
+    )
+    sock = fetch_mod._open_socket(
+        "2001:db8::1", 587, 5.0, 5.0, proxy="http://u%40x:p%3A%40ss@proxy.local:8080"
+    )
+    req = sent.decode("ascii")
+    assert req.startswith("CONNECT [2001:db8::1]:587 HTTP/1.1\r\n")
+    assert "Host: [2001:db8::1]:587\r\n" in req
+    expected_token = base64.b64encode(b"u@x:p:@ss").decode("ascii")
+    assert f"Proxy-Authorization: Basic {expected_token}\r\n" in req
+    # The STARTTLS banner arriving right after the CONNECT response must remain unread.
+    assert sock.recv(64) == b"220 mail ESMTP\r\n"
+
+
+@pytest.mark.parametrize("bad_host", ["evil.com\r\nX-Injected: 1", "a b", ""])
+def test_open_socket_proxy_rejects_control_or_whitespace_host(bad_host):
+    from certinspect import fetch as fetch_mod
+
+    with pytest.raises(ValueError, match="invalid target host"):
+        fetch_mod._open_socket(bad_host, 443, 5.0, 5.0, proxy="http://proxy:8080")
+
+
+def test_open_socket_proxy_rejects_missing_proxy_host():
+    from certinspect import fetch as fetch_mod
+
+    with pytest.raises(ValueError, match="invalid proxy URL"):
+        fetch_mod._open_socket("example.com", 443, 5.0, 5.0, proxy="http://")
+
+
+def test_retry_network_rejects_negative_retries():
+    from certinspect import fetch as fetch_mod
+
+    with pytest.raises(ValueError, match="non-negative"):
+        fetch_mod.retry_network(lambda: b"ok", -1)
+
+
+def test_httpfetch_sanitize_url_redacts_userinfo():
+    from certinspect.httpfetch import _sanitize_url
+
+    assert (
+        _sanitize_url("http://alice:s3cr3t@proxy.example.com:8080/ocsp")
+        == "http://***@proxy.example.com:8080/ocsp"
+    )
+    assert (
+        _sanitize_url("https://ocsp.example.com/status")
+        == "https://ocsp.example.com/status"
+    )
+
+
+def test_fetch_verified_cert_uses_single_handshake_when_trusted(monkeypatch, make_cert):
+    from certinspect import fetch as fetch_mod
+
+    der = make_cert(san=["example.com"])
+    cert = load_certificate(der)
+    calls = 0
+
+    def _fake_handshake(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return der, {
+            "tls_version": "TLSv1.3",
+            "cipher": "TLS_AES_256_GCM_SHA384",
+            "chain": [cert],
+        }
+
+    monkeypatch.setattr(fetch_mod, "_handshake", _fake_handshake)
+    got_der, conn, trusted, reason, verified = fetch_mod.fetch_verified_cert(
+        "example.com"
+    )
+    assert calls == 1
+    assert got_der == der
+    assert conn["tls_version"] == "TLSv1.3"
+    assert trusted is True
+    assert reason is None
+    assert verified == [cert]
+
+
+def test_fetch_verified_cert_falls_back_on_verification_error(monkeypatch, make_cert):
+    import ssl
+    from certinspect import fetch as fetch_mod
+
+    der = make_cert(san=["example.com"])
+
+    def _fail_verified(*args, **kwargs):
+        err = ssl.SSLCertVerificationError(1, "self-signed certificate")
+        err.verify_message = "self-signed certificate"
+        raise err
+
+    monkeypatch.setattr(fetch_mod, "_handshake", _fail_verified)
+    monkeypatch.setattr(
+        fetch_mod,
+        "get_server_cert",
+        lambda *a, **k: (der, {"tls_version": "TLSv1.3", "cipher": None, "chain": []}),
+    )
+    got_der, conn, trusted, reason, verified = fetch_mod.fetch_verified_cert(
+        "example.com"
+    )
+    assert got_der == der
+    assert trusted is False
+    assert reason == "self-signed certificate"
+    assert verified == []
+
+
+def test_trust_anchors_caches_parsed_bundle(monkeypatch, make_chain, tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from certinspect import fetch as fetch_mod
+
+    _, _, root = make_chain()
+    cafile = tmp_path / "ca.pem"
+    cafile.write_bytes(root.public_bytes(serialization.Encoding.PEM))
+    calls = 0
+    real_trust_context = fetch_mod._trust_context
+
+    def _counting_context(cf, cp):
+        nonlocal calls
+        calls += 1
+        return real_trust_context(cf, cp)
+
+    monkeypatch.setattr(fetch_mod, "_trust_context", _counting_context)
+    first = fetch_mod.trust_anchors(str(cafile), None)
+    second = fetch_mod.trust_anchors(str(cafile), None)
+    assert first == second
+    assert calls == 1

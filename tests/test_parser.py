@@ -685,3 +685,19 @@ def test_policy_violations_min_key_size_ignores_eddsa_keys(make_cert):
     key = ed25519.Ed25519PrivateKey.generate()
     info = analyze(load_certificate(make_cert(private_key=key)))
     assert policy_violations(info, min_key_size=2048) == []
+
+
+def test_load_certificate_invalid_bytes_raises_certificate_load_error():
+    with pytest.raises(CertificateLoadError):
+        load_certificate(b"not a valid der or pem certificate")
+
+
+def test_hostname_matches_canonicalizes_ipv6_trailing_dot_and_idna(make_cert):
+    ipv6_info = analyze(load_certificate(make_cert(san=None, san_ips=["2001:db8::1"])))
+    assert hostname_matches(ipv6_info, "2001:0db8::1") is True
+
+    fqdn_info = analyze(load_certificate(make_cert(san=["example.com"])))
+    assert hostname_matches(fqdn_info, "example.com.") is True
+
+    idna_info = analyze(load_certificate(make_cert(san=["xn--mnchen-3ya.de"])))
+    assert hostname_matches(idna_info, "münchen.de") is True

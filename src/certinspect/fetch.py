@@ -10,12 +10,17 @@ connection failing. Validity is computed later in parser.py.
 """
 
 import base64
+import os
 import socket
 import ssl
+import threading
 import time
 import urllib.request
 import warnings
-from urllib.parse import urlsplit
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Protocol
+from urllib.parse import unquote, urlsplit
 
 from cryptography import x509
 from cryptography.x509 import verification
@@ -24,25 +29,22 @@ from cryptography.x509.oid import NameOID
 from certinspect.models import ConnectionInfo
 
 
-# Standard plaintext ports for the STARTTLS-capable protocols, used as the
-# default port when --port is left unset.
-STARTTLS_PORTS = {"smtp": 587, "imap": 143, "pop3": 110, "ftp": 21}
-
-
 def _read_connect_response(sock: socket.socket, timeout: float) -> bytes:
     """Read an HTTP CONNECT response up to the end of its header block.
 
-    The whole response must arrive within ``timeout`` seconds.
+    Reads one byte at a time so we never consume bytes sent immediately after
+    the tunnel opens (such as a server-first STARTTLS banner). The whole
+    response must arrive within ``timeout`` seconds.
     """
     reader = _Deadline(sock, timeout)
     buf = bytearray()
-    while b"\r\n\r\n" not in buf:
-        chunk = reader.recv(256)
+    while not buf.endswith(b"\r\n\r\n"):
+        if len(buf) >= 65536:
+            break
+        chunk = reader.recv(1)
         if not chunk:
             break
         buf += chunk
-        if len(buf) > 65536:
-            break
     return bytes(buf)
 
 
@@ -90,13 +92,20 @@ def _open_socket(
         return sock
 
     parts = urlsplit(proxy if "://" in proxy else f"//{proxy}")
+    if not parts.hostname:
+        raise ValueError("invalid proxy URL: missing host")
+    if not host or any(ord(c) <= 0x20 or ord(c) == 0x7F for c in host):
+        raise ValueError(f"invalid target host for proxy CONNECT: {host!r}")
+    authority = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
     sock = socket.create_connection(
         (parts.hostname, parts.port or 8080), timeout=connect_timeout
     )
     try:
-        request = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n"
+        request = f"CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n"
         if parts.username is not None:
-            creds = f"{parts.username}:{parts.password or ''}".encode()
+            username = unquote(parts.username)
+            password = unquote(parts.password or "")
+            creds = f"{username}:{password}".encode()
             token = base64.b64encode(creds).decode("ascii")
             request += f"Proxy-Authorization: Basic {token}\r\n"
         request += "\r\n"
@@ -105,7 +114,7 @@ def _open_socket(
         fields = status_line.split(None, 2)
         if len(fields) < 2 or fields[1] != b"200":
             raise ValueError(
-                f"proxy CONNECT to {host}:{port} failed: "
+                f"proxy CONNECT to {authority} failed: "
                 f"{status_line.decode('latin-1', 'replace').strip()}"
             )
     except Exception:
@@ -125,6 +134,8 @@ def retry_network(call, retries: int):
     errors) are retried; a completed handshake that yields a result is returned
     as-is. Re-raises the last error once the retries are exhausted.
     """
+    if retries < 0:
+        raise ValueError("retries must be non-negative")
     for remaining in range(retries, -1, -1):
         try:
             return call()
@@ -169,7 +180,11 @@ class _Deadline:
         return self._sock.recv(n)
 
 
-def _readline(sock: socket.socket) -> bytes:
+class _Readable(Protocol):
+    def recv(self, n: int) -> bytes: ...
+
+
+def _readline(sock: _Readable) -> bytes:
     """Read one line (up to and including ``\\n``) from a plaintext socket.
 
     Reads a byte at a time so we never consume data past the STARTTLS
@@ -187,7 +202,7 @@ def _readline(sock: socket.socket) -> bytes:
     return bytes(buf)
 
 
-def _read_reply(sock: socket.socket) -> bytes:
+def _read_reply(sock: _Readable) -> bytes:
     """Read a possibly multiline SMTP/FTP reply and return its final line.
 
     Continuation lines use ``-`` as the fourth character (e.g. ``250-``); the
@@ -225,39 +240,104 @@ def _negotiate_starttls(
             sock.settimeout(timeout)
 
 
+def _starttls_smtp(sock: socket.socket, reply: Callable[[], _Readable]) -> None:
+    _expect(_read_reply(reply()), b"220")
+    sock.sendall(b"EHLO certinspect\r\n")
+    _expect(_read_reply(reply()), b"250")
+    sock.sendall(b"STARTTLS\r\n")
+    _expect(_read_reply(reply()), b"220")
+
+
+def _starttls_ftp(sock: socket.socket, reply: Callable[[], _Readable]) -> None:
+    _expect(_read_reply(reply()), b"220")
+    sock.sendall(b"AUTH TLS\r\n")
+    _expect(_read_reply(reply()), b"234")
+
+
+def _starttls_pop3(sock: socket.socket, reply: Callable[[], _Readable]) -> None:
+    _expect(_readline(reply()), b"+OK")
+    sock.sendall(b"STLS\r\n")
+    _expect(_readline(reply()), b"+OK")
+
+
+def _starttls_imap(sock: socket.socket, reply: Callable[[], _Readable]) -> None:
+    _expect(_readline(reply()), b"* OK")
+    sock.sendall(b"a001 STARTTLS\r\n")
+    response = reply()
+    for _ in range(_MAX_STARTTLS_REPLY_LINES):
+        line = _readline(response)
+        if not line:
+            raise ValueError("connection closed during STARTTLS")
+        if line.startswith(b"a001 "):
+            _expect(line, b"a001 OK")
+            return
+    raise ValueError("STARTTLS reply has too many lines")
+
+
+@dataclass(frozen=True)
+class _StartTlsProtocol:
+    default_port: int
+    negotiate: Callable[[socket.socket, Callable[[], _Readable]], None]
+
+
+_STARTTLS_PROTOCOLS: dict[str, _StartTlsProtocol] = {
+    "smtp": _StartTlsProtocol(587, _starttls_smtp),
+    "imap": _StartTlsProtocol(143, _starttls_imap),
+    "pop3": _StartTlsProtocol(110, _starttls_pop3),
+    "ftp": _StartTlsProtocol(21, _starttls_ftp),
+}
+
+# Standard plaintext ports for the STARTTLS-capable protocols, used as the
+# default port when --port is left unset.
+STARTTLS_PORTS = {
+    name: proto.default_port for name, proto in _STARTTLS_PROTOCOLS.items()
+}
+
+
 def _run_starttls(sock: socket.socket, protocol: str, timeout: float | None) -> None:
-    def reply():
+    def reply() -> _Readable:
         return sock if timeout is None else _Deadline(sock, timeout)
 
-    proto = protocol.lower()
-    if proto == "smtp":
-        _expect(_read_reply(reply()), b"220")
-        sock.sendall(b"EHLO certinspect\r\n")
-        _expect(_read_reply(reply()), b"250")
-        sock.sendall(b"STARTTLS\r\n")
-        _expect(_read_reply(reply()), b"220")
-    elif proto == "ftp":
-        _expect(_read_reply(reply()), b"220")
-        sock.sendall(b"AUTH TLS\r\n")
-        _expect(_read_reply(reply()), b"234")
-    elif proto == "pop3":
-        _expect(_readline(reply()), b"+OK")
-        sock.sendall(b"STLS\r\n")
-        _expect(_readline(reply()), b"+OK")
-    elif proto == "imap":
-        _expect(_readline(reply()), b"* OK")
-        sock.sendall(b"a001 STARTTLS\r\n")
-        response = reply()
-        for _ in range(_MAX_STARTTLS_REPLY_LINES):
-            line = _readline(response)
-            if not line:
-                raise ValueError("connection closed during STARTTLS")
-            if line.startswith(b"a001 "):
-                _expect(line, b"a001 OK")
-                return
-        raise ValueError("STARTTLS reply has too many lines")
-    else:
+    spec = _STARTTLS_PROTOCOLS.get(protocol.lower())
+    if spec is None:
         raise ValueError(f"unsupported STARTTLS protocol: {protocol}")
+    spec.negotiate(sock, reply)
+
+
+def _connection_info(ssock: ssl.SSLSocket, chain_method: str) -> ConnectionInfo:
+    cipher = ssock.cipher()
+    return ConnectionInfo(
+        tls_version=ssock.version(),
+        cipher=cipher[0] if cipher else None,
+        chain=_chain(ssock, chain_method),
+    )
+
+
+def _handshake(
+    host: str,
+    port: int,
+    timeout: float | tuple[float, float],
+    context: ssl.SSLContext,
+    *,
+    starttls: str | None = None,
+    servername: str | None = None,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+    proxy: str | None = None,
+    no_proxy: bool = False,
+    chain_method: str = "get_unverified_chain",
+) -> tuple[bytes, ConnectionInfo]:
+    if client_cert:
+        context.load_cert_chain(certfile=client_cert, keyfile=client_key)
+    connect_timeout, read_timeout = _split_timeout(timeout)
+    resolved_proxy = _resolve_proxy(host, proxy, no_proxy)
+    with _open_socket(
+        host, port, connect_timeout, read_timeout, resolved_proxy
+    ) as sock:
+        if starttls:
+            _negotiate_starttls(sock, starttls, read_timeout)
+        with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
+            return _peer_der(ssock), _connection_info(ssock, chain_method)
 
 
 def get_server_cert(
@@ -292,24 +372,74 @@ def get_server_cert(
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
-    if client_cert:
-        context.load_cert_chain(certfile=client_cert, keyfile=client_key)
-    connect_timeout, read_timeout = _split_timeout(timeout)
-    resolved_proxy = _resolve_proxy(host, proxy, no_proxy)
-    with _open_socket(
-        host, port, connect_timeout, read_timeout, resolved_proxy
-    ) as sock:
-        if starttls:
-            _negotiate_starttls(sock, starttls, read_timeout)
-        with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
-            der = _peer_der(ssock)
-            cipher = ssock.cipher()
-            conn = ConnectionInfo(
-                tls_version=ssock.version(),
-                cipher=cipher[0] if cipher else None,
-                chain=_chain(ssock, "get_unverified_chain"),
-            )
-            return der, conn
+    return _handshake(
+        host,
+        port,
+        timeout,
+        context,
+        starttls=starttls,
+        servername=servername,
+        client_cert=client_cert,
+        client_key=client_key,
+        proxy=proxy,
+        no_proxy=no_proxy,
+        chain_method="get_unverified_chain",
+    )
+
+
+def fetch_verified_cert(
+    host: str,
+    port: int = 443,
+    timeout: float | tuple[float, float] = 5.0,
+    starttls: str | None = None,
+    cafile: str | None = None,
+    capath: str | None = None,
+    servername: str | None = None,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+    proxy: str | None = None,
+    no_proxy: bool = False,
+) -> tuple[bytes, ConnectionInfo, bool, str | None, list[x509.Certificate]]:
+    """Fetch and verify the server certificate in a single TLS handshake.
+
+    When the chain is trusted, this completes in one round-trip and returns
+    ``(der, conn, True, None, verified_chain)``. Only when chain verification
+    fails (``SSLCertVerificationError``) does it fall back to an unverified
+    handshake so expired or self-signed certificates can still be inspected,
+    returning ``(der, conn, False, reason, [])``.
+    """
+    context = _trust_context(cafile, capath)
+    context.check_hostname = False
+    try:
+        der, conn = _handshake(
+            host,
+            port,
+            timeout,
+            context,
+            starttls=starttls,
+            servername=servername,
+            client_cert=client_cert,
+            client_key=client_key,
+            proxy=proxy,
+            no_proxy=no_proxy,
+            chain_method="get_verified_chain",
+        )
+        verified = conn["chain"] or [x509.load_der_x509_certificate(der)]
+        return der, conn, True, None, verified
+    except ssl.SSLCertVerificationError as err:
+        reason = err.verify_message or str(err)
+        der, conn = get_server_cert(
+            host,
+            port,
+            timeout,
+            starttls=starttls,
+            servername=servername,
+            client_cert=client_cert,
+            client_key=client_key,
+            proxy=proxy,
+            no_proxy=no_proxy,
+        )
+        return der, conn, False, reason, []
 
 
 def _peer_der(ssock: ssl.SSLSocket) -> bytes:
@@ -358,11 +488,11 @@ def verify_chain(
 ) -> tuple[bool, str | None, list[x509.Certificate]]:
     """Check whether the server's certificate chain is trusted.
 
-    Open a fully verified TLS handshake (system trust store, hostname check)
-    as a browser would. Return ``(trusted, reason, chain)`` where ``chain`` is
-    the verified certificate chain (leaf first) on success — just the leaf on
-    interpreters without ``get_verified_chain`` (before 3.13) — and an empty
-    list on failure.
+    Open a TLS handshake verified against the trust store (hostname matching is
+    reported separately as ``hostname_match``). Return ``(trusted, reason, chain)``
+    where ``chain`` is the verified certificate chain (leaf first) on success —
+    just the leaf on interpreters without ``get_verified_chain`` (before 3.13) —
+    and an empty list on failure.
     ``reason`` is None on success or the verification message on failure.
     Network-level failures are left to propagate. When ``starttls`` is set the
     plaintext protocol is upgraded to TLS before the handshake.
@@ -381,23 +511,40 @@ def verify_chain(
     context = _trust_context(cafile, capath)
     # Verify chain trust only; the hostname is reported separately as hostname_match.
     context.check_hostname = False
-    if client_cert:
-        context.load_cert_chain(certfile=client_cert, keyfile=client_key)
-    connect_timeout, read_timeout = _split_timeout(timeout)
-    resolved_proxy = _resolve_proxy(host, proxy, no_proxy)
     try:
-        with _open_socket(
-            host, port, connect_timeout, read_timeout, resolved_proxy
-        ) as sock:
-            if starttls:
-                _negotiate_starttls(sock, starttls, read_timeout)
-            with context.wrap_socket(sock, server_hostname=servername or host) as ssock:
-                chain = _chain(ssock, "get_verified_chain") or [
-                    x509.load_der_x509_certificate(_peer_der(ssock))
-                ]
-                return True, None, chain
+        der, conn = _handshake(
+            host,
+            port,
+            timeout,
+            context,
+            starttls=starttls,
+            servername=servername,
+            client_cert=client_cert,
+            client_key=client_key,
+            proxy=proxy,
+            no_proxy=no_proxy,
+            chain_method="get_verified_chain",
+        )
+        chain = conn["chain"] or [x509.load_der_x509_certificate(der)]
+        return True, None, chain
     except ssl.SSLCertVerificationError as err:
         return False, err.verify_message or str(err), []
+
+
+_WARNINGS_LOCK = threading.Lock()
+_TRUST_ANCHORS_LOCK = threading.Lock()
+_TRUST_ANCHORS_CACHE: dict[
+    tuple[str | None, str | None, int | None, int | None], list[x509.Certificate]
+] = {}
+
+
+def _path_mtime_ns(path: str | None) -> int | None:
+    if not path:
+        return None
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return None
 
 
 def trust_anchors(cafile: str | None, capath: str | None) -> list[x509.Certificate]:
@@ -407,17 +554,27 @@ def trust_anchors(cafile: str | None, capath: str | None) -> list[x509.Certifica
     ``capath`` when given (an internal/private PKI), otherwise the system trust
     store. A root the current OpenSSL/cryptography cannot parse (e.g. a legacy
     certificate with a non-positive serial) is skipped rather than aborting.
+    Parsed anchors are cached per ``(cafile, capath, mtime)`` so batch offline
+    verification does not re-parse the trust store on every file.
     """
+    cache_key = (cafile, capath, _path_mtime_ns(cafile), _path_mtime_ns(capath))
+    with _TRUST_ANCHORS_LOCK:
+        cached = _TRUST_ANCHORS_CACHE.get(cache_key)
+    if cached is not None:
+        return list(cached)
+
     context = _trust_context(cafile, capath)
     anchors: list[x509.Certificate] = []
-    with warnings.catch_warnings():
+    with _WARNINGS_LOCK, warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for der in context.get_ca_certs(binary_form=True):
             try:
                 anchors.append(x509.load_der_x509_certificate(der))
             except ValueError:
                 continue
-    return anchors
+    with _TRUST_ANCHORS_LOCK:
+        _TRUST_ANCHORS_CACHE[cache_key] = anchors
+    return list(anchors)
 
 
 # Stands in for the '*' of a wildcard SAN so the verifier gets a concrete host.
